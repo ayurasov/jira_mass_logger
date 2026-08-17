@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
 import { useSettingsStore } from './store/settings';
+import './styles/theme.css';
 
 const settings = useSettingsStore();
 onMounted(() => settings.loadTheme());
