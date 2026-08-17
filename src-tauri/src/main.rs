@@ -4,6 +4,7 @@ mod exchange_client;
 mod db;
 mod scheduler;
 mod secrets;
+mod bulk_wizard;
 
 use tauri::{Manager, tray::TrayIconBuilder, menu::{Menu, MenuItem}};
 
@@ -20,6 +21,7 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             db::init_db(app.handle())?;
+            bulk_wizard::setup(app.handle())?;
 
             let log_today = MenuItem::with_id(app, "log_today", "Залогировать сегодня", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
@@ -54,6 +56,15 @@ fn main() {
             jira_client::update_worklog,
             jira_client::delete_worklog,
             jira_client::bulk_add_worklogs,
+            bulk_wizard::save_wizard_template,
+            bulk_wizard::list_wizard_templates,
+            bulk_wizard::delete_wizard_template,
+            bulk_wizard::touch_recent_issue,
+            bulk_wizard::set_issue_favorite,
+            bulk_wizard::get_recent_issues,
+            bulk_wizard::get_custom_holidays,
+            bulk_wizard::import_holidays,
+            bulk_wizard::write_export_file,
             exchange_client::test_exchange_connection,
             secrets::save_secret,
             secrets::delete_secret,
