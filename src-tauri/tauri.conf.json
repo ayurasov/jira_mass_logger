@@ -15,7 +15,8 @@
         "width": 1100,
         "height": 720,
         "minWidth": 800,
-        "minHeight": 600
+        "minHeight": 600,
+        "theme": null
       }
     ],
     "trayIcon": {
@@ -28,7 +29,21 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"]
+    "targets": ["msi", "nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "wix": {
+        "language": ["ru-RU", "en-US"]
+      },
+      "nsis": {
+        "languages": ["Russian", "English"],
+        "displayLanguageSelector": false,
+        "installMode": "currentUser"
+      }
+    }
   }
 }
