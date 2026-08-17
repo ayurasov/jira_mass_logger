@@ -22,12 +22,22 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             type TEXT NOT NULL,
             secret_ref TEXT NOT NULL
         );
+        -- Интеграция с календарём: 'graph' (Microsoft Graph, OAuth2 PKCE) или
+        -- 'ews' (Exchange Web Services, Basic/NTLM для on-premise). refresh_token хранится
+        -- в OS keychain по refresh_token_secret_ref, сюда кладётся только ссылка.
         CREATE TABLE IF NOT EXISTS exchange_profiles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
+            auth_mode TEXT NOT NULL DEFAULT 'graph', -- 'graph' | 'ews'
             ews_url TEXT,
             username TEXT NOT NULL,
-            secret_ref TEXT NOT NULL
+            secret_ref TEXT NOT NULL,
+            tenant_id TEXT,
+            client_id TEXT,
+            refresh_token_secret_ref TEXT,
+            min_event_minutes INTEGER NOT NULL DEFAULT 0,
+            exclude_free_busy INTEGER NOT NULL DEFAULT 1,
+            exclude_declined INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,6 +60,22 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             comment TEXT,
             updated TEXT,
             synced_at TEXT
+        );
+        -- Кэш встреч из Exchange/Outlook на день — обновляется ручным refresh или
+        -- автоматически при смене сутки (см. exchange_client::get_calendar_events).
+        CREATE TABLE IF NOT EXISTS calendar_events_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT UNIQUE,
+            subject TEXT,
+            start_at TEXT NOT NULL,
+            end_at TEXT NOT NULL,
+            attendees TEXT,
+            category TEXT,
+            online_meeting_url TEXT,
+            response_status TEXT,
+            show_as TEXT,
+            cached_date TEXT NOT NULL,
+            cached_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
