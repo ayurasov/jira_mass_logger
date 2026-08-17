@@ -40,10 +40,15 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         );
         CREATE TABLE IF NOT EXISTS worklog_cache (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            row_key TEXT UNIQUE,
+            worklog_id TEXT,
             issue_key TEXT NOT NULL,
+            issue_summary TEXT,
+            project_key TEXT,
             started TEXT NOT NULL,
             time_spent_seconds INTEGER NOT NULL,
             comment TEXT,
+            updated TEXT,
             synced_at TEXT
         );
         CREATE TABLE IF NOT EXISTS settings (
@@ -66,6 +71,19 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             summary TEXT,
             is_favorite INTEGER NOT NULL DEFAULT 0,
             last_used_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        -- Очередь несинхронизированных изменений экрана "Мой worklog":
+        -- при потере сети/сне Windows сюда кладётся update/delete-операция,
+        -- а после пробуждения/восстановления сети очередь выгребается повторно.
+        CREATE TABLE IF NOT EXISTS sync_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            row_key TEXT NOT NULL,
+            operation TEXT NOT NULL, -- 'update' | 'delete' | 'create' | 'duplicate'
+            payload_json TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );",
     )?;
 
