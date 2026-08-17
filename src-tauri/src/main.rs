@@ -16,6 +16,8 @@ fn main() {
         ))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             db::init_db(app.handle())?;
 
@@ -43,8 +45,15 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            jira_client::test_jira_connection,
-            jira_client::submit_worklog,
+            jira_client::test_connection,
+            jira_client::get_projects,
+            jira_client::get_issues_by_jql,
+            jira_client::get_worklog,
+            jira_client::get_worklogs_since,
+            jira_client::add_worklog,
+            jira_client::update_worklog,
+            jira_client::delete_worklog,
+            jira_client::bulk_add_worklogs,
             exchange_client::test_exchange_connection,
             secrets::save_secret,
             secrets::delete_secret,
