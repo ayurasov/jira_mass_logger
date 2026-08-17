@@ -1,0 +1,34 @@
+{
+  "productName": "JiraTime",
+  "version": "0.1.0",
+  "identifier": "com.ayurasov.jiratime",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "JiraTime",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 800,
+        "minHeight": 600
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "tooltip": "JiraTime"
+    },
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"]
+  }
+}
