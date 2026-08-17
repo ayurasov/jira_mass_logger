@@ -40,6 +40,8 @@ tiny_http = "0.12"
 # httpntlm: NTLM-автентификация для SOAP-запросов к on-premise EWS в доменах
 # Active Directory, где Kerberos/NTLM необходим вместо Basic Auth.
 httpntlm = "0.3"
+# quick-xml: парсинг SOAP-ответов EWS FindItem (CalendarItem элементы).
+quick-xml = "0.36"
 base64 = "0.22"
 sha2 = "0.10"
 rand = "0.8"
