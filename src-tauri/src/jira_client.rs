@@ -13,6 +13,12 @@
 //    корпоративного прокси (переменные окружения + явные настройки из UI)
 //    и доверенного корпоративного root CA (SSL-инспекция на прокси)
 //  - формирование `started` с учётом IANA-таймзоны пользователя (chrono-tz)
+//  - оптимистичная конкурентность по полю `updated`: перед PUT/DELETE можно
+//    передать `expected_updated`, полученный при последнем чтении записи;
+//    если в Jira запись изменилась параллельно (например, коллега/сам
+//    пользователь правил worklog прямо в Jira), команда вернёт ошибку с
+//    префиксом "CONFLICT:" и JSON актуальной версии записи, чтобы фронтенд
+//    показал diff и дал выбрать, какую версию оставить.
 
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
@@ -75,6 +81,8 @@ pub enum JiraError {
     SecretNotFound(String),
     #[error("Invalid timezone: {0}")]
     InvalidTimezone(String),
+    #[error("CONFLICT:{0}")]
+    Conflict(String),
     #[error("Other: {0}")]
     Other(String),
 }
@@ -319,6 +327,11 @@ pub struct WorklogDto {
     pub time_spent_seconds: i64,
     pub comment: Option<String>,
     pub author: Option<String>,
+    /// Метка последнего изменения записи в Jira ("updated" из ответа API).
+    /// Используется как токен оптимистичной конкурентности: сохраняется на
+    /// фронтенде при чтении и передаётся обратно как `expected_updated` при
+    /// PUT/DELETE, чтобы поймать параллельное изменение записи в самой Jira.
+    pub updated: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -521,6 +534,29 @@ pub async fn get_worklog(
     Ok(parse_worklogs(worklogs, Some(&issue_key)))
 }
 
+/// Получить одну запись worklog по id (используется для показа diff при
+/// конфликте версий — фронтенд запрашивает актуальную версию из Jira, чтобы
+/// сравнить с локальной несинхронизированной правкой).
+#[tauri::command]
+pub async fn get_worklog_by_id(
+    params: JiraConnectionParams,
+    issue_key: String,
+    worklog_id: String,
+) -> Result<WorklogDto, String> {
+    let ctx = init(&params).map_err(String::from)?;
+    let endpoint = url(&params, &format!("issue/{issue_key}/worklog/{worklog_id}"));
+    let resp = send_with_retry(&ctx.client, || {
+        apply_auth(ctx.client.get(&endpoint), &params, &ctx.token)
+    })
+    .await
+    .map_err(String::from)?;
+    let body: Value = resp.json().await.map_err(|e| e.to_string())?;
+    parse_worklogs(vec![body], Some(&issue_key))
+        .into_iter()
+        .next()
+        .ok_or_else(|| "worklog payload could not be parsed".to_string())
+}
+
 /// Массовая выгрузка worklog за период без обхода "по 1 запросу на issue":
 /// сперва `worklog/updated` (список ID изменённых записей), затем пачками
 /// `worklog/list` (Cloud v3). Для Server/DC такого эндпоинта нет — там
@@ -606,6 +642,7 @@ fn parse_worklogs(values: Vec<Value>, fallback_issue_key: Option<&str>) -> Vec<W
                 .and_then(|a| a.get("displayName"))
                 .and_then(|d| d.as_str())
                 .map(|s| s.to_string());
+            let updated = v.get("updated").and_then(|x| x.as_str()).map(|s| s.to_string());
             let issue_key = v
                 .get("issueId")
                 .and_then(|x| x.as_str())
@@ -618,6 +655,7 @@ fn parse_worklogs(values: Vec<Value>, fallback_issue_key: Option<&str>) -> Vec<W
                 time_spent_seconds,
                 comment,
                 author,
+                updated,
             })
         })
         .collect()
@@ -658,6 +696,11 @@ pub async fn add_worklog(
         .ok_or_else(|| "worklog id missing in response".to_string())
 }
 
+/// Обновление worklog с опциональной проверкой оптимистичной конкурентности.
+/// Если передан `expected_updated` и текущее значение `updated` в Jira отличается,
+/// команда НЕ отправляет PUT, а возвращает `JiraError::Conflict` с JSON актуальной
+/// версии записи (фронтенд показывает diff и просит выбрать: применить свою
+/// правку поверх (force), взять версию из Jira, или отменить).
 #[tauri::command]
 pub async fn update_worklog(
     params: JiraConnectionParams,
@@ -666,8 +709,18 @@ pub async fn update_worklog(
     started_at: Option<DateTime<Utc>>,
     time_spent_seconds: Option<i64>,
     comment: Option<String>,
+    expected_updated: Option<String>,
 ) -> Result<(), String> {
     let ctx = init(&params).map_err(String::from)?;
+
+    if let Some(expected) = &expected_updated {
+        let current = get_worklog_by_id(params.clone(), issue_key.clone(), worklog_id.clone()).await?;
+        if current.updated.as_deref() != Some(expected.as_str()) {
+            let snapshot = serde_json::to_string(&current).unwrap_or_default();
+            return Err(JiraError::Conflict(snapshot).into());
+        }
+    }
+
     let mut body = json!({});
     if let Some(started_at) = started_at {
         let tz = params.user_timezone.clone().unwrap_or_else(|| "UTC".to_string());
@@ -694,8 +747,18 @@ pub async fn delete_worklog(
     params: JiraConnectionParams,
     issue_key: String,
     worklog_id: String,
+    expected_updated: Option<String>,
 ) -> Result<(), String> {
     let ctx = init(&params).map_err(String::from)?;
+
+    if let Some(expected) = &expected_updated {
+        let current = get_worklog_by_id(params.clone(), issue_key.clone(), worklog_id.clone()).await?;
+        if current.updated.as_deref() != Some(expected.as_str()) {
+            let snapshot = serde_json::to_string(&current).unwrap_or_default();
+            return Err(JiraError::Conflict(snapshot).into());
+        }
+    }
+
     let endpoint = url(&params, &format!("issue/{issue_key}/worklog/{worklog_id}"));
     send_with_retry(&ctx.client, || {
         apply_auth(ctx.client.delete(&endpoint), &params, &ctx.token)
