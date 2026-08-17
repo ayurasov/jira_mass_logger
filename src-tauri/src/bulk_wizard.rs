@@ -109,6 +109,18 @@ pub fn write_export_file(path: String, content: String) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| format!("cannot write {path}: {e}"))
 }
 
+/// Для CSV-экспорта таблицы worklog: добавляет UTF-8 BOM (EF BB BF) в начало
+/// файла, чтобы Excel на Windows автоматически распознавал UTF-8 и корректно
+/// отображал кириллицу без ручного выбора кодировки при импорте.
+#[tauri::command]
+pub fn write_export_file_utf8_bom(path: String, content: String) -> Result<(), String> {
+    const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+    let mut bytes = Vec::with_capacity(BOM.len() + content.len());
+    bytes.extend_from_slice(&BOM);
+    bytes.extend_from_slice(content.as_bytes());
+    fs::write(&path, bytes).map_err(|e| format!("cannot write {path}: {e}"))
+}
+
 pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let app_data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&app_data_dir)?;
