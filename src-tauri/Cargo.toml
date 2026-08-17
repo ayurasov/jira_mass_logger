@@ -6,7 +6,7 @@ edition = "2021"
 
 # Целевые ОС: Windows 10 и Windows 11 (x86_64-pc-windows-msvc).
 # Сборка: `rustup target add x86_64-pc-windows-msvc` + MSVC Build Tools (C++ workload).
-# Кросс-сборка с macOS/Linux не поддерживается nativно — используй CI с `windows-latest` runner.
+# Кросс-сборка с macOS/Linux не поддерживается nativeо — используй CI с `windows-latest` runner.
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -21,7 +21,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 keyring = { version = "2", features = ["windows-native"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
-# rustls-tls важен именно для Windows: не зависит от системных корпоративных SSL-инспекторов/proxy
+# rustls-tls важен иименно для Windows: не зависит от системных корпоративных SSL-инспекторов/proxy
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -30,6 +30,21 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.9"
 anyhow = "1"
 thiserror = "1"
+# --- Exchange/Microsoft Graph интеграция (Промпт 5) ---
+# oauth2: PKCE Authorization Code flow (MSAL-стиль) без полного MSAL SDK,
+# который для Rust отсутствует.
+oauth2 = "4"
+# tiny_http: локальный loopback-листенер http://localhost:PORT/callback для
+# захвата authorization code без внешних зависимостей от тяжёлого async-стека.
+tiny_http = "0.12"
+# httpntlm: NTLM-автентификация для SOAP-запросов к on-premise EWS в доменах
+# Active Directory, где Kerberos/NTLM необходим вместо Basic Auth.
+httpntlm = "0.3"
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.8"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 wiremock = "0.6"
