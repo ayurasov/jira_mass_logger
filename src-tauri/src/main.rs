@@ -5,6 +5,7 @@ mod db;
 mod scheduler;
 mod secrets;
 mod bulk_wizard;
+mod sync_queue;
 
 use tauri::{Manager, tray::TrayIconBuilder, menu::{Menu, MenuItem}};
 
@@ -43,6 +44,20 @@ fn main() {
                 })
                 .build(app)?;
 
+            // Windows может резко переводить ноутбук в спящий режим; при выходе из
+            // сна окно получает Focused(true) после долгого простоя — используем
+            // это как best-effort триггер форс-ресинхронизации на фронтенде
+            // (там сравнивается время последнего sync с текущим, и если разрыв
+            // большой — считаем это пробуждением системы, а не обычным alt-tab).
+            let app_handle_for_resume = app.handle().clone();
+            if let Some(main_window) = app.get_webview_window("main") {
+                main_window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(true) = event {
+                        let _ = app_handle_for_resume.emit("system:possible_resume", ());
+                    }
+                });
+            }
+
             scheduler::start(app.handle().clone());
             Ok(())
         })
@@ -51,6 +66,7 @@ fn main() {
             jira_client::get_projects,
             jira_client::get_issues_by_jql,
             jira_client::get_worklog,
+            jira_client::get_worklog_by_id,
             jira_client::get_worklogs_since,
             jira_client::add_worklog,
             jira_client::update_worklog,
@@ -65,6 +81,15 @@ fn main() {
             bulk_wizard::get_custom_holidays,
             bulk_wizard::import_holidays,
             bulk_wizard::write_export_file,
+            bulk_wizard::write_export_file_utf8_bom,
+            sync_queue::enqueue_sync_operation,
+            sync_queue::list_sync_queue,
+            sync_queue::mark_sync_attempt_failed,
+            sync_queue::remove_sync_queue_item,
+            sync_queue::clear_sync_queue,
+            sync_queue::upsert_cached_worklog,
+            sync_queue::delete_cached_worklog,
+            sync_queue::list_cached_worklogs,
             exchange_client::test_exchange_connection,
             secrets::save_secret,
             secrets::delete_secret,
