@@ -13,12 +13,6 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // ложных срабатываний эвристик Windows Defender/корпоративного AV.
     let conn = rusqlite::Connection::open(&db_path)?;
 
-    // Схема:
-    // jira_profiles(id, name, base_url, email, type, secret_ref)
-    // exchange_profiles(id, name, ews_url, username, secret_ref)
-    // templates(id, issue_key, description, hours, weekdays, period_start, period_end)
-    // worklog_cache(id, issue_key, started, time_spent_seconds, comment, synced_at)
-    // settings(key, value)
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS jira_profiles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +49,23 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
+        );
+        CREATE TABLE IF NOT EXISTS wizard_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            config_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS custom_holidays (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            label TEXT
+        );
+        CREATE TABLE IF NOT EXISTS recent_issues (
+            issue_key TEXT PRIMARY KEY,
+            summary TEXT,
+            is_favorite INTEGER NOT NULL DEFAULT 0,
+            last_used_at TEXT NOT NULL DEFAULT (datetime('now'))
         );",
     )?;
 
