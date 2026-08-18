@@ -119,17 +119,24 @@ impl From<JiraError> for String {
 }
 
 /// Переводит технический reqwest::Error в понятное пользователю сообщение на русском.
-/// Охватывает наиболее частые корпоративные проблемы:
-/// - самоподписанный/корпоративный TLS-сертификат
-/// - hostname mismatch (rustls проверяет отдельно от cert-верификации)
-/// - отказ соединения / нет маршрута
-/// - таймаут
-/// - невалидный URL
+/// RAW-строка ошибки ВСЕГДА включается в конец сообщения — это необходимо для диагностики
+/// (TLS-детали, DNS failure, TCP reset, WSAECONNREFUSED, proxy-ошибки и т.д.).
 fn humanize_reqwest_error(e: &reqwest::Error) -> String {
     let raw = e.to_string();
     let lower = raw.to_lowercase();
 
+    // Логируем сырую ошибку для файлового лога
     log::debug!("[jira_client] reqwest error raw: {raw}");
+    // eprintln всегда виден в терминале tauri dev независимо от уровня log-фильтра
+    eprintln!("[jira_client][ERROR] reqwest raw: {raw}");
+    eprintln!("[jira_client][ERROR] is_connect={} is_timeout={} is_builder={} is_redirect={} is_status={}",
+        e.is_connect(), e.is_timeout(), e.is_builder(), e.is_redirect(), e.is_status());
+    if let Some(status) = e.status() {
+        eprintln!("[jira_client][ERROR] HTTP status: {status}");
+    }
+    if let Some(url) = e.url() {
+        eprintln!("[jira_client][ERROR] URL: {url}");
+    }
 
     // TLS / сертификат — проверяем до is_connect(), т.к. TLS-ошибки тоже is_connect()
     if lower.contains("certificate") || lower.contains("tls") || lower.contains("ssl")
@@ -137,10 +144,10 @@ fn humanize_reqwest_error(e: &reqwest::Error) -> String {
         || lower.contains("hostname") || lower.contains("handshake")
     {
         return format!(
-            "Ошибка TLS-сертификата сервера. \
+            "Ошибка TLS/сертификата. \
              Если сервер использует самоподписанный или корпоративный сертификат, \
-             включите опцию \"Не проверять TLS-сертификат\". \
-             Подробности: {raw}"
+             включите опцию \"Не проверять TLS-сертификат\".\n\
+             Сырая ошибка: {raw}"
         );
     }
 
@@ -148,7 +155,8 @@ fn humanize_reqwest_error(e: &reqwest::Error) -> String {
         let url = e.url().map(|u| u.to_string()).unwrap_or_default();
         return format!(
             "Превышено время ожидания ответа от сервера ({url}). \
-             Проверьте доступность сервера и настройки прокси."
+             Проверьте доступность сервера и настройки прокси.\n\
+             Сырая ошибка: {raw}"
         );
     }
 
@@ -157,38 +165,36 @@ fn humanize_reqwest_error(e: &reqwest::Error) -> String {
         if lower.contains("refused") {
             return format!(
                 "Подключение отклонено сервером ({url}). \
-                 Проверьте правильность Jira URL и порта."
+                 Проверьте правильность Jira URL и порта.\n\
+                 Сырая ошибка: {raw}"
             );
         }
         if lower.contains("no route") || lower.contains("network unreachable") {
             return format!(
                 "Нет маршрута до сервера ({url}). \
-                 Проверьте сетевое подключение и настройки прокси."
+                 Проверьте сетевое подключение и настройки прокси.\n\
+                 Сырая ошибка: {raw}"
             );
         }
+        if lower.contains("dns") || lower.contains("resolve") || lower.contains("lookup") {
+            return format!(
+                "Не удалось разрешить DNS-имя сервера ({url}). \
+                 Проверьте правильность Jira URL.\n\
+                 Сырая ошибка: {raw}"
+            );
+        }
+        // Общий connect: возвращаем сырую ошибку полностью
         return format!(
-            "Не удалось установить соединение с {url}. \
-             Проверьте Jira URL, порт и настройки прокси/файрвола."
+            "Не удалось установить соединение с {url}.\n\
+             Сырая ошибка: {raw}"
         );
     }
 
     if e.is_builder() {
-        return format!("Некорректный URL или параметры подключения: {raw}");
+        return format!("Некорректный URL или параметры подключения.\nСырая ошибка: {raw}");
     }
 
-    // Fallback: возвращаем оригинал, но без длинного технического префикса reqwest
-    if let Some(stripped) = raw.strip_prefix("error sending request for url ") {
-        // Вырезаем URL в скобках и оставляем только причину
-        if let Some(pos) = stripped.find(')')
-            .and_then(|p| stripped[p..].find(':').map(|q| p + q + 1))
-        {
-            let reason = stripped[pos..].trim();
-            if !reason.is_empty() {
-                return format!("Ошибка HTTP-запроса: {reason}");
-            }
-        }
-    }
-
+    // Fallback: полная сырая строка
     format!("Ошибка HTTP: {raw}")
 }
 
@@ -201,6 +207,10 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
         "[jira_client] build_http_client: url={} instance_type={:?} accept_invalid_certs={}",
         params.base_url, params.instance_type, params.accept_invalid_certs
     );
+    eprintln!(
+        "[jira_client] build_http_client: url={} instance_type={:?} accept_invalid_certs={}",
+        params.base_url, params.instance_type, params.accept_invalid_certs
+    );
 
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
@@ -208,6 +218,7 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
 
     if params.accept_invalid_certs {
         log::debug!("[jira_client] TLS verification disabled (accept_invalid_certs=true)");
+        eprintln!("[jira_client] TLS verification DISABLED (accept_invalid_certs=true)");
         // danger_accept_invalid_certs отключает проверку цепочки сертификатов.
         // danger_accept_invalid_hostnames отключает проверку CN/SAN — это отдельная
         // проверка в rustls, которая НЕ отключается одним лишь accept_invalid_certs.
@@ -241,6 +252,7 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
 
     if let Some(ref url) = proxy_url {
         log::debug!("[jira_client] using proxy: {url}");
+        eprintln!("[jira_client] using proxy: {url}");
         let mut proxy = reqwest::Proxy::all(url)
             .map_err(|e| JiraError::Other(format!("invalid proxy url {url}: {e}")))?;
         if let Some(cfg) = &params.proxy {
@@ -252,8 +264,8 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
         builder = builder.proxy(proxy);
     } else {
         log::debug!("[jira_client] no proxy configured");
+        eprintln!("[jira_client] no proxy configured");
     }
-    // без явного прокси разрешаем reqwest самому подхватить системные ENV-переменные
 
     let client = builder
         .build()
@@ -261,6 +273,7 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
 
     if client.is_ok() {
         log::debug!("[jira_client] http client built successfully");
+        eprintln!("[jira_client] http client built successfully");
     }
     client
 }
@@ -542,15 +555,15 @@ async fn send_with_retry(
                 return Ok(resp);
             }
             Err(e) => {
-                // Для TLS-ошибок (is_connect() == true) не делаем retry —
-                // повторные попытки не помогут при проблеме с сертификатом.
-                let is_tls = {
-                    let s = e.to_string().to_lowercase();
-                    s.contains("certificate") || s.contains("tls") || s.contains("ssl")
-                        || s.contains("rustls") || s.contains("hostname")
-                        || s.contains("handshake")
-                };
-                if attempt >= MAX_RETRIES || is_tls || !(e.is_connect() || e.is_timeout()) {
+                let raw = e.to_string();
+                let lower = raw.to_lowercase();
+                // TLS-ошибки и connect-ошибки НЕ ретраим — повторные попытки не помогут.
+                // Ретраим только 5xx server errors (выше) и таймауты.
+                let is_tls = lower.contains("certificate") || lower.contains("tls")
+                    || lower.contains("ssl") || lower.contains("rustls")
+                    || lower.contains("hostname") || lower.contains("handshake");
+                let no_retry = is_tls || e.is_connect() || !(e.is_timeout());
+                if attempt >= MAX_RETRIES || no_retry {
                     return Err(JiraError::from(e));
                 }
                 let delay_ms = BASE_BACKOFF_MS * 2u64.pow(attempt - 1);
@@ -584,14 +597,20 @@ pub async fn test_connection(params: JiraConnectionParams) -> Result<bool, Strin
         "[jira_client] test_connection: url={} email={} instance_type={:?} accept_invalid_certs={}",
         params.base_url, params.email, params.instance_type, params.accept_invalid_certs
     );
+    eprintln!(
+        "[jira_client] test_connection START: url={} instance_type={:?} accept_invalid_certs={}",
+        params.base_url, params.instance_type, params.accept_invalid_certs
+    );
 
     let ctx = init(&params).map_err(|e| {
         log::error!("[jira_client] test_connection init error: {e}");
+        eprintln!("[jira_client] test_connection init error: {e}");
         String::from(e)
     })?;
 
     let endpoint = url(&params, "myself");
     log::debug!("[jira_client] test_connection endpoint: {endpoint}");
+    eprintln!("[jira_client] test_connection endpoint: {endpoint}");
 
     let result = send_with_retry(&ctx.client, || {
         apply_auth(ctx.client.get(&endpoint), &params, &ctx.token)
@@ -602,10 +621,12 @@ pub async fn test_connection(params: JiraConnectionParams) -> Result<bool, Strin
         Ok(resp) => {
             let status = resp.status();
             log::info!("[jira_client] test_connection HTTP status: {status}");
+            eprintln!("[jira_client] test_connection OK, HTTP status: {status}");
             Ok(status.is_success())
         }
         Err(e) => {
             log::error!("[jira_client] test_connection failed: {e}");
+            eprintln!("[jira_client] test_connection FAILED: {e}");
             Err(e.to_string())
         }
     }
