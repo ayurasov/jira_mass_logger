@@ -378,7 +378,7 @@ const BASE_BACKOFF_MS: u64 = 500;
 
 async fn send_with_retry(
     client: &reqwest::Client,
-    build_request: impl Fn() -> reqwest::RequestBuilder,
+    mut build_request: impl FnMut() -> reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, JiraError> {
     let mut attempt: u32 = 0;
     loop {
