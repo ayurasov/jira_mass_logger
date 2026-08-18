@@ -13,7 +13,7 @@ mod logger;
 mod logger_noop;
 
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, tray::TrayIconBuilder, menu::{Menu, MenuItem}};
+use tauri::{Manager, Emitter, tray::TrayIconBuilder, menu::{Menu, MenuItem}};
 use crate::logger::AppLogger;
 use crate::network::NetworkMonitor;
 use crate::sync_queue::WakeSignal;
