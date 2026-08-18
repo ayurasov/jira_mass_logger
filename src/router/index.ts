@@ -18,7 +18,7 @@ const router = createRouter({
     {
       path: '/worklog',
       name: 'worklog',
-      component: () => import('../views/WorklogTable.vue'),
+      component: () => import('../views/MyWorklog.vue'),
     },
     {
       path: '/bulk',
