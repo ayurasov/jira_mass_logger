@@ -1,54 +1,56 @@
 /**
- * Глобальные горячие клавиши в Windows-стиле.
+ * Глобальные горячие клавиши в Windows-стиле (Промпт 10).
  *
- * Ctrl+N  — открыть мастер массового трекинга
- * Ctrl+L  — перейти в таблицу worklog
- * Ctrl+M  — свернуть в трей
- * Ctrl+,  — открыть настройки
- * F1      — открыть экран логов
+ * Поддерживаемые шорткаты из корня приложения (App.vue):
+ *   Ctrl+N  — Мастер массового трекинга (/bulk-log)
+ *   Ctrl+L  — Таблица worklog (/my-worklog)
+ *   Ctrl+M  — Свернуть в трей
+ *   Ctrl+,  — Настройки (/settings)
+ *   F1      — Логи (/logs)
  *
- * Enter и Escape обрабатываются локально в компонентах редактирования
- * (см. MyWorklog.vue / BulkLogWizard.vue)
+ * Enter/Escape реализованы локально в компонентах редактирования.
+ *
+ * API: передайте массив HotkeyBinding[]. Композабл сам подпишется/отпишется.
  */
 import { onMounted, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 
-export function useHotkeys() {
-  const router = useRouter();
+export interface HotkeyBinding {
+  /** Клавиша (строчная, lower-case: 'n', 'l', ',', 'F1') */
+  key: string;
+  ctrl?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+  /** Описание для дебага */
+  description?: string;
+  handler: () => void | Promise<void>;
+}
 
-  async function handleKeydown(e: KeyboardEvent) {
-    // Не перехватываем изолированные поля ввода
+/**
+ * Регистрирует глобальные шорткаты через массив описаний.
+ * Автоматически отписывается при unmount компонента.
+ * Не перехватывает события внутри полей ввода (INPUT, TEXTAREA, SELECT, contenteditable).
+ */
+export function useHotkeys(bindings: HotkeyBinding[]) {
+  function handleKeydown(e: KeyboardEvent) {
+    // Не перехватываем если фокус на поле ввода
     const tag = (e.target as HTMLElement)?.tagName ?? '';
-    const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (e.target as HTMLElement)?.isContentEditable;
+    const isInputLike =
+      ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) ||
+      (e.target as HTMLElement)?.isContentEditable;
 
-    if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-      switch (e.key.toLowerCase()) {
-        case 'n':
-          e.preventDefault();
-          await router.push('/bulk-log');
-          break;
-        case 'l':
-          e.preventDefault();
-          await router.push('/my-worklog');
-          break;
-        case 'm':
-          e.preventDefault();
-          try {
-            const win = getCurrentWindow();
-            await win.minimize();
-          } catch {}
-          break;
-        case ',':
-          e.preventDefault();
-          await router.push('/settings');
-          break;
+    for (const binding of bindings) {
+      const keyMatch = e.key.toLowerCase() === binding.key.toLowerCase() ||
+                       e.key === binding.key; // F1 и т.п. сохраняют регистр
+      const ctrlMatch = !!binding.ctrl === e.ctrlKey;
+      const shiftMatch = !!binding.shift === e.shiftKey;
+      const altMatch = !!binding.alt === e.altKey;
+
+      if (keyMatch && ctrlMatch && shiftMatch && altMatch) {
+        // Пропускаем Enter/Escape в полях ввода — они обрабатываются локально
+        if (isInputLike && !binding.ctrl && !binding.alt) continue;
+        e.preventDefault();
+        void binding.handler();
       }
-    }
-
-    if (e.key === 'F1') {
-      e.preventDefault();
-      await router.push('/logs');
     }
   }
 
