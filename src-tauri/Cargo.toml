@@ -34,6 +34,10 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.9"
 anyhow = "1"
 thiserror = "1"
+# log — фасад логирования, используется в jira_client и других модулях.
+# Tauri 2 подтягивает log как транзитивную зависимость, но явное объявление
+# гарантирует доступность макросов log::debug!/info!/error! без use.
+log = "0.4"
 # --- Exchange/Microsoft Graph интеграция (Промпт 5) ---
 oauth2 = "4"
 tiny_http = "0.12"
