@@ -3,7 +3,7 @@
     <div class="dash-card-header">
       <span class="dash-card-title">Недозаполненные дни &mdash; {{ currentMonthLabel }}</span>
       <span class="dash-badge" :data-variant="days.length === 0 ? 'success' : 'warning'">
-        {{ days.length === 0 ? 'Всё заполнено ✔' : days.length + ' дн. с дефицитом' }}
+        {{ days.length === 0 ? 'Всё заполнено ✔' : days.length + ' дн. с дефицитом' }}
       </span>
     </div>
 
@@ -15,11 +15,11 @@
       <li v-for="d in days" :key="d.date" class="missing-item">
         <span class="missing-date">{{ formatDate(d.date) }}</span>
         <span class="missing-hours" :data-ok="d.hours > 0">
-          {{ d.hours > 0 ? d.hours + ' ч' : 'Нет записей' }}
+          {{ d.hours > 0 ? d.hours + ' ч' : 'Нет записей' }}
         </span>
-        <span class="missing-deficit">-{{ d.deficit }} ч</span>
+        <span class="missing-deficit">-{{ d.deficit }} ч</span>
         <button class="dash-quick-btn" @click="goToWizard(d.date)" title="Быстрый переход в булк-мастер">
-          ↗️ Создать
+          ↗️ Создать
         </button>
       </li>
     </ul>
@@ -47,7 +47,8 @@ function formatDate(d: string) {
 
 function goToWizard(date: string) {
   // переходим в булк-мастер с предзаполненной датой
-  router.push({ name: 'bulk-log', query: { date } });
+  // route name: 'bulk' (см. src/router/index.ts)
+  router.push({ name: 'bulk', query: { date } });
 }
 </script>
 
