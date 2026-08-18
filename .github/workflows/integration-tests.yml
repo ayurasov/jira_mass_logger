@@ -1,79 +1,79 @@
-name: Integration Tests — Offline Sync Queue
+name: Integration Tests
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'src-tauri/src/sync_queue*.rs'
-      - 'src-tauri/src/main.rs'
-      - '.github/workflows/integration-tests.yml'
+    branches: [ main ]
   pull_request:
-    branches: [main]
-  workflow_dispatch:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   integration-tests:
-    name: cargo test (windows-latest)
+    name: Rust Integration Tests (Windows)
     runs-on: windows-latest
-    timeout-minutes: 30
-
-    env:
-      CARGO_TERM_COLOR: always
-      RUST_BACKTRACE: 1
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
 
     steps:
-      # ── Checkout ─────────────────────────────────────────────────────────
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ── Rust toolchain ───────────────────────────────────────────────
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
 
-      # ── sccache (ускоряет повторные сборки) ───────────────────────────
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.5
-
-      # ── Cargo cache ──────────────────────────────────────────────────
-      - name: Cache Cargo registry & build
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            src-tauri/target/
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # ── System dependencies for rusqlite bundled (MSVC already available on windows-latest) ─
-      # rusqlite с features=["bundled"] не требует отдельной установки sqlite3 на Windows.
+      # WebView2 runtime нужен для сборки Tauri, но не для Rust unit-тестов
+      - name: Install Tauri prerequisites
+        run: |
+          choco install -y visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools"
+        continue-on-error: true
 
-      # ── Register test module in main crate ─────────────────────────────
-      # sync_queue_tests.rs использует #[cfg(test)] mod, поэтому включается
-      # автоматически через mod sync_queue_tests; в main.rs при сборке с --test.
-      # Отдельной регистрации не требуется.
+      # Устанавливаем Node.js для генерации Tauri context (tauri::generate_context! макро)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      # ── Run integration tests ─────────────────────────────────────────
-      - name: Run sync_queue integration tests
+      - name: Install frontend dependencies
+        working-directory: .
+        run: npm ci
+        continue-on-error: true
+
+      # Запускаем только Rust-тесты (lib + integration), без сборки всего приложения
+      - name: Run integration tests
         working-directory: src-tauri
         run: |
-          cargo test sync_queue_tests --lib -- --nocapture
-        shell: pwsh
+          cargo test --lib --tests -- offline_to_sync --nocapture 2>&1
+        env:
+          RUST_LOG: debug
+          # Отключаем Tauri custom protocol чтобы избежать необходимости UI-рантайма
+          TAURI_SKIP_DEVSERVER_CHECK: "true"
 
-      # ── Upload test results on failure ──────────────────────────────
-      - name: Upload failure artifacts
+      # Дополнительно запускаем rate-limit и permanent-error тесты
+      - name: Run resilience tests
+        working-directory: src-tauri
+        run: |
+          cargo test --lib --tests -- test_rate_limit_then_retry_success test_permanent_error_goes_to_failed --nocapture 2>&1
+        env:
+          RUST_LOG: debug
+
+      - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-failure-logs
-          path: |
-            src-tauri/target/debug/.fingerprint/
-            src-tauri/target/debug/deps/*.d
-          retention-days: 7
+          name: test-output
+          path: src-tauri/target/debug/*.log
+          if-no-files-found: ignore
