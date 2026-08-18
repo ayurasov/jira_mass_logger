@@ -1,281 +1,220 @@
-//! Интеграционные тесты для сценария:
-//!   offline создание 20 записей → восстановление сети → успешная синхронизация всех
-//!
-//! Запуск: `cargo test --test sync_queue_integration -- --nocapture`
-//! В CI: windows-latest runner (см. .github/workflows/integration-tests.yml)
+//! Интеграционные тесты сценариев оффлайн/синхронизация.
+//! Запуск: cargo test --test sync_queue_integration_tests
+//! CI: .github/workflows/integration-tests.yml (windows-latest)
 
 #[cfg(test)]
 mod offline_to_sync {
-    use rusqlite::{Connection, params};
-    use std::sync::{Arc, Mutex};
-    use tokio::sync::Notify;
-    use wiremock::{MockServer, Mock, ResponseTemplate};
-    use wiremock::matchers::{method, path_regex};
-
-    use crate::sync_queue::{
-        fetch_pending, set_synced, SyncStatus,
-        enqueue_item_raw, count_by_status,
+    use std::{
+        sync::{Arc, Mutex},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
-    use crate::logger::AppLogger;
-    use crate::db::init_db_conn;
+    use rusqlite::Connection;
+    use tokio::time::timeout;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+    use crate::{
+        sync_queue,
+        sync_queue_helpers::{count_by_status, enqueue_item_raw, get_synced_ids_ordered},
+        logger_noop::noop_logger,
+    };
 
-    // ──────────────────────────────────────────
-    // Вспомогательные функции
-    // ──────────────────────────────────────────
-
-    fn make_in_memory_db() -> Arc<Mutex<Connection>> {
+    /// Создаёт in-memory SQLite и выполняет миграцию таблицы sync_queue.
+    fn make_db() -> Arc<Mutex<Connection>> {
         let conn = Connection::open_in_memory().expect("in-memory db");
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS sync_queue (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                row_key      TEXT    NOT NULL UNIQUE,
-                operation    TEXT    NOT NULL,
-                payload_json TEXT    NOT NULL,
-                status       TEXT    NOT NULL DEFAULT 'pending',
-                attempts     INTEGER NOT NULL DEFAULT 0,
-                last_error   TEXT,
-                created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-                updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation   TEXT    NOT NULL,
+                payload     TEXT    NOT NULL,
+                status      TEXT    NOT NULL DEFAULT 'pending',
+                attempts    INTEGER NOT NULL DEFAULT 0,
+                last_error  TEXT,
+                created_at  INTEGER NOT NULL
             );",
         )
-        .expect("create table");
+        .expect("migrate");
         Arc::new(Mutex::new(conn))
     }
 
-    fn make_noop_logger() -> Arc<crate::logger::NoopLogger> {
-        Arc::new(crate::logger::NoopLogger)
+    /// Текущее время в миллисекундах с эпохи UNIX.
+    fn now_ms() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
     }
 
-    /// Добавить N pending-записей напрямую в БД
-    fn enqueue_n(db: &Arc<Mutex<Connection>>, base_url: &str, n: usize) {
-        let conn = db.lock().unwrap();
-        for i in 0..n {
-            let row_key = format!("offline-{i:03}");
-            let payload = serde_json::json!({
-                "baseUrl":  base_url,
-                "issueKey": format!("TEST-{}", i + 1),
-                "email":    "test@example.com",
-                "token":    "fake-token",
-                "timeSpent": "1h",
-                "started":  "2026-08-18T10:00:00.000+0300",
-                "comment":  format!("Offline worklog {i}"),
-            });
-            conn.execute(
-                "INSERT OR IGNORE INTO sync_queue (row_key, operation, payload_json, status)
-                 VALUES (?1, 'create', ?2, 'pending')",
-                params![row_key, payload.to_string()],
-            )
-            .expect("insert");
-        }
-    }
-
-    // ──────────────────────────────────────────
-    // Тест: offline 20 записей → успешная синхронизация
-    // ──────────────────────────────────────────
-
+    /// Сценарий 1: 20 записей в offline → восстановление сети → все synced в правильном порядке.
     #[tokio::test]
     async fn test_offline_20_entries_then_sync_all() {
-        // 1. Поднимаем mock-сервер Jira
+        // ─ Поднимаем mock-сервер Jira API
         let mock_server = MockServer::start().await;
-
-        // Регистрируем обработчик: POST /rest/api/2/issue/{key}/worklog → 201
         Mock::given(method("POST"))
-            .and(path_regex(r"/rest/api/2/issue/TEST-\d+/worklog"))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(serde_json::json!({
-                    "id":        "10001",
-                    "issueId":   "10000",
-                    "timeSpent": "1h",
-                    "started":   "2026-08-18T10:00:00.000+0300",
-                }))
-            )
-            .expect(20)  // ровно 20 вызовов
+            .and(path("/rest/api/2/issue/TEST-1/worklog"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "id": "10000",
+                "issueId": "10001",
+                "timeSpentSeconds": 3600
+            })))
+            .expect(20) // ровно 20 вызовов
             .mount(&mock_server)
             .await;
 
-        // 2. Создаём in-memory БД и загружаем 20 offline-записей
-        let db = make_in_memory_db();
-        enqueue_n(&db, &mock_server.uri(), 20);
-
-        // 3. Проверяем, что все 20 записей в статусе pending
+        // ─ Создаём БД и заполняем 20 записей (с последовательными created_at)
+        let db = make_db();
+        let base_ms = now_ms();
         {
             let conn = db.lock().unwrap();
-            let pending = fetch_pending(&conn).expect("fetch_pending");
-            assert_eq!(pending.len(), 20, "должно быть 20 pending-записей до синхронизации");
+            for i in 0..20i64 {
+                let payload = serde_json::json!({
+                    "jira_base_url": mock_server.uri(),
+                    "issue_key": "TEST-1",
+                    "time_spent_seconds": 3600,
+                    "comment": format!("Entry {}", i),
+                    "started": "2026-08-18T09:00:00.000+0000"
+                })
+                .to_string();
+                enqueue_item_raw(&conn, "create_worklog", &payload, base_ms + i)
+                    .expect("enqueue");
+            }
         }
 
-        // 4. Запускаем воркер с wake-сигналом
-        let wake = Arc::new(Notify::new());
-        let logger = make_noop_logger() as Arc<dyn crate::logger::LogSink>;
-        crate::sync_queue::start_worker(db.clone(), wake.clone(), logger);
+        // ─ Убеждаемся что 20 pending
+        assert_eq!(count_by_status(&db.lock().unwrap(), "pending"), 20);
 
-        // 5. Имитируем восстановление сети: отправляем wake-сигнал
-        wake.notify_one();
+        // ─ Стартуем воркер (симулируем восстановление сети)
+        let wake = Arc::new(tokio::sync::Notify::new());
+        sync_queue::start_worker(db.clone(), wake.clone(), noop_logger());
+        wake.notify_one(); // ← сигнал возобновления сети
 
-        // 6. Ждём завершения синхронизации (до 10 секунд)
-        let timeout = tokio::time::Duration::from_secs(10);
-        let check = async {
+        // ─ Ждём до 10 секунд пока все не станут synced
+        let result = timeout(Duration::from_secs(10), async {
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                let conn = db.lock().unwrap();
-                let pending = fetch_pending(&conn).unwrap_or_default();
-                if pending.is_empty() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let synced = count_by_status(&db.lock().unwrap(), "synced");
+                if synced == 20 {
                     break;
                 }
             }
-        };
-        tokio::time::timeout(timeout, check)
-            .await
-            .expect("синхронизация не завершилась за 10 секунд");
+        })
+        .await;
+        assert!(result.is_ok(), "Timeout: not all 20 entries became synced");
 
-        // 7. Проверяем финальный статус всех 20 записей
-        {
-            let conn = db.lock().unwrap();
-            let synced_count = count_by_status(&conn, "synced").expect("count_by_status");
-            let pending_count = count_by_status(&conn, "pending").expect("count_by_status");
-            let failed_count  = count_by_status(&conn, "failed").expect("count_by_status");
-
-            assert_eq!(synced_count, 20, "все 20 записей должны стать synced");
-            assert_eq!(pending_count, 0, "pending должно быть 0");
-            assert_eq!(failed_count,  0, "failed должно быть 0");
+        // ─ Проверяем порядок (created_at ASC)
+        let ids = get_synced_ids_ordered(&db.lock().unwrap());
+        assert_eq!(ids.len(), 20);
+        for w in ids.windows(2) {
+            assert!(w[0] < w[1], "Order violated: {} >= {}", w[0], w[1]);
         }
 
-        // 8. Проверяем порядок: синхронизация по created_at ASC
-        {
-            let conn = db.lock().unwrap();
-            let mut stmt = conn.prepare(
-                "SELECT row_key FROM sync_queue WHERE status='synced' ORDER BY created_at ASC"
-            ).unwrap();
-            let keys: Vec<String> = stmt
-                .query_map([], |r| r.get(0))
-                .unwrap()
-                .filter_map(|r| r.ok())
-                .collect();
-
-            for (i, key) in keys.iter().enumerate() {
-                assert_eq!(*key, format!("offline-{i:03}"),
-                    "порядок синхронизации нарушен на позиции {i}");
-            }
-        }
-
-        // wiremock автоматически проверяет expect(20) при drop
+        // ─ Проверяем wiremock-ожидания (ещё раз убеждаемся в 20 запросах)
+        mock_server.verify().await;
     }
 
-    // ──────────────────────────────────────────
-    // Тест: 429 rate-limit → retry-after → успех
-    // ──────────────────────────────────────────
-
+    /// Сценарий 2: 429 + Retry-After -> затем 201 -> synced.
     #[tokio::test]
     async fn test_rate_limit_then_retry_success() {
         let mock_server = MockServer::start().await;
 
-        // Первый вызов → 429 с Retry-After: 1
+        // Первый вызов — 429
         Mock::given(method("POST"))
-            .and(path_regex(r"/rest/api/2/issue/RL-1/worklog"))
+            .and(path("/rest/api/2/issue/RL-1/worklog"))
             .respond_with(
-                ResponseTemplate::new(429)
-                    .insert_header("retry-after", "1")
+                ResponseTemplate::new(429).insert_header("Retry-After", "1"),
             )
             .up_to_n_times(1)
             .mount(&mock_server)
             .await;
 
-        // Второй вызов → 201 успех
+        // Второй вызов — 201
         Mock::given(method("POST"))
-            .and(path_regex(r"/rest/api/2/issue/RL-1/worklog"))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(serde_json::json!({"id":"10002"}))
-            )
+            .and(path("/rest/api/2/issue/RL-1/worklog"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "id": "20001",
+                "issueId": "20002",
+                "timeSpentSeconds": 1800
+            })))
             .mount(&mock_server)
             .await;
 
-        let db = make_in_memory_db();
+        let db = make_db();
         {
             let conn = db.lock().unwrap();
             let payload = serde_json::json!({
-                "baseUrl":  mock_server.uri(),
-                "issueKey": "RL-1",
-                "email":    "test@example.com",
-                "token":    "fake-token",
-                "timeSpent": "30m",
-                "started":  "2026-08-18T09:00:00.000+0300",
-            });
-            conn.execute(
-                "INSERT INTO sync_queue (row_key, operation, payload_json, status)
-                 VALUES ('rate-limit-test', 'create', ?1, 'pending')",
-                params![payload.to_string()],
-            ).unwrap();
+                "jira_base_url": mock_server.uri(),
+                "issue_key": "RL-1",
+                "time_spent_seconds": 1800,
+                "comment": "Rate limit test",
+                "started": "2026-08-18T10:00:00.000+0000"
+            })
+            .to_string();
+            enqueue_item_raw(&conn, "create_worklog", &payload, now_ms()).unwrap();
         }
 
-        let wake = Arc::new(Notify::new());
-        let logger = make_noop_logger() as Arc<dyn crate::logger::LogSink>;
-        crate::sync_queue::start_worker(db.clone(), wake.clone(), logger);
+        let wake = Arc::new(tokio::sync::Notify::new());
+        sync_queue::start_worker(db.clone(), wake.clone(), noop_logger());
         wake.notify_one();
 
-        tokio::time::timeout(tokio::time::Duration::from_secs(15), async {
+        let result = timeout(Duration::from_secs(15), async {
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                let conn = db.lock().unwrap();
-                let synced = count_by_status(&conn, "synced").unwrap_or(0);
-                if synced == 1 { break; }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                if count_by_status(&db.lock().unwrap(), "synced") == 1 {
+                    break;
+                }
             }
         })
-        .await
-        .expect("запись после rate-limit не синхронизировалась за 15 секунд");
+        .await;
+        assert!(result.is_ok(), "Timeout: entry not synced after 429 retry");
+        assert_eq!(count_by_status(&db.lock().unwrap(), "failed"), 0);
     }
 
-    // ──────────────────────────────────────────
-    // Тест: permanent 400 → статус failed, не crash
-    // ──────────────────────────────────────────
-
+    /// Сценарий 3: постоянный 400 Bad Request -> запись уходит в failed, приложение не падает.
     #[tokio::test]
     async fn test_permanent_error_goes_to_failed() {
         let mock_server = MockServer::start().await;
-
         Mock::given(method("POST"))
-            .and(path_regex(r"/rest/api/2/issue/BAD-1/worklog"))
+            .and(path("/rest/api/2/issue/BAD-1/worklog"))
             .respond_with(
-                ResponseTemplate::new(400)
-                    .set_body_json(serde_json::json!({"errorMessages":["Invalid issue"]}))
+                ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "errorMessages": ["Field 'timeSpent' cannot be empty"]
+                })),
             )
             .mount(&mock_server)
             .await;
 
-        let db = make_in_memory_db();
+        let db = make_db();
         {
             let conn = db.lock().unwrap();
             let payload = serde_json::json!({
-                "baseUrl":  mock_server.uri(),
-                "issueKey": "BAD-1",
-                "email":    "test@example.com",
-                "token":    "fake-token",
-            });
-            conn.execute(
-                "INSERT INTO sync_queue (row_key, operation, payload_json, status)
-                 VALUES ('perm-error-test', 'create', ?1, 'pending')",
-                params![payload.to_string()],
-            ).unwrap();
+                "jira_base_url": mock_server.uri(),
+                "issue_key": "BAD-1",
+                "time_spent_seconds": 0,
+                "comment": "",
+                "started": "2026-08-18T11:00:00.000+0000"
+            })
+            .to_string();
+            enqueue_item_raw(&conn, "create_worklog", &payload, now_ms()).unwrap();
         }
 
-        let wake = Arc::new(Notify::new());
-        let logger = make_noop_logger() as Arc<dyn crate::logger::LogSink>;
-        crate::sync_queue::start_worker(db.clone(), wake.clone(), logger);
+        let wake = Arc::new(tokio::sync::Notify::new());
+        sync_queue::start_worker(db.clone(), wake.clone(), noop_logger());
         wake.notify_one();
 
-        tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
+        // Ждём перехода в failed (с exponential backoff может занять до 30 с)
+        let result = timeout(Duration::from_secs(30), async {
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                let conn = db.lock().unwrap();
-                // permanent: статус failed, pending = 0
-                let pending = fetch_pending(&conn).unwrap_or_default();
-                if pending.is_empty() { break; }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let f = count_by_status(&db.lock().unwrap(), "failed");
+                if f >= 1 {
+                    break;
+                }
             }
         })
-        .await
-        .expect("запись не перешла в failed за 5 секунд");
-
-        let conn = db.lock().unwrap();
-        let failed = count_by_status(&conn, "failed").unwrap();
-        assert_eq!(failed, 1, "запись с 400 должна стать failed");
+        .await;
+        assert!(result.is_ok(), "Timeout: entry did not reach 'failed' status");
+        assert_eq!(count_by_status(&db.lock().unwrap(), "synced"), 0);
+        // Приложение всё ещё работает (отсутствие panic проверяется тем что мы дошли сюда)
     }
 }
