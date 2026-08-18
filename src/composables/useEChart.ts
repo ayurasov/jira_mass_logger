@@ -1,13 +1,11 @@
 // Композабл: безопасная инициализация ECharts в WebView2.
 //
-// WebView2 (Chromium-сандбокс) имеет нюанс: размеры хостового элемента могут быть
+// WebView2 (сандбокс Chromium) имеет нюанс: размеры хостового элемента могут быть
 // недоступны в момент onMounted (flex-контейнер ещё не вычислен). Поэтому:
-//  - инициализация отложена через requestAnimationFrame (RAF) для синхронизации
-//    с layout-pass-ом браузера;
+//  - scheduleInit отлагает init через requestAnimationFrame;
+//  - если после первого RAF offsetWidth всё ещё 0 — делаем второй RAF (доп. тайминг WebView2);
 //  - ResizeObserver обеспечивает адаптивный ресайз без window.resize;
-//  - requestAnimationFrame + RAF-дебаунс resize позволяет слабым
-//    корпоративным ноутбукам избежать лагов renderer при всплесках;
-//  - диспозер корректно дестроит ECharts-экземпляр и отписывается от ResizeObserver.
+//  - RAF-дебаунс resize позволяет слабым ноутбукам избежать лагов renderer.
 import { ref, onMounted, onUnmounted, type Ref } from 'vue';
 import * as echarts from 'echarts/core';
 import type { ECharts, EChartsOption } from 'echarts';
@@ -29,11 +27,10 @@ export function useEChart(
       chart.value = null;
     }
     const el = containerRef.value;
-    // проверяем, что размеры уже есть (WebView2 WebView layout fix)
     if (el.offsetWidth === 0) return;
     chart.value = echarts.init(el, theme.value, {
-      renderer: 'canvas',  // canvas лучше для производительности на слабых машинах
-      useDirtyRect: true,  // перерисовывает только изменівшиеся области
+      renderer: 'canvas',
+      useDirtyRect: true,
     });
   }
 
@@ -45,6 +42,19 @@ export function useEChart(
   function scheduleInit(option: EChartsOption) {
     if (rafId) cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(() => {
+      const el = containerRef.value;
+      if (!el) return;
+
+      // WebView2 fix: после первого RAF flex-layout может ещё не быть готов.
+      // Если offsetWidth === 0 — делаем ещё один RAF и повторную попытку.
+      if (el.offsetWidth === 0) {
+        rafId = requestAnimationFrame(() => {
+          initChart();
+          if (chart.value) chart.value.setOption(option, { notMerge: true });
+        });
+        return;
+      }
+
       initChart();
       if (chart.value) chart.value.setOption(option, { notMerge: true });
     });
