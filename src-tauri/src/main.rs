@@ -29,6 +29,10 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Автообновление через GitHub Releases (Промпт 10)
+        // installMode: quiet — обновление ставится в %LOCALAPPDATA% без UAC
+        // если NSIS установил приложение в currentUser режиме
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             db::init_db(app.handle())?;
             bulk_wizard::setup(app.handle())?;
