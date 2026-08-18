@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::bulk_wizard::WizardDb;
-use crate::logger::AppLogger;
+use crate::logger::{AppLogger, LogSink};
 
 // ──────────────────────────────────────────────────────
 // Публичные типы
@@ -93,7 +93,7 @@ const MAX_ATTEMPTS: i64    = 10;      // после этого → failed
 // Вспомогательные функции БД
 // ──────────────────────────────────────────────────────
 
-fn lock(db: &State<'_, WizardDb>) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+fn lock<'a>(db: &'a State<'a, WizardDb>) -> Result<std::sync::MutexGuard<'a, Connection>, String> {
     db.0.lock().map_err(|e| e.to_string())
 }
 
