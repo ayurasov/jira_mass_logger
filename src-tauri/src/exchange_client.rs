@@ -8,6 +8,7 @@
 //!
 //! Все запросы к внешним API идут через Rust (не из Vue), чтобы избежать CORS и утечки токенов.
 
+#[allow(unused_imports)]
 use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
