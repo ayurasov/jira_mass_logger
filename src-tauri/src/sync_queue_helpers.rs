@@ -1,29 +1,42 @@
-//! Дополнительные pub-функции для sync_queue, используемые в тестах
-//! и в будущем расширении функциональности.
+//! Вспомогательные публичные функции для интеграционных тестов.
+//! Используются только в тестовом окружении (#[cfg(test)]).
+use rusqlite::Connection;
 
-use rusqlite::{params, Connection};
-
-/// Подсчитать количество записей с данным статусом
-pub fn count_by_status(conn: &Connection, status: &str) -> rusqlite::Result<usize> {
-    let count: i64 = conn.query_row(
+/// Подсчитывает количество записей в таблице sync_queue с заданным статусом.
+pub fn count_by_status(conn: &Connection, status: &str) -> usize {
+    conn.query_row(
         "SELECT COUNT(*) FROM sync_queue WHERE status = ?1",
-        params![status],
-        |r| r.get(0),
-    )?;
-    Ok(count as usize)
+        rusqlite::params![status],
+        |row| row.get::<_, i64>(0),
+    )
+    .unwrap_or(0) as usize
 }
 
-/// Вставить запись напрямую (без State-обёртки) — для тестов
+/// Вставляет запись в очередь напрямую (без Tauri стейта), для предварительного заполнения тестовой БД.
 pub fn enqueue_item_raw(
     conn: &Connection,
-    row_key: &str,
     operation: &str,
     payload_json: &str,
+    created_at_ms: i64,
 ) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT OR IGNORE INTO sync_queue (row_key, operation, payload_json, status)
-         VALUES (?1, ?2, ?3, 'pending')",
-        params![row_key, operation, payload_json],
+        "INSERT INTO sync_queue (operation, payload, status, attempts, last_error, created_at)
+         VALUES (?1, ?2, 'pending', 0, NULL, ?3)",
+        rusqlite::params![operation, payload_json, created_at_ms],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Проверяет порядок синхронизации: возвращает вектор id в порядке created_at ASC,
+/// в котором они были обработаны.
+pub fn get_synced_ids_ordered(conn: &Connection) -> Vec<i64> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id FROM sync_queue WHERE status = 'synced' ORDER BY created_at ASC",
+        )
+        .expect("prepare failed");
+    stmt.query_map([], |row| row.get(0))
+        .expect("query failed")
+        .filter_map(|r| r.ok())
+        .collect()
 }
