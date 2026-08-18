@@ -164,7 +164,7 @@ pub fn start_worker(
     wake: WakeSignal,
     logger: Arc<AppLogger>,
 ) {
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let poll_interval = tokio::time::Duration::from_secs(WORKER_POLL_SECS);
         loop {
             // Ждём либо таймера, либо сигнала пробуждения
