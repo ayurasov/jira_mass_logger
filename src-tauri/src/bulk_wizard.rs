@@ -6,10 +6,10 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 
-pub struct WizardDb(pub Mutex<Connection>);
+pub struct WizardDb(pub Arc<Mutex<Connection>>);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WizardTemplate {
@@ -19,45 +19,60 @@ pub struct WizardTemplate {
     pub created_at: Option<String>,
 }
 
+// ────────────────────────────────────────────────────────────────
+// Шаблоны мастера
+// ────────────────────────────────────────────────────────────────
+
 #[tauri::command]
 pub fn save_wizard_template(db: State<'_, WizardDb>, name: String, config_json: String) -> Result<i64, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute("INSERT INTO wizard_templates (name, config_json) VALUES (?1, ?2)", params![name, config_json]).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO wizard_templates (name, config_json) VALUES (?1, ?2)
+         ON CONFLICT(name) DO UPDATE SET config_json = excluded.config_json, created_at = CURRENT_TIMESTAMP",
+        params![name, config_json],
+    ).map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
 }
 
 #[tauri::command]
 pub fn list_wizard_templates(db: State<'_, WizardDb>) -> Result<Vec<WizardTemplate>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT id, name, config_json, created_at FROM wizard_templates ORDER BY created_at DESC").map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([], |row| Ok(WizardTemplate { id: Some(row.get(0)?), name: row.get(1)?, config_json: row.get(2)?, created_at: Some(row.get(3)?), })).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, config_json, created_at FROM wizard_templates ORDER BY created_at DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| Ok(WizardTemplate {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        config_json: row.get(2)?,
+        created_at: row.get(3)?,
+    })).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_wizard_template(db: State<'_, WizardDb>, id: i64) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM wizard_templates WHERE id = ?1", params![id]).map_err(|e| e.to_string())?;
-    Ok(())
+    conn.execute("DELETE FROM wizard_templates WHERE id = ?1", params![id])
+        .map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn touch_recent_issue(db: State<'_, WizardDb>, issue_key: String, summary: Option<String>) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO recent_issues (issue_key, summary, last_used_at)
-         VALUES (?1, ?2, datetime('now'))
-         ON CONFLICT(issue_key) DO UPDATE SET summary = excluded.summary, last_used_at = excluded.last_used_at",
+        "INSERT INTO recent_issues (issue_key, summary) VALUES (?1, ?2)
+         ON CONFLICT(issue_key) DO UPDATE SET last_used_at = CURRENT_TIMESTAMP, summary = COALESCE(?2, summary)",
         params![issue_key, summary],
-    ).map_err(|e| e.to_string())?;
-    Ok(())
+    ).map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_issue_favorite(db: State<'_, WizardDb>, issue_key: String, is_favorite: bool) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute("UPDATE recent_issues SET is_favorite = ?2 WHERE issue_key = ?1", params![issue_key, is_favorite as i64]).map_err(|e| e.to_string())?;
-    Ok(())
+    conn.execute(
+        "UPDATE recent_issues SET is_favorite = ?1 WHERE issue_key = ?2",
+        params![is_favorite as i64, issue_key],
+    ).map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -66,66 +81,76 @@ pub struct RecentIssue { pub issue_key: String, pub summary: Option<String>, pub
 #[tauri::command]
 pub fn get_recent_issues(db: State<'_, WizardDb>) -> Result<Vec<RecentIssue>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT issue_key, summary, is_favorite, last_used_at FROM recent_issues ORDER BY is_favorite DESC, last_used_at DESC LIMIT 50").map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([], |row| Ok(RecentIssue { issue_key: row.get(0)?, summary: row.get(1)?, is_favorite: row.get::<_, i64>(2)? != 0, last_used_at: row.get(3)?, })).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT issue_key, summary, is_favorite, last_used_at FROM recent_issues ORDER BY is_favorite DESC, last_used_at DESC LIMIT 50"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| Ok(RecentIssue {
+        issue_key: row.get(0)?,
+        summary: row.get(1)?,
+        is_favorite: row.get::<_, i64>(2)? != 0,
+        last_used_at: row.get(3)?,
+    })).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn get_custom_holidays(db: State<'_, WizardDb>) -> Result<Vec<String>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT date FROM custom_holidays ORDER BY date").map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
-}
+// ────────────────────────────────────────────────────────────────
+// Экспорт лога (JSON) на диск
+// ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn import_holidays(db: State<'_, WizardDb>, json: String) -> Result<usize, String> {
-    let value: Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    let items = value.as_array().ok_or("expected a JSON array")?;
-    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM custom_holidays", []).map_err(|e| e.to_string())?;
-    let mut count = 0usize;
-    for item in items {
-        let (date, label) = match item {
-            Value::String(s) => (s.clone(), None),
-            Value::Object(_) => {
-                let date = item.get("date").and_then(|v| v.as_str()).ok_or("missing 'date' field")?.to_string();
-                let label = item.get("label").and_then(|v| v.as_str()).map(|s| s.to_string());
-                (date, label)
-            }
-            _ => continue,
-        };
-        tx.execute("INSERT OR REPLACE INTO custom_holidays (date, label) VALUES (?1, ?2)", params![date, label]).map_err(|e| e.to_string())?;
-        count += 1;
-    }
-    tx.commit().map_err(|e| e.to_string())?;
-    Ok(count)
+pub fn export_wizard_log(path: String, entries: Vec<Value>) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())
 }
 
+// ────────────────────────────────────────────────────────────────
+// Статический список праздников РФ (fallback)
+// ────────────────────────────────────────────────────────────────
+
 #[tauri::command]
-pub fn write_export_file(path: String, content: String) -> Result<(), String> {
-    fs::write(&path, content).map_err(|e| format!("cannot write {path}: {e}"))
+pub fn get_ru_holidays() -> Vec<String> {
+    vec![
+        // 2024
+        "2024-01-01","2024-01-02","2024-01-03","2024-01-04","2024-01-05",
+        "2024-01-06","2024-01-07","2024-01-08","2024-02-23","2024-03-08",
+        "2024-04-29","2024-04-30","2024-05-01","2024-05-09","2024-05-10",
+        "2024-06-12","2024-11-04",
+        // 2025
+        "2025-01-01","2025-01-02","2025-01-03","2025-01-06","2025-01-07",
+        "2025-01-08","2025-02-24","2025-03-10","2025-04-30","2025-05-01",
+        "2025-05-02","2025-05-08","2025-05-09","2025-06-12","2025-06-13",
+        "2025-11-03","2025-11-04","2025-12-31",
+        // 2026
+        "2026-01-01","2026-01-02","2026-01-07","2026-01-08","2026-01-09",
+        "2026-02-23","2026-03-09","2026-05-01","2026-05-04","2026-05-08",
+        "2026-05-11","2026-06-12","2026-11-04",
+    ].into_iter().map(String::from).collect()
 }
 
-/// Для CSV-экспорта таблицы worklog: добавляет UTF-8 BOM (EF BB BF) в начало
-/// файла, чтобы Excel на Windows автоматически распознавал UTF-8 и корректно
-/// отображал кириллицу без ручного выбора кодировки при импорте.
-#[tauri::command]
-pub fn write_export_file_utf8_bom(path: String, content: String) -> Result<(), String> {
-    const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
-    let mut bytes = Vec::with_capacity(BOM.len() + content.len());
-    bytes.extend_from_slice(&BOM);
-    bytes.extend_from_slice(content.as_bytes());
-    fs::write(&path, bytes).map_err(|e| format!("cannot write {path}: {e}"))
-}
+// ────────────────────────────────────────────────────────────────
+// Setup: открыть / создать SQLite, применить схему, зарегистрировать
+// ────────────────────────────────────────────────────────────────
 
 pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let app_data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&app_data_dir)?;
     let db_path = app_data_dir.join("jiratime.db");
     let conn = Connection::open(&db_path)?;
-    app.manage(WizardDb(Mutex::new(conn)));
+    conn.execute_batch("
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE IF NOT EXISTS wizard_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            config_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS recent_issues (
+            issue_key TEXT PRIMARY KEY,
+            summary TEXT,
+            is_favorite INTEGER NOT NULL DEFAULT 0,
+            last_used_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    ")?;
+    app.manage(WizardDb(Arc::new(Mutex::new(conn))));
     Ok(())
 }
