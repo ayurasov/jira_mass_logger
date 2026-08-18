@@ -1,0 +1,134 @@
+/*
+  scaling.css — Корректное отображение при масштабировании Windows 125%-200% (Промпт 10)
+
+  Основные принципы:
+  - Не фиксированные px, только rem/em/% и CSS-токены
+  - font-size: 62.5% на html — 1rem = 10px при 100% DPI, автомасштабируется системой
+  - min-width/min-height через CSS-переменные, чтобы DPI не сломал макет
+  - Свойство -webkit-text-size-adjust: none уже есть в base.css
+*/
+
+/* Снимаем font-size с html чтобы rem стал предсказуемым базовым (16px) */
+:root {
+  /* Базовый размер шрифта — 16px (100% от browser default) */
+  font-size: 100%;
+
+  /* Минимальные размеры окна (900x600 из tauri.conf.json) */
+  --window-min-width: 900px;
+  --window-min-height: 600px;
+
+  /* Токены типографики — rem-база, автомасштабируются системой */
+  --text-xs:   0.75rem;   /* 12px */
+  --text-sm:   0.875rem;  /* 14px */
+  --text-base: 1rem;      /* 16px */
+  --text-lg:   1.125rem;  /* 18px */
+  --text-xl:   1.25rem;   /* 20px */
+  --text-2xl:  1.5rem;    /* 24px */
+  --text-3xl:  1.875rem;  /* 30px */
+
+  /* Токены отступов — rem-база */
+  --space-1:  0.25rem;
+  --space-2:  0.5rem;
+  --space-3:  0.75rem;
+  --space-4:  1rem;
+  --space-5:  1.25rem;
+  --space-6:  1.5rem;
+  --space-8:  2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Радиусы */
+  --radius-sm:   0.25rem;
+  --radius-md:   0.375rem;
+  --radius-lg:   0.5rem;
+  --radius-xl:   0.75rem;
+  --radius-full: 9999px;
+
+  /* Тени */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.06);
+  --shadow-md: 0 4px 12px rgba(0,0,0,.08);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,.12);
+
+  /* Переходы */
+  --transition-fast: 120ms ease;
+  --transition-base: 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/*
+  WebView2 в Windows при masshtabirovanii 125%-200%:
+  - devicePixelRatio = 1.25 / 1.5 / 1.75 / 2.0
+  - браузер сам масштабирует rem-значения в CSS
+  - задача: не допустить чтобы что-то выходило за границу окна или переполнялось
+
+  Решение: overflow:hidden у .app + flex/grid без фиксированных px
+*/
+
+html, body {
+  /* Анти-алиасинг шрифта для HiDPI-экранов */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* Не даём iOS/WebView автомасштабировать шрифт при повороте */
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  /* Убираем ползунок браузера — Tauri управляет скроллом в окне */
+  overflow: hidden;
+  height: 100%;
+}
+
+.app {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Резиновость при разных размерах окна */
+@media (max-width: 1100px) {
+  .analytics-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .span-2, .span-full {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 960px) {
+  :root {
+    /* Немного уменьшаем шрифт для малых окон */
+    --text-base: 0.9375rem; /* 15px */
+    --text-lg:   1rem;      /* 16px */
+  }
+  .sidebar {
+    width: 52px;
+  }
+  .sidebar .nav-label {
+    display: none;
+  }
+}
+
+/* Гладкая прокрутка для листов и основных скролл-зон — Chromium WebView2 поддерживает */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border, #d4d1ca) transparent;
+}
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-border, #d4d1ca);
+  border-radius: var(--radius-full);
+}
+
+/* Обеспечиваем что tabular-nums для всех чисел в таблицах */
+td, th {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Фикс для WebView2: корневой blur может вызывать визуальные артефакты */
+/* Не используем filter:blur на больших площадях, только backdrop-filter: blur() для малых элементов */
+.modal-overlay {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
