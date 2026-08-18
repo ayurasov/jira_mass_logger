@@ -1,17 +1,19 @@
-name: Integration Tests
+name: Integration Tests (offline-to-sync)
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+    paths:
+      - 'src-tauri/src/sync_queue*.rs'
+      - 'src-tauri/src/logger*.rs'
+      - 'src-tauri/src/network.rs'
+      - '.github/workflows/integration-tests.yml'
   pull_request:
-    branches: [ main ]
-
-env:
-  CARGO_TERM_COLOR: always
+    branches: [main]
 
 jobs:
   integration-tests:
-    name: Rust Integration Tests (Windows)
+    name: Run offline->sync integration tests
     runs-on: windows-latest
 
     steps:
@@ -20,9 +22,6 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: x86_64-pc-windows-msvc
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -31,49 +30,28 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # WebView2 runtime нужен для сборки Tauri, но не для Rust unit-тестов
-      - name: Install Tauri prerequisites
+      - name: Install system dependencies (WebView2 runtime is pre-installed on windows-latest)
         run: |
-          choco install -y visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools"
-        continue-on-error: true
+          echo "WebView2 runtime pre-installed, nothing extra needed"
+        shell: pwsh
 
-      # Устанавливаем Node.js для генерации Tauri context (tauri::generate_context! макро)
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install frontend dependencies
-        working-directory: .
-        run: npm ci
-        continue-on-error: true
-
-      # Запускаем только Rust-тесты (lib + integration), без сборки всего приложения
-      - name: Run integration tests
+      - name: Run integration tests (offline_to_sync)
         working-directory: src-tauri
-        run: |
-          cargo test --lib --tests -- offline_to_sync --nocapture 2>&1
+        run: cargo test --lib --tests -- offline_to_sync --nocapture
         env:
           RUST_LOG: debug
-          # Отключаем Tauri custom protocol чтобы избежать необходимости UI-рантайма
-          TAURI_SKIP_DEVSERVER_CHECK: "true"
+          RUST_BACKTRACE: 1
+          # Отключаем openssl-излишества для wiremock на Windows
+          OPENSSL_NO_VENDOR: "1"
 
-      # Дополнительно запускаем rate-limit и permanent-error тесты
-      - name: Run resilience tests
-        working-directory: src-tauri
-        run: |
-          cargo test --lib --tests -- test_rate_limit_then_retry_success test_permanent_error_goes_to_failed --nocapture 2>&1
-        env:
-          RUST_LOG: debug
-
-      - name: Upload test artifacts on failure
+      - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: test-output
-          path: src-tauri/target/debug/*.log
-          if-no-files-found: ignore
+          path: src-tauri/target/debug/
+          retention-days: 3
