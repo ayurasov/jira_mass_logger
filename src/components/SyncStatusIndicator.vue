@@ -1,197 +1,301 @@
-<template>
-  <div class="sync-indicator" @click="togglePopover" :title="statusLabel">
-    <!-- Иконка статуса -->
-    <span class="sync-icon" :class="iconClass" aria-label="Статус синхронизации">
-      <svg v-if="status === 'online'" viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
-        <circle cx="10" cy="10" r="4" />
-        <path d="M3.5 14.5a9 9 0 0 1 13 0M6 11a6 6 0 0 1 8 0M1 17.5a13 13 0 0 1 18 0" stroke="currentColor" fill="none" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-      <svg v-else-if="status === 'offline'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" width="18" height="18">
-        <line x1="2" y1="2" x2="18" y2="18" />
-        <path d="M6 11a6 6 0 0 1 8 0M3.5 14.5a9 9 0 0 1 2-1.5M1 17.5a13 13 0 0 1 5-3"/>
-      </svg>
-      <svg v-else-if="status === 'syncing'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" width="18" height="18" class="spin">
-        <path d="M17 10a7 7 0 1 1-2.05-4.95" stroke-linecap="round"/>
-        <polyline points="17 3 17 10 10 10" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <svg v-else viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
-        <path d="M10 2a8 8 0 1 0 0 16A8 8 0 0 0 10 2zm0 5v4m0 3h.01" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-      </svg>
-    </span>
-
-    <!-- Бейдж ошибок -->
-    <span v-if="indicator.failed_count > 0" class="badge-error">{{ indicator.failed_count }}</span>
-    <span v-else-if="indicator.pending_count > 0" class="badge-pending">{{ indicator.pending_count }}</span>
-  </div>
-
-  <!-- Поповер деталей -->
-  <Teleport to="body">
-    <div v-if="popoverOpen" class="sync-popover" @click.stop>
-      <div class="popover-header">
-        <strong>Синхронизация</strong>
-        <button class="close-btn" @click="popoverOpen = false" aria-label="Закрыть">×</button>
-      </div>
-      <dl class="popover-body">
-        <dt>Статус</dt>
-        <dd :class="statusClass">{{ statusLabel }}</dd>
-        <dt>Ожидают отправки</dt>
-        <dd>{{ indicator.pending_count }}</dd>
-        <dt>Ошибок</dt>
-        <dd>{{ indicator.failed_count }}</dd>
-        <template v-if="indicator.last_error">
-          <dt>Последняя ошибка</dt>
-          <dd class="error-text">{{ indicator.last_error }}</dd>
-        </template>
-      </dl>
-    </div>
-    <div v-if="popoverOpen" class="sync-popover-backdrop" @click="popoverOpen = false" />
-  </Teleport>
-</template>
-
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+/**
+ * Индикатор сети/синхронизации в шапке приложения.
+ *
+ * Состояния:
+ *   online    — зелёная точка (Jira доступна)
+ *   offline   — серая точка (нет сети)
+ *   syncing   — вращающийся индикатор
+ *   error     — красный знак предупреждения
+ *
+ * По клику — выпадающая панель с деталями и кнопкой ручной синхронизации.
+ */
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 interface SyncIndicator {
-  net_status: 'online' | 'offline' | 'syncing' | 'error'
+  net_status:    'online' | 'offline' | 'syncing' | 'error'
   pending_count: number
-  failed_count: number
-  last_error: string | null
+  failed_count:  number
+  last_error:    string | null
 }
 
 const indicator = ref<SyncIndicator>({
-  net_status: 'offline',
+  net_status:    'offline',
   pending_count: 0,
-  failed_count: 0,
-  last_error: null,
+  failed_count:  0,
+  last_error:    null,
 })
-const popoverOpen = ref(false)
 
-const status = computed(() => indicator.value.net_status)
-const statusLabel = computed(() => ({
-  online:  'Онлайн',
-  offline: 'Оффлайн',
-  syncing: 'Синхронизация…',
-  error:   'Ошибка синхронизации',
-}[status.value] ?? status.value))
-const statusClass = computed(() => ({
-  online: 'ok', offline: 'warn', syncing: 'info', error: 'err',
-}[status.value]))
-const iconClass = computed(() => `icon-${status.value}`)
-
-function togglePopover() { popoverOpen.value = !popoverOpen.value }
-
-async function refresh() {
-  try {
-    indicator.value = await invoke<SyncIndicator>('get_sync_indicator')
-  } catch {}
-}
+const popupOpen = ref(false)
+const syncing   = ref(false)
 
 let unlisten: UnlistenFn | null = null
-let timer: ReturnType<typeof setInterval>
+
+const statusIcon = computed(() => {
+  switch (indicator.value.net_status) {
+    case 'online':  return '\u25CF'   // ●
+    case 'offline': return '\u25CF'   // ●
+    case 'syncing': return '\u21BB'   // ↻
+    case 'error':   return '\u26A0'   // ⚠
+    default:        return '\u25CB'
+  }
+})
+
+const statusClass = computed(() => ({
+  'si-online':  indicator.value.net_status === 'online',
+  'si-offline': indicator.value.net_status === 'offline',
+  'si-syncing': indicator.value.net_status === 'syncing',
+  'si-error':   indicator.value.net_status === 'error',
+}))
+
+const tooltip = computed(() => {
+  const { net_status, pending_count, failed_count } = indicator.value
+  const lines: string[] = []
+  if (net_status === 'online')  lines.push('Сеть: Jira доступна')
+  if (net_status === 'offline') lines.push('Сеть: оффлайн')
+  if (net_status === 'syncing') lines.push('Синхронизация...')
+  if (net_status === 'error')   lines.push('Ошибка синхронизации')
+  if (pending_count > 0)        lines.push(`Очередь: ${pending_count} записей`)
+  if (failed_count > 0)         lines.push(`Ошибок: ${failed_count}`)
+  return lines.join('\n')
+})
+
+async function fetchStatus() {
+  try {
+    indicator.value = await invoke<SyncIndicator>('get_sync_indicator')
+  } catch (e) {
+    // безопасно игнорируем
+  }
+}
+
+async function triggerSyncNow() {
+  syncing.value = true
+  try {
+    await invoke('trigger_sync_now')
+    await new Promise(r => setTimeout(r, 800))
+    await fetchStatus()
+  } finally {
+    syncing.value = false
+  }
+}
 
 onMounted(async () => {
-  await refresh()
-  timer = setInterval(refresh, 5_000)
-  unlisten = await listen<SyncIndicator>('sync-status-changed', (e) => {
-    indicator.value = e.payload
+  await fetchStatus()
+  // Слушаем события sync-status-changed от бэкенда
+  unlisten = await listen<SyncIndicator>('sync-status-changed', (event) => {
+    indicator.value = event.payload
   })
-  // Сообщаем backend о возможном пробуждении при получении фокуса
-  window.addEventListener('focus', onWindowFocus)
-})
-onUnmounted(() => {
-  clearInterval(timer)
-  unlisten?.()
-  window.removeEventListener('focus', onWindowFocus)
+
+  // Слушаем возможное пробуждение Windows через видимость окна
+  window.addEventListener('focus', handleWindowFocus)
 })
 
-async function onWindowFocus() {
+onUnmounted(() => {
+  unlisten?.()
+  window.removeEventListener('focus', handleWindowFocus)
+})
+
+async function handleWindowFocus() {
+  // При получении фокуса сообщаем бэкенду o возможном пробуждении (выход из сна/гибернации)
   try { await invoke('notify_system_resume') } catch {}
-  await refresh()
+  await fetchStatus()
 }
 </script>
 
+<template>
+  <div class="sync-status-indicator" :class="statusClass">
+    <!-- Кнопка с иконкой -->
+    <button
+      class="si-btn"
+      :title="tooltip"
+      :aria-label="tooltip"
+      @click="popupOpen = !popupOpen"
+    >
+      <span class="si-icon" :class="{ 'si-spin': indicator.net_status === 'syncing' }">
+        {{ statusIcon }}
+      </span>
+      <span v-if="indicator.pending_count > 0" class="si-badge">
+        {{ indicator.pending_count }}
+      </span>
+    </button>
+
+    <!-- Popup с деталями -->
+    <Transition name="si-popup">
+      <div v-if="popupOpen" class="si-popup" role="dialog" aria-label="Статус синхронизации">
+        <div class="si-popup-header">
+          <span class="si-popup-title">Синхронизация</span>
+          <button class="si-close" @click="popupOpen = false" aria-label="Закрыть">×</button>
+        </div>
+
+        <div class="si-popup-body">
+          <div class="si-row">
+            <span class="si-label">Сеть:</span>
+            <span :class="statusClass">
+              {{ indicator.net_status === 'online'  ? 'Онлайн'      :
+                 indicator.net_status === 'offline' ? 'Оффлайн'     :
+                 indicator.net_status === 'syncing' ? 'Синхронизация' :
+                 'Ошибка' }}
+            </span>
+          </div>
+          <div class="si-row">
+            <span class="si-label">Очередь:</span>
+            <span>{{ indicator.pending_count }} записей</span>
+          </div>
+          <div v-if="indicator.failed_count > 0" class="si-row si-row--error">
+            <span class="si-label">Ошибок:</span>
+            <span>{{ indicator.failed_count }}</span>
+          </div>
+          <div v-if="indicator.last_error" class="si-error-text">
+            {{ indicator.last_error }}
+          </div>
+        </div>
+
+        <div class="si-popup-footer">
+          <button
+            class="si-sync-btn"
+            :disabled="syncing || indicator.net_status === 'offline'"
+            @click="triggerSyncNow"
+          >
+            <span v-if="syncing">↻ Синхронизация...</span>
+            <span v-else>↻ Синхронизировать сейчас</span>
+          </button>
+        </div>
+      </div>
+    </Transition>
+  </div>
+</template>
+
 <style scoped>
-.sync-indicator {
+.sync-status-indicator {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+}
+
+/* Кнопка-индикатор */
+.si-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
   cursor: pointer;
-  padding: 0.25rem 0.5rem;
-  border-radius: 6px;
+  font-size: 18px;
+  line-height: 1;
   transition: background 0.15s;
 }
-.sync-indicator:hover {
-  background: var(--color-surface-offset, rgba(0,0,0,.06));
+.si-btn:hover { background: rgba(0,0,0,0.07); }
+
+/* Цвета статусов */
+.si-online  .si-icon { color: #22c55e; }
+.si-offline .si-icon { color: #94a3b8; }
+.si-syncing .si-icon { color: #3b82f6; }
+.si-error   .si-icon { color: #ef4444; }
+
+/* Адаптация под дарк тему */
+@media (prefers-color-scheme: dark) {
+  .si-btn:hover { background: rgba(255,255,255,0.1); }
 }
-.icon-online  { color: var(--color-success, #437a22); }
-.icon-offline { color: var(--color-text-muted, #7a7974); }
-.icon-syncing { color: var(--color-primary, #01696f); }
-.icon-error   { color: var(--color-error, #a12c7b); }
+[data-theme="dark"] .si-btn:hover { background: rgba(255,255,255,0.1); }
 
-@keyframes spin { to { transform: rotate(360deg); } }
-.spin { animation: spin 1s linear infinite; }
+/* Вращение при syncing */
+@keyframes si-spin {
+  from { display: inline-block; transform: rotate(0deg); }
+  to   { display: inline-block; transform: rotate(360deg); }
+}
+.si-spin { animation: si-spin 1s linear infinite; display: inline-block; }
 
-.badge-error, .badge-pending {
-  position: absolute;
-  top: 0; right: 0;
-  min-width: 16px;
-  height: 16px;
-  border-radius: 9999px;
+/* Бадж количества */
+.si-badge {
   font-size: 10px;
-  line-height: 16px;
+  font-weight: 700;
+  background: #ef4444;
+  color: #fff;
+  border-radius: 999px;
+  padding: 1px 5px;
+  line-height: 1.4;
+  min-width: 16px;
   text-align: center;
-  padding: 0 4px;
-  font-weight: 600;
 }
-.badge-error   { background: var(--color-error, #a12c7b); color: #fff; }
-.badge-pending { background: var(--color-gold, #d19900); color: #fff; }
 
-/* Поповер */
-.sync-popover-backdrop {
-  position: fixed; inset: 0; z-index: 999;
-}
-.sync-popover {
-  position: fixed;
-  top: 3rem; right: 1rem;
-  z-index: 1000;
-  background: var(--color-surface, #f9f8f5);
-  border: 1px solid var(--color-border, #d4d1ca);
+/* Popup */
+.si-popup {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 260px;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e2e8f0);
   border-radius: 10px;
-  box-shadow: var(--shadow-lg, 0 12px 32px rgba(0,0,0,.12));
-  padding: 1rem;
-  min-width: 240px;
-  max-width: 360px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 9999;
+  overflow: hidden;
 }
-.popover-header {
+
+.si-popup-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: .75rem;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--color-divider, #e2e8f0);
 }
-.close-btn {
-  background: none; border: none; cursor: pointer;
-  font-size: 1.2rem; color: var(--color-text-muted);
-  line-height: 1; padding: 0;
+.si-popup-title { font-weight: 600; font-size: 13px; }
+.si-close {
+  border: none; background: none; cursor: pointer;
+  font-size: 18px; line-height: 1; color: var(--color-text-muted, #64748b);
+  padding: 0 2px;
 }
-.popover-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: .35rem .5rem;
-  font-size: .875rem;
+
+.si-popup-body { padding: 10px 14px; }
+.si-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 3px 0;
+  color: var(--color-text, #1e293b);
 }
-.popover-body dt { color: var(--color-text-muted); }
-.popover-body dd { font-weight: 500; }
-.ok   { color: var(--color-success); }
-.warn { color: var(--color-warning, #964219); }
-.info { color: var(--color-primary); }
-.err  { color: var(--color-error); }
-.error-text {
-  grid-column: 1 / -1;
-  font-size: .8rem;
-  word-break: break-word;
-  color: var(--color-error);
+.si-row--error { color: #ef4444; }
+.si-label { color: var(--color-text-muted, #64748b); }
+.si-error-text {
+  font-size: 11px;
+  color: #ef4444;
+  margin-top: 6px;
+  word-break: break-all;
+  max-height: 60px;
+  overflow-y: auto;
+}
+
+.si-popup-footer {
+  padding: 8px 14px 12px;
+  border-top: 1px solid var(--color-divider, #e2e8f0);
+}
+.si-sync-btn {
+  width: 100%;
+  padding: 7px 12px;
+  border-radius: 6px;
+  border: none;
+  background: var(--color-primary, #01696f);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.si-sync-btn:hover:not(:disabled) { background: var(--color-primary-hover, #0c4e54); }
+.si-sync-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Popup transition */
+.si-popup-enter-active,
+.si-popup-leave-active {
+  transition: opacity 0.15s, transform 0.15s;
+}
+.si-popup-enter-from,
+.si-popup-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 </style>
