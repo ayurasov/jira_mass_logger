@@ -4,12 +4,14 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { useBulkWizardStore } from '../store/bulkWizard';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { useSettingsStore } from '../store/settings';
+import { useAnalyticsStore } from '../store/analytics';
 import { tauriApi, type JiraConnectionParams } from '../lib/tauriApi';
 import { DATE_RANGE_PRESETS } from '../utils/dateRange';
 
 const wizard = useBulkWizardStore();
 const jiraProfiles = useJiraProfilesStore();
 const settings = useSettingsStore();
+const analyticsStore = useAnalyticsStore();
 
 const templateName = ref('');
 const holidayJson = ref('');
@@ -55,6 +57,13 @@ async function buildPreviewAndNext() {
 async function submitWizard() {
   if (!jiraParams.value) return;
   await wizard.submit(jiraParams.value);
+
+  // Передаём количество успешно отправленных записей в аналитику
+  // для расчёта метрики "экономия времени".
+  const successCount = wizard.previewRows.filter(r => r.status === 'success').length;
+  if (successCount > 0) {
+    analyticsStore.trackBulkEntries(successCount);
+  }
 }
 
 async function saveTemplate() {
