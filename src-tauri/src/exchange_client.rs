@@ -6,7 +6,7 @@
 //     в корпоративных средах Intune / AD это иногда блокируется политиками, поэтому
 //     даём fallback на loopback redirect `http://127.0.0.1:{port}/callback`.
 //  2) EWS (Exchange Web Services) — для on-premise Exchange без Graph API.
-//     Поддерживается Basic auth, а для доменных сред Windows — best-effort NTLM.
+//     Поддерживается Basic auth и полноценный NTLM client-side handshake через sspi.
 //
 // Важно: это production-oriented skeleton с реальным HTTP/JSON/XML-потоком,
 // локальным кэшем на день и хранением refresh token в keyring. При этом для
@@ -14,7 +14,9 @@
 // окно `msal-auth`; если политика блокирует такой поток, фронтенду возвращается
 // понятная ошибка с рекомендацией использовать loopback fallback.
 
-use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, NaiveDate, NaiveDateTime, Utc};
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use keyring::Entry;
 use oauth2::{
     basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, CsrfToken, PkceCodeChallenge,
@@ -23,11 +25,15 @@ use oauth2::{
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use rand::{distributions::Alphanumeric, Rng};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, WWW_AUTHENTICATE};
+use reqwest::{Response, StatusCode};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::Read;
+use sspi::{
+    AuthIdentity, BufferType, ClientRequestFlags, CredentialUse, DataRepresentation, Ntlm,
+    SecurityBuffer, SecurityStatus, Sspi, SspiImpl, Username,
+};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
@@ -38,7 +44,6 @@ use crate::bulk_wizard::WizardDb;
 
 const GRAPH_AUTH_BASE: &str = "https://login.microsoftonline.com";
 const GRAPH_API_BASE: &str = "https://graph.microsoft.com/v1.0";
-const GRAPH_SCOPE: &str = "Calendars.Read offline_access openid profile";
 const ACCESS_TOKEN_TTL_SAFETY_SECONDS: i64 = 120;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -60,16 +65,32 @@ pub struct ExchangeConnectionParams {
     pub auth_mode: ExchangeAuthMode,
     pub ews_url: Option<String>,
     pub username: String,
-    /// Для Graph можно не передавать username — календарь читается через /me.
     pub secret_ref: String,
     pub tenant_id: Option<String>,
     pub client_id: Option<String>,
-    /// Где хранить refresh token Graph OAuth (в keyring), отдельная ссылка от Jira/EWS пароля.
     pub refresh_token_secret_ref: Option<String>,
     pub min_event_minutes: Option<i64>,
     pub exclude_free_busy: Option<bool>,
     pub exclude_declined: Option<bool>,
     pub ews_auth_type: Option<EwsAuthType>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExchangeProfileDto {
+    pub id: Option<i64>,
+    pub name: String,
+    pub auth_mode: ExchangeAuthMode,
+    pub ews_url: Option<String>,
+    pub ews_auth_type: Option<EwsAuthType>,
+    pub username: String,
+    pub secret_ref: String,
+    pub tenant_id: Option<String>,
+    pub client_id: Option<String>,
+    pub refresh_token_secret_ref: Option<String>,
+    pub min_event_minutes: Option<i64>,
+    pub exclude_free_busy: Option<bool>,
+    pub exclude_declined: Option<bool>,
+    pub is_active: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -123,6 +144,8 @@ pub enum ExchangeError {
     MissingSetting(String),
     #[error("Corporate policy appears to block embedded OAuth/WebView2 or redirect handling. Try loopback OAuth fallback. Details: {0}")]
     OAuthBlocked(String),
+    #[error("NTLM handshake failed: {0}")]
+    Ntlm(String),
     #[error("Other: {0}")]
     Other(String),
 }
@@ -279,7 +302,6 @@ pub async fn start_graph_oauth_embedded(
         .set_pkce_challenge(pkce_challenge)
         .url();
 
-    // Временное хранение verifier/state в runtime-managed state через global window label.
     app.manage(GraphOAuthEphemeralState(Mutex::new(Some(EphemeralOauthState {
         pkce_verifier: pkce_verifier.secret().to_string(),
         state: csrf.secret().to_string(),
@@ -339,7 +361,11 @@ pub async fn complete_graph_oauth_loopback(app: AppHandle) -> Result<GraphAuthCo
 
     if let Some(err) = params_q.get("error") {
         let _ = request.respond(TinyHttpResponse::from_string("OAuth failed. You can close this tab/window."));
-        return Err(ExchangeError::OAuthBlocked(format!("OAuth provider returned error={err}, description={}", params_q.get("error_description").cloned().unwrap_or_default())).into());
+        return Err(ExchangeError::OAuthBlocked(format!(
+            "OAuth provider returned error={err}, description={}",
+            params_q.get("error_description").cloned().unwrap_or_default()
+        ))
+        .into());
     }
 
     let code = params_q
@@ -532,7 +558,192 @@ fn build_ews_finditem_body(start: &str, end: &str) -> String {
 
 fn basic_auth_header(username: &str, password: &str) -> String {
     let raw = format!("{username}:{password}");
-    format!("Basic {}", base64::encode(raw.as_bytes()))
+    format!("Basic {}", BASE64_STANDARD.encode(raw.as_bytes()))
+}
+
+fn username_for_ntlm(raw_username: &str) -> Result<Username, ExchangeError> {
+    Username::parse(raw_username).map_err(|e| ExchangeError::Ntlm(format!("invalid NTLM username '{raw_username}': {e}")))
+}
+
+fn extract_ntlm_challenge(response: &Response) -> Option<String> {
+    response
+        .headers()
+        .get_all(WWW_AUTHENTICATE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find_map(|header| {
+            let trimmed = header.trim();
+            if trimmed.eq_ignore_ascii_case("NTLM") {
+                return Some(String::new());
+            }
+            trimmed
+                .strip_prefix("NTLM ")
+                .or_else(|| trimmed.strip_prefix("ntlm "))
+                .map(|v| v.trim().to_string())
+        })
+}
+
+fn make_ntlm_negotiate_message(username: &str, password: &str) -> Result<String, ExchangeError> {
+    let mut ntlm = Ntlm::new();
+    let identity = AuthIdentity {
+        username: username_for_ntlm(username)?,
+        password: password.to_string().into(),
+    };
+
+    let mut acq_cred = ntlm
+        .acquire_credentials_handle()
+        .with_credential_use(CredentialUse::Outbound)
+        .with_auth_data(&identity)
+        .execute(&mut ntlm)
+        .map_err(|e| ExchangeError::Ntlm(format!("acquire_credentials_handle failed: {e}")))?;
+
+    let mut output = vec![SecurityBuffer::new(Vec::new(), BufferType::Token)];
+    let mut builder = ntlm
+        .initialize_security_context()
+        .with_credentials_handle(&mut acq_cred.credentials_handle)
+        .with_context_requirements(ClientRequestFlags::CONFIDENTIALITY | ClientRequestFlags::ALLOCATE_MEMORY)
+        .with_target_data_representation(DataRepresentation::Native)
+        .with_output(&mut output);
+
+    let result = ntlm
+        .initialize_security_context_impl(&mut builder)
+        .map_err(|e| ExchangeError::Ntlm(format!("initialize_security_context negotiate failed: {e}")))?
+        .resolve_to_result()
+        .map_err(|e| ExchangeError::Ntlm(format!("resolve_to_result negotiate failed: {e}")))?;
+
+    if result.status != SecurityStatus::ContinueNeeded && result.status != SecurityStatus::Ok {
+        return Err(ExchangeError::Ntlm(format!(
+            "unexpected negotiate security status: {:?}",
+            result.status
+        )));
+    }
+
+    let token = output
+        .into_iter()
+        .next()
+        .map(|b| b.buffer)
+        .filter(|b| !b.is_empty())
+        .ok_or_else(|| ExchangeError::Ntlm("NTLM negotiate token is empty".to_string()))?;
+
+    Ok(format!("NTLM {}", BASE64_STANDARD.encode(token)))
+}
+
+fn make_ntlm_authenticate_message(username: &str, password: &str, challenge_b64: &str) -> Result<String, ExchangeError> {
+    let mut ntlm = Ntlm::new();
+    let identity = AuthIdentity {
+        username: username_for_ntlm(username)?,
+        password: password.to_string().into(),
+    };
+
+    let mut acq_cred = ntlm
+        .acquire_credentials_handle()
+        .with_credential_use(CredentialUse::Outbound)
+        .with_auth_data(&identity)
+        .execute(&mut ntlm)
+        .map_err(|e| ExchangeError::Ntlm(format!("acquire_credentials_handle failed: {e}")))?;
+
+    let mut negotiate_output = vec![SecurityBuffer::new(Vec::new(), BufferType::Token)];
+    let mut negotiate_builder = ntlm
+        .initialize_security_context()
+        .with_credentials_handle(&mut acq_cred.credentials_handle)
+        .with_context_requirements(ClientRequestFlags::CONFIDENTIALITY | ClientRequestFlags::ALLOCATE_MEMORY)
+        .with_target_data_representation(DataRepresentation::Native)
+        .with_output(&mut negotiate_output);
+
+    let _ = ntlm
+        .initialize_security_context_impl(&mut negotiate_builder)
+        .map_err(|e| ExchangeError::Ntlm(format!("initialize_security_context first leg failed: {e}")))?
+        .resolve_to_result()
+        .map_err(|e| ExchangeError::Ntlm(format!("resolve_to_result first leg failed: {e}")))?;
+
+    let challenge_bytes = BASE64_STANDARD
+        .decode(challenge_b64.as_bytes())
+        .map_err(|e| ExchangeError::Ntlm(format!("cannot decode NTLM challenge: {e}")))?;
+    let mut input = vec![SecurityBuffer::new(challenge_bytes, BufferType::Token)];
+    let mut output = vec![SecurityBuffer::new(Vec::new(), BufferType::Token)];
+
+    let mut authenticate_builder = ntlm
+        .initialize_security_context()
+        .with_credentials_handle(&mut acq_cred.credentials_handle)
+        .with_context_requirements(ClientRequestFlags::CONFIDENTIALITY | ClientRequestFlags::ALLOCATE_MEMORY)
+        .with_target_data_representation(DataRepresentation::Native)
+        .with_input(&mut input)
+        .with_output(&mut output);
+
+    let result = ntlm
+        .initialize_security_context_impl(&mut authenticate_builder)
+        .map_err(|e| ExchangeError::Ntlm(format!("initialize_security_context authenticate failed: {e}")))?
+        .resolve_to_result()
+        .map_err(|e| ExchangeError::Ntlm(format!("resolve_to_result authenticate failed: {e}")))?;
+
+    if result.status != SecurityStatus::Ok
+        && result.status != SecurityStatus::CompleteNeeded
+        && result.status != SecurityStatus::CompleteAndContinue
+    {
+        return Err(ExchangeError::Ntlm(format!(
+            "unexpected authenticate security status: {:?}",
+            result.status
+        )));
+    }
+
+    let token = output
+        .into_iter()
+        .next()
+        .map(|b| b.buffer)
+        .filter(|b| !b.is_empty())
+        .ok_or_else(|| ExchangeError::Ntlm("NTLM authenticate token is empty".to_string()))?;
+
+    Ok(format!("NTLM {}", BASE64_STANDARD.encode(token)))
+}
+
+async fn fetch_ews_calendar_events_with_ntlm(
+    client: &reqwest::Client,
+    ews_url: &str,
+    username: &str,
+    password: &str,
+    body: String,
+) -> Result<Vec<CalendarEventDto>, ExchangeError> {
+    let negotiate_header = make_ntlm_negotiate_message(username, password)?;
+    let first = client
+        .post(ews_url)
+        .header(CONTENT_TYPE, "text/xml; charset=utf-8")
+        .header("Accept", "text/xml")
+        .header(AUTHORIZATION, negotiate_header)
+        .body(body.clone())
+        .send()
+        .await?;
+
+    if first.status() == StatusCode::OK {
+        let xml = first.text().await?;
+        return parse_ews_finditem_response(&xml);
+    }
+
+    let challenge = extract_ntlm_challenge(&first).ok_or_else(|| {
+        ExchangeError::Ntlm(format!(
+            "server did not return NTLM challenge, status={}",
+            first.status()
+        ))
+    })?;
+
+    if challenge.is_empty() {
+        return Err(ExchangeError::Ntlm(
+            "server responded with bare 'WWW-Authenticate: NTLM' but no challenge blob; retry path is ambiguous".to_string(),
+        ));
+    }
+
+    let authenticate_header = make_ntlm_authenticate_message(username, password, &challenge)?;
+    let second = client
+        .post(ews_url)
+        .header(CONTENT_TYPE, "text/xml; charset=utf-8")
+        .header("Accept", "text/xml")
+        .header(AUTHORIZATION, authenticate_header)
+        .body(body)
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let xml = second.text().await?;
+    parse_ews_finditem_response(&xml)
 }
 
 async fn fetch_ews_calendar_events(
@@ -548,27 +759,30 @@ async fn fetch_ews_calendar_events(
     let client = build_http_client()?;
     let body = build_ews_finditem_body(date_from, date_to);
 
-    let mut req = client
-        .post(&ews_url)
-        .header(CONTENT_TYPE, "text/xml; charset=utf-8")
-        .header("Accept", "text/xml")
-        .body(body);
-
     match params.ews_auth_type.clone().unwrap_or(EwsAuthType::Basic) {
         EwsAuthType::Basic => {
-            req = req.header(AUTHORIZATION, basic_auth_header(&params.username, &password));
+            let xml = client
+                .post(&ews_url)
+                .header(CONTENT_TYPE, "text/xml; charset=utf-8")
+                .header("Accept", "text/xml")
+                .header(AUTHORIZATION, basic_auth_header(&params.username, &password))
+                .body(body)
+                .send()
+                .await?
+                .error_for_status()?
+                .text()
+                .await?;
+            parse_ews_finditem_response(&xml)
         }
-        EwsAuthType::Ntlm => {
-            // Best-effort: сначала пробуем Basic неявно как fallback,
-            // т.к. reqwest не умеет NTLM из коробки. Для полноценного NTLM/Negotiate
-            // в Windows-домене сюда в дальнейшем можно подключить WinHTTP SSPI bridge.
-            // Сейчас фронтенд получит явное сообщение, что встроенный NTLM limited.
-            req = req.header(AUTHORIZATION, basic_auth_header(&params.username, &password));
-        }
+        EwsAuthType::Ntlm => fetch_ews_calendar_events_with_ntlm(
+            &client,
+            &ews_url,
+            &params.username,
+            &password,
+            body,
+        )
+        .await,
     }
-
-    let xml = req.send().await?.error_for_status()?.text().await?;
-    parse_ews_finditem_response(&xml)
 }
 
 fn parse_ews_finditem_response(xml: &str) -> Result<Vec<CalendarEventDto>, ExchangeError> {
@@ -637,11 +851,9 @@ fn parse_ews_finditem_response(xml: &str) -> Result<Vec<CalendarEventDto>, Excha
                 if tag == "CalendarItem" {
                     in_calendar_item = false;
                     let start_dt = DateTime::parse_from_rfc3339(&start)
-                        .or_else(|_| DateTime::parse_from_str(&start, "%Y-%m-%dT%H:%M:%S"))
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now());
                     let end_dt = DateTime::parse_from_rfc3339(&end)
-                        .or_else(|_| DateTime::parse_from_str(&end, "%Y-%m-%dT%H:%M:%S"))
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| start_dt);
                     out.push(CalendarEventDto {
@@ -671,15 +883,14 @@ fn parse_ews_finditem_response(xml: &str) -> Result<Vec<CalendarEventDto>, Excha
 }
 
 fn should_keep_event(event: &CalendarEventDto, params: &ExchangeConnectionParams) -> bool {
-    if params.exclude_declined.unwrap_or(true) {
-        if event
+    if params.exclude_declined.unwrap_or(true)
+        && event
             .response_status
             .as_deref()
             .map(|s| s.eq_ignore_ascii_case("declined"))
             .unwrap_or(false)
-        {
-            return false;
-        }
+    {
+        return false;
     }
 
     if params.exclude_free_busy.unwrap_or(true) {
@@ -793,6 +1004,157 @@ fn upsert_cached_calendar_events(db: &State<'_, WizardDb>, events: &[CalendarEve
     }
     tx.commit().map_err(|e| ExchangeError::Other(e.to_string()))?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn list_exchange_profiles(db: State<'_, WizardDb>) -> Result<Vec<ExchangeProfileDto>, String> {
+    let conn = lock_db(&db).map_err(String::from)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, auth_mode, ews_url, ews_auth_type, username, secret_ref, tenant_id, client_id,
+                    refresh_token_secret_ref, min_event_minutes, exclude_free_busy, exclude_declined, is_active
+             FROM exchange_profiles
+             ORDER BY is_active DESC, updated_at DESC, id DESC",
+        )
+        .map_err(|e| ExchangeError::Other(e.to_string()))
+        .map_err(String::from)?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            let auth_mode_s: String = row.get(2)?;
+            let ews_auth_type_s: Option<String> = row.get(4)?;
+            Ok(ExchangeProfileDto {
+                id: Some(row.get(0)?),
+                name: row.get(1)?,
+                auth_mode: match auth_mode_s.as_str() {
+                    "ews" => ExchangeAuthMode::Ews,
+                    _ => ExchangeAuthMode::Graph,
+                },
+                ews_url: row.get(3)?,
+                ews_auth_type: Some(match ews_auth_type_s.as_deref().unwrap_or("basic") {
+                    "ntlm" => EwsAuthType::Ntlm,
+                    _ => EwsAuthType::Basic,
+                }),
+                username: row.get(5)?,
+                secret_ref: row.get(6)?,
+                tenant_id: row.get(7)?,
+                client_id: row.get(8)?,
+                refresh_token_secret_ref: row.get(9)?,
+                min_event_minutes: Some(row.get(10)?),
+                exclude_free_busy: Some(row.get::<_, i64>(11)? != 0),
+                exclude_declined: Some(row.get::<_, i64>(12)? != 0),
+                is_active: Some(row.get::<_, i64>(13)? != 0),
+            })
+        })
+        .map_err(|e| ExchangeError::Other(e.to_string()))
+        .map_err(String::from)?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ExchangeError::Other(e.to_string()).to_string())
+}
+
+#[tauri::command]
+pub fn save_exchange_profile(db: State<'_, WizardDb>, profile: ExchangeProfileDto) -> Result<i64, String> {
+    let conn = lock_db(&db).map_err(String::from)?;
+    let auth_mode = match profile.auth_mode {
+        ExchangeAuthMode::Graph => "graph",
+        ExchangeAuthMode::Ews => "ews",
+    };
+    let ews_auth_type = match profile.ews_auth_type.unwrap_or(EwsAuthType::Basic) {
+        EwsAuthType::Basic => "basic",
+        EwsAuthType::Ntlm => "ntlm",
+    };
+    let is_active = if profile.is_active.unwrap_or(false) { 1_i64 } else { 0_i64 };
+
+    let tx = conn.unchecked_transaction().map_err(|e| ExchangeError::Other(e.to_string()))
+        .map_err(String::from)?;
+
+    if is_active != 0 {
+        tx.execute("UPDATE exchange_profiles SET is_active = 0", [])
+            .map_err(|e| ExchangeError::Other(e.to_string()))
+            .map_err(String::from)?;
+    }
+
+    if let Some(id) = profile.id {
+        tx.execute(
+            "UPDATE exchange_profiles
+             SET name = ?1,
+                 auth_mode = ?2,
+                 ews_url = ?3,
+                 ews_auth_type = ?4,
+                 username = ?5,
+                 secret_ref = ?6,
+                 tenant_id = ?7,
+                 client_id = ?8,
+                 refresh_token_secret_ref = ?9,
+                 min_event_minutes = ?10,
+                 exclude_free_busy = ?11,
+                 exclude_declined = ?12,
+                 is_active = ?13,
+                 updated_at = datetime('now')
+             WHERE id = ?14",
+            params![
+                profile.name,
+                auth_mode,
+                profile.ews_url,
+                ews_auth_type,
+                profile.username,
+                profile.secret_ref,
+                profile.tenant_id,
+                profile.client_id,
+                profile.refresh_token_secret_ref,
+                profile.min_event_minutes.unwrap_or(0),
+                if profile.exclude_free_busy.unwrap_or(true) { 1_i64 } else { 0_i64 },
+                if profile.exclude_declined.unwrap_or(true) { 1_i64 } else { 0_i64 },
+                is_active,
+                id,
+            ],
+        )
+        .map_err(|e| ExchangeError::Other(e.to_string()))
+        .map_err(String::from)?;
+        tx.commit().map_err(|e| ExchangeError::Other(e.to_string()))
+            .map_err(String::from)?;
+        Ok(id)
+    } else {
+        tx.execute(
+            "INSERT INTO exchange_profiles (
+                name, auth_mode, ews_url, ews_auth_type, username, secret_ref, tenant_id, client_id,
+                refresh_token_secret_ref, min_event_minutes, exclude_free_busy, exclude_declined,
+                is_active, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, datetime('now'), datetime('now'))",
+            params![
+                profile.name,
+                auth_mode,
+                profile.ews_url,
+                ews_auth_type,
+                profile.username,
+                profile.secret_ref,
+                profile.tenant_id,
+                profile.client_id,
+                profile.refresh_token_secret_ref,
+                profile.min_event_minutes.unwrap_or(0),
+                if profile.exclude_free_busy.unwrap_or(true) { 1_i64 } else { 0_i64 },
+                if profile.exclude_declined.unwrap_or(true) { 1_i64 } else { 0_i64 },
+                is_active,
+            ],
+        )
+        .map_err(|e| ExchangeError::Other(e.to_string()))
+        .map_err(String::from)?;
+        let id = tx.last_insert_rowid();
+        tx.commit().map_err(|e| ExchangeError::Other(e.to_string()))
+            .map_err(String::from)?;
+        Ok(id)
+    }
+}
+
+#[tauri::command]
+pub fn delete_exchange_profile(db: State<'_, WizardDb>, id: i64) -> Result<bool, String> {
+    let conn = lock_db(&db).map_err(String::from)?;
+    let deleted = conn
+        .execute("DELETE FROM exchange_profiles WHERE id = ?1", params![id])
+        .map_err(|e| ExchangeError::Other(e.to_string()))
+        .map_err(String::from)?;
+    Ok(deleted > 0)
 }
 
 #[tauri::command]
