@@ -1,11 +1,10 @@
 //! Фоновый планировщик.
 //!
 //! Функции:
-//!   1. `start_scheduler`  — запускает фоновый tokio-цикл, который каждые N минут:
+//!   1. `start`  — запускает фоновый tokio-цикл, который каждые N минут:
 //!      - проверяет, надо ли отправить напоминание (если включено);
 //!      - если включена автосинхронизация, шлёт событие `sync_tick` во Vue.
-//!   2. Tauri-команды `get_scheduler_settings`, `save_scheduler_settings` —
-//!      CRUD настроек в SQLite.
+//!   2. Tauri-команды `get_scheduler_settings`, `save_scheduler_settings`.
 //!   3. Tauri-команда `trigger_sync_now` — принудительный тиксинхронизации.
 
 use anyhow::Result;
@@ -25,17 +24,11 @@ use crate::bulk_wizard::WizardDb;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SchedulerSettings {
-    /// Автосинхронизация включена
     pub auto_sync_enabled: bool,
-    /// Интервал автосинхронизации в минутах
     pub sync_interval_minutes: i64,
-    /// Напоминания о незаполненном worklog включены
     pub reminder_enabled: bool,
-    /// Время напоминания в формате "HH:MM" (24ч)
     pub reminder_time: String,
-    /// Напоминать только в рабочие дни (Пн–Пт)
     pub reminder_workdays_only: bool,
-    /// Норма часов в день (для вычисления недостачности)
     pub daily_hours_norm: f64,
 }
 
@@ -52,21 +45,15 @@ impl Default for SchedulerSettings {
     }
 }
 
-/// Состояние планировщика, доступное через `State`
 pub struct SchedulerState(pub Arc<Mutex<SchedulerInner>>);
 
 pub struct SchedulerInner {
     pub settings: SchedulerSettings,
-    /// Последнее время отправки напоминания (Unix timestamp сек)
     pub last_reminder_sent_ts: i64,
-    /// Последнее время автосинхронизации (Unix timestamp сек)
     pub last_sync_ts: i64,
 }
 
 // ─────────────────────────────────────────────────────────────────
-// SQLite CRUD
-// ─────────────────────────────────────────────────────────────────
-
 fn load_settings_from_db(db: &WizardDb) -> SchedulerSettings {
     let Ok(conn) = db.0.lock() else { return SchedulerSettings::default() };
     conn.query_row(
@@ -116,9 +103,6 @@ fn persist_settings(db: &WizardDb, s: &SchedulerSettings) -> Result<(), String> 
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Фоновый цикл
-// ─────────────────────────────────────────────────────────────────
-
 fn now_ts() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -127,7 +111,6 @@ fn now_ts() -> i64 {
         .unwrap_or(0)
 }
 
-/// Возвращает (hour, minute) от строки формата "HH:MM"
 fn parse_hhmm(s: &str) -> Option<(u32, u32)> {
     let mut parts = s.splitn(2, ':');
     let h: u32 = parts.next()?.parse().ok()?;
@@ -135,7 +118,6 @@ fn parse_hhmm(s: &str) -> Option<(u32, u32)> {
     Some((h, m))
 }
 
-/// Проверяет, настало ли время напоминания (с точностью до 1 минуты).
 fn should_remind(settings: &SchedulerSettings, last_sent_ts: i64) -> bool {
     if !settings.reminder_enabled {
         return false;
@@ -143,7 +125,6 @@ fn should_remind(settings: &SchedulerSettings, last_sent_ts: i64) -> bool {
     let Some((rh, rm)) = parse_hhmm(&settings.reminder_time) else {
         return false;
     };
-
     use chrono::{Datelike, Local, Timelike, Weekday};
     let now = Local::now();
     if settings.reminder_workdays_only {
@@ -152,29 +133,15 @@ fn should_remind(settings: &SchedulerSettings, last_sent_ts: i64) -> bool {
             _ => {}
         }
     }
-
-    let target_h = rh;
-    let target_m = rm;
-    let cur_h = now.hour();
-    let cur_m = now.minute();
-
-    // Попадаем в окно ± 1 минута
-    let matches = cur_h == target_h && cur_m == target_m;
-    if !matches {
-        return false;
-    }
-
-    // Не слать напоминание дважды в одну минуту
-    let ts_now = now_ts();
-    ts_now - last_sent_ts > 60
+    let matches = now.hour() == rh && now.minute() == rm;
+    if !matches { return false; }
+    now_ts() - last_sent_ts > 60
 }
 
-/// Проверяет по SQLite, есть ли незаполненные часы сегодня
 fn has_unfilled_hours(db: &WizardDb, norm_hours: f64) -> bool {
     let Ok(conn) = db.0.lock() else { return false };
     use chrono::Local;
     let today = Local::now().format("%Y-%m-%d").to_string();
-    // Сумма всех worklog-записей на сегодня из кэша
     let total_seconds: i64 = conn
         .query_row(
             "SELECT COALESCE(SUM(time_spent_seconds), 0)
@@ -184,15 +151,11 @@ fn has_unfilled_hours(db: &WizardDb, norm_hours: f64) -> bool {
             |r| r.get(0),
         )
         .unwrap_or(0);
-    let total_hours = total_seconds as f64 / 3600.0;
-    total_hours < norm_hours
+    (total_seconds as f64 / 3600.0) < norm_hours
 }
 
-/// Главный фоновый цикл. Запускается один раз из `setup` Tauri через `tauri::async_runtime::spawn`.
 pub async fn scheduler_loop(app: AppHandle) {
-    // Опросной цикл каждую минуту
     let tick_duration = Duration::from_secs(60);
-
     loop {
         sleep(tick_duration).await;
 
@@ -205,10 +168,7 @@ pub async fn scheduler_loop(app: AppHandle) {
             None => continue,
         };
 
-        // Читаем актуальные настройки из DB (учитывает реалтайм-изменения в UI)
         let settings = load_settings_from_db(&db);
-
-        // ── Ремайндер ──────────────────────────────────────────
         let (last_reminder_ts, last_sync_ts) = {
             let inner = sched_state.0.lock().unwrap();
             (inner.last_reminder_sent_ts, inner.last_sync_ts)
@@ -228,12 +188,9 @@ pub async fn scheduler_loop(app: AppHandle) {
             sched_state.0.lock().unwrap().last_reminder_sent_ts = now_ts();
         }
 
-        // ── Автосинхронизация ────────────────────────────────
         if settings.auto_sync_enabled {
             let interval_secs = settings.sync_interval_minutes * 60;
-            let elapsed = now_ts() - last_sync_ts;
-            if elapsed >= interval_secs {
-                // Шлём событие во Vue — фронтенд выполняет реальную синхронизацию
+            if now_ts() - last_sync_ts >= interval_secs {
                 let _ = app.emit("sync_tick", serde_json::json!({ "ts": now_ts() }));
                 sched_state.0.lock().unwrap().last_sync_ts = now_ts();
             }
@@ -257,7 +214,6 @@ pub fn save_scheduler_settings(
     settings: SchedulerSettings,
 ) -> Result<(), String> {
     persist_settings(&db, &settings)?;
-    // Обновляем в памяти
     sched.0.lock().map_err(|e| e.to_string())?.settings = settings;
     Ok(())
 }
@@ -266,15 +222,11 @@ pub fn save_scheduler_settings(
 pub fn trigger_sync_now(app: AppHandle, sched: State<'_, SchedulerState>) -> Result<(), String> {
     app.emit("sync_tick", serde_json::json!({ "ts": now_ts(), "manual": true }))
         .map_err(|e| e.to_string())?;
-    sched
-        .0
-        .lock()
-        .map_err(|e| e.to_string())?
-        .last_sync_ts = now_ts();
+    sched.0.lock().map_err(|e| e.to_string())?.last_sync_ts = now_ts();
     Ok(())
 }
 
-/// Инициализация: вызывается из `main.rs` перед `tauri::Builder::build()`.
+/// Инициализация: вызывается из `main.rs` setup().
 pub fn init_scheduler(app: &AppHandle, db: &WizardDb) -> SchedulerState {
     let settings = load_settings_from_db(db);
     let state = SchedulerState(Arc::new(Mutex::new(SchedulerInner {
@@ -282,8 +234,15 @@ pub fn init_scheduler(app: &AppHandle, db: &WizardDb) -> SchedulerState {
         last_reminder_sent_ts: 0,
         last_sync_ts: 0,
     })));
-    // Запускаем цикл в фоновом tokio-runtime Tauri
     let app_handle = app.clone();
     tauri::async_runtime::spawn(scheduler_loop(app_handle));
     state
+}
+
+/// Удобный публичный helper — оставлен для обратной совместимости.
+pub fn start(app: AppHandle) {
+    let db = app
+        .state::<WizardDb>();
+    let state = init_scheduler(&app, &db);
+    app.manage(state);
 }
