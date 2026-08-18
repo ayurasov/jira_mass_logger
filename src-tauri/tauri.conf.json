@@ -1,81 +1,81 @@
 {
+  "$schema": "https://schema.tauri.app/config/2",
   "productName": "JiraTime",
-  "version": "1.0.0",
-  "identifier": "com.ayurasov.jiratime",
+  "version": "0.1.0",
+  "identifier": "ru.ayurasov.jiratime",
   "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
-    "devUrl": "http://localhost:1420",
-    "frontendDist": "../dist"
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [
       {
         "title": "JiraTime",
-        "width": 1100,
-        "height": 720,
+        "width": 1200,
+        "height": 800,
         "minWidth": 900,
         "minHeight": 600,
-        "theme": null,
-        "decorations": true,
         "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
         "center": true
       }
     ],
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "tooltip": "JiraTime"
-    },
     "security": {
       "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/icon.ico",
+      "iconAsTemplate": false
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
-    "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"],
-    "publisher": "Alexander Yurasov",
-    "copyright": "Copyright \u00a9 2026 Alexander Yurasov",
-    "category": "Productivity",
-    "shortDescription": "\u041c\u0430\u0441\u0441\u043e\u0432\u043e\u0435 \u043b\u043e\u0433\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u0432\u0440\u0435\u043c\u0435\u043d\u0438 \u0432 Jira",
-    "longDescription": "JiraTime \u2014 \u043d\u0430\u0441\u0442\u043e\u043b\u044c\u043d\u043e\u0435 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u0434\u043b\u044f Windows, \u043f\u043e\u0437\u0432\u043e\u043b\u044f\u044e\u0449\u0435\u0435 \u0431\u044b\u0441\u0442\u0440\u043e \u043b\u043e\u0433\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u0430\u0431\u043e\u0447\u0435\u0435 \u0432\u0440\u0435\u043c\u044f \u0432 Jira \u043f\u043e \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u0438\u043c \u0437\u0430\u0434\u0430\u0447\u0430\u043c \u0441\u0440\u0430\u0437\u0443. \u041f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442 \u0438\u043d\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u044e \u0441 Microsoft Exchange \u0434\u043b\u044f \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0433\u043e \u0437\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u044f \u0438\u0437 \u043a\u0430\u043b\u0435\u043d\u0434\u0430\u0440\u044f, \u043e\u0444\u043b\u0430\u0439\u043d-\u0440\u0435\u0436\u0438\u043c \u0441 \u043e\u0447\u0435\u0440\u0435\u0434\u044c\u044e \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438 \u0438 \u0430\u043d\u0430\u043b\u0438\u0442\u0438\u043a\u0443.",
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "windows": {
+      "digestAlgorithm": "sha256",
+      "certificateThumbprint": null,
+      "timestampUrl": "http://timestamp.digicert.com",
       "webviewInstallMode": {
-        "type": "downloadBootstrapper",
-        "silent": true
-      },
-      "webviewInstallModeFallback": {
-        "type": "offlineInstaller",
-        "path": "resources/MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
-      },
-      "wix": {
-        "language": ["ru-RU", "en-US"],
-        "upgradeCode": "d9a7c1e2-4b5f-4a8d-9c3e-1f2a3b4c5d6e",
-        "componentGroupRefs": ["RTMergeModule"]
+        "type": "embedBootstrapper"
       },
       "nsis": {
-        "languages": ["Russian", "English"],
-        "displayLanguageSelector": false,
         "installMode": "currentUser",
-        "installerIcon": "icons/icon.ico",
-        "uninstallerIcon": "icons/icon.ico",
-        "headerImage": "icons/installer-header.bmp",
-        "sidebarImage": "icons/installer-sidebar.bmp"
+        "languages": ["Russian", "English"],
+        "displayLanguageSelector": false
       },
-      "signCommand": "signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $env:CODESIGN_PFX_PATH /p $env:CODESIGN_PFX_PASSWORD $FilePath"
-    },
-    "plugins": {
-      "updater": {
-        "active": true,
-        "dialog": true,
-        "pubkey": "PLACEHOLDER_TAURI_UPDATER_PUBKEY",
-        "endpoints": [
-          "https://github.com/ayurasov/jira_mass_logger/releases/latest/download/latest.json"
-        ],
-        "windows": {
-          "installMode": "quiet"
-        }
+      "wix": {
+        "language": "ru-RU"
       }
+    },
+    "publisher": "Alexander Yurasov",
+    "copyright": "© 2026 Alexander Yurasov",
+    "longDescription": "Десктопное приложение для массового логирования рабочего времени в Jira с интеграцией Exchange/Microsoft Graph.",
+    "shortDescription": "Массовый трекинг времени в Jira"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkK",
+      "endpoints": [
+        "https://github.com/ayurasov/jira_mass_logger/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "windows": {
+        "installMode": "currentUser"
+      }
+    },
+    "autostart": {
+      "mobile": false
     }
   }
 }
