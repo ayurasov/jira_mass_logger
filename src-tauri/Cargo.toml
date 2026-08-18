@@ -21,7 +21,9 @@ tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 # Автообновление через GitHub Releases (Промпт 10)
 tauri-plugin-updater = "2"
-keyring = { version = "2", features = ["windows-native"] }
+# keyring v2: на Windows использует Windows Credential Manager через default features.
+# Фича 'windows-native' была удалена в keyring ещё до v2.0.0.
+keyring = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 # rustls-tls важен для Windows: не зависит от системных SSL-инспекторов/proxy
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
