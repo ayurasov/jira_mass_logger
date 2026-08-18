@@ -377,7 +377,8 @@ const MAX_RETRIES: u32 = 5;
 const BASE_BACKOFF_MS: u64 = 500;
 
 async fn send_with_retry(
-    _client: &reqwest::Client,
+    #[allow(unused_variables)]
+    client: &reqwest::Client,
     mut build_request: impl FnMut() -> reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, JiraError> {
     let mut attempt: u32 = 0;
@@ -826,7 +827,8 @@ pub async fn bulk_add_worklogs(
 }
 
 async fn add_single_with_attempts(
-    _client: &reqwest::Client,
+    #[allow(unused_variables)]
+    client: &reqwest::Client,
     token: &str,
     params: &JiraConnectionParams,
     entry: &NewWorklogEntry,
