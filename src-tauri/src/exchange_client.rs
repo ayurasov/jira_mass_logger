@@ -15,7 +15,6 @@ use chrono::{DateTime, Utc};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use keyring::Entry as KeyringEntry;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -398,7 +397,7 @@ struct EwsRawEvent {
 
 fn parse_ews_finditem_response(xml: &str) -> Vec<EwsRawEvent> {
     let mut reader = Reader::from_str(xml);
-    reader.config_mut().trim_text = true;
+    reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
 
     let mut in_item = false;
