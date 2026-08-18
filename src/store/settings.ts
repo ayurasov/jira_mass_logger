@@ -8,6 +8,9 @@ export const useSettingsStore = defineStore('settings', {
     followSystemTheme: true,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     workHoursPerDay: 8,
+    // фоновая автосинхронизация экрана "Мой worklog" с Jira, минуты, можно отключить
+    autoSyncEnabled: localStorage.getItem('jiratime-autosync-enabled') !== 'false',
+    autoSyncIntervalMinutes: Number(localStorage.getItem('jiratime-autosync-interval') ?? '5') || 5,
   }),
   actions: {
     async loadTheme() {
@@ -43,6 +46,14 @@ export const useSettingsStore = defineStore('settings', {
       this.followSystemTheme = true;
       localStorage.setItem('jiratime-follow-system', 'true');
       this.syncWithSystemTheme();
+    },
+    setAutoSync(enabled: boolean, intervalMinutes?: number) {
+      this.autoSyncEnabled = enabled;
+      localStorage.setItem('jiratime-autosync-enabled', String(enabled));
+      if (intervalMinutes && intervalMinutes > 0) {
+        this.autoSyncIntervalMinutes = intervalMinutes;
+        localStorage.setItem('jiratime-autosync-interval', String(intervalMinutes));
+      }
     },
   },
 });

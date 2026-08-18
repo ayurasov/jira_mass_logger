@@ -1,4 +1,5 @@
-// Инициализация локальной SQLite БД (профили, шаблоны, кэш worklog, настройки).
+// Инициализация локальной SQLite БД (профили, шаблоны, кэш worklog, настройки,
+// Exchange-профили и кэш событий, правила сопоставления встреч, история матчей).
 // На Windows БД хранится в %APPDATA%/JiraTime (не в директории установки Program Files),
 // путь берётся через tauri path API (app.path().app_data_dir()), а не хардкодится.
 use std::fs;
@@ -13,28 +14,42 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // ложных срабатываний эвристик Windows Defender/корпоративного AV.
     let conn = rusqlite::Connection::open(&db_path)?;
 
-    // Схема:
-    // jira_profiles(id, name, base_url, email, type, secret_ref)
-    // exchange_profiles(id, name, ews_url, username, secret_ref)
-    // templates(id, issue_key, description, hours, weekdays, period_start, period_end)
-    // worklog_cache(id, issue_key, started, time_spent_seconds, comment, synced_at)
-    // settings(key, value)
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS jira_profiles (
+        "PRAGMA journal_mode=WAL;
+
+        CREATE TABLE IF NOT EXISTS jira_profiles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             base_url TEXT NOT NULL,
             email TEXT NOT NULL,
             type TEXT NOT NULL,
-            secret_ref TEXT NOT NULL
+            secret_ref TEXT NOT NULL,
+            instance_type TEXT NOT NULL DEFAULT 'cloud',
+            extra_root_ca_pem_path TEXT,
+            proxy_url TEXT,
+            proxy_username TEXT,
+            proxy_secret_ref TEXT,
+            user_timezone TEXT,
+            is_active INTEGER NOT NULL DEFAULT 0
         );
+
         CREATE TABLE IF NOT EXISTS exchange_profiles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
+            auth_mode TEXT NOT NULL DEFAULT 'ews',
             ews_url TEXT,
+            ews_auth_type TEXT,
             username TEXT NOT NULL,
-            secret_ref TEXT NOT NULL
+            secret_ref TEXT NOT NULL,
+            tenant_id TEXT,
+            client_id TEXT,
+            refresh_token_secret_ref TEXT,
+            min_event_minutes INTEGER,
+            exclude_free_busy INTEGER,
+            exclude_declined INTEGER,
+            is_active INTEGER NOT NULL DEFAULT 0
         );
+
         CREATE TABLE IF NOT EXISTS templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             issue_key TEXT NOT NULL,
@@ -44,6 +59,7 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             period_start TEXT,
             period_end TEXT
         );
+
         CREATE TABLE IF NOT EXISTS worklog_cache (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             issue_key TEXT NOT NULL,
@@ -52,11 +68,116 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             comment TEXT,
             synced_at TEXT
         );
+
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS wizard_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            config_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS recent_issues (
+            issue_key TEXT PRIMARY KEY,
+            summary TEXT,
+            is_favorite INTEGER NOT NULL DEFAULT 0,
+            last_used_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS custom_holidays (
+            date TEXT PRIMARY KEY
+        );
+
+        CREATE TABLE IF NOT EXISTS calendar_events_cache (
+            id TEXT NOT NULL,
+            profile_id INTEGER NOT NULL,
+            subject TEXT NOT NULL,
+            start_at TEXT NOT NULL,
+            end_at TEXT NOT NULL,
+            duration_minutes INTEGER NOT NULL,
+            attendees_json TEXT NOT NULL DEFAULT '[]',
+            category TEXT,
+            color TEXT,
+            online_meeting_url TEXT,
+            response_status TEXT,
+            show_as TEXT,
+            series_master_id TEXT,
+            cached_date TEXT NOT NULL,
+            PRIMARY KEY (id, profile_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS cached_worklogs (
+            row_key TEXT PRIMARY KEY,
+            worklog_id TEXT,
+            issue_key TEXT NOT NULL,
+            issue_summary TEXT,
+            project_key TEXT,
+            started TEXT NOT NULL,
+            time_spent_seconds INTEGER NOT NULL,
+            comment TEXT,
+            updated TEXT,
+            synced_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS sync_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            row_key TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS meeting_match_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            pattern TEXT NOT NULL,
+            issue_key TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS meeting_issue_history (
+            series_key TEXT PRIMARY KEY,
+            issue_key TEXT NOT NULL,
+            issue_summary TEXT,
+            last_used_at TEXT NOT NULL DEFAULT (datetime('now')),
+            use_count INTEGER NOT NULL DEFAULT 1
         );",
     )?;
+
+    // Migrations: add columns that may be missing in existing DBs
+    let migrations: &[&str] = &[
+        "ALTER TABLE jira_profiles ADD COLUMN instance_type TEXT NOT NULL DEFAULT 'cloud'",
+        "ALTER TABLE jira_profiles ADD COLUMN extra_root_ca_pem_path TEXT",
+        "ALTER TABLE jira_profiles ADD COLUMN proxy_url TEXT",
+        "ALTER TABLE jira_profiles ADD COLUMN proxy_username TEXT",
+        "ALTER TABLE jira_profiles ADD COLUMN proxy_secret_ref TEXT",
+        "ALTER TABLE jira_profiles ADD COLUMN user_timezone TEXT",
+        "ALTER TABLE jira_profiles ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE exchange_profiles ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'ews'",
+        "ALTER TABLE exchange_profiles ADD COLUMN ews_auth_type TEXT",
+        "ALTER TABLE exchange_profiles ADD COLUMN tenant_id TEXT",
+        "ALTER TABLE exchange_profiles ADD COLUMN client_id TEXT",
+        "ALTER TABLE exchange_profiles ADD COLUMN refresh_token_secret_ref TEXT",
+        "ALTER TABLE exchange_profiles ADD COLUMN min_event_minutes INTEGER",
+        "ALTER TABLE exchange_profiles ADD COLUMN exclude_free_busy INTEGER",
+        "ALTER TABLE exchange_profiles ADD COLUMN exclude_declined INTEGER",
+        "ALTER TABLE exchange_profiles ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE calendar_events_cache ADD COLUMN series_master_id TEXT",
+    ];
+
+    for migration in migrations {
+        // duplicate column = "table already has column": safe to ignore
+        let _ = conn.execute_batch(migration);
+    }
 
     Ok(())
 }

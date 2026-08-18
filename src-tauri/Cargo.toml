@@ -30,6 +30,26 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.9"
 anyhow = "1"
 thiserror = "1"
+# --- Exchange/Microsoft Graph интеграция (Промпт 5) ---
+oauth2 = "4"
+tiny_http = "0.12"
+sspi = "0.21"
+quick-xml = "0.36"
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.8"
+url = "2"
+urlencoding = "2"
+uuid = { version = "1", features = ["v4"] }
+# regex: правила сопоставления темы встречи с задачей Jira (Промпт 6)
+regex = "1"
+
+[target.'cfg(windows)'.dependencies]
+whoami = "1"
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio-test = "0.4"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
