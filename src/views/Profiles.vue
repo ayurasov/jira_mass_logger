@@ -13,7 +13,7 @@
       <table v-else class="profile-table">
         <thead>
           <tr>
-            <th>&#x2714;</th><th>Название</th><th>URL</th><th>Тип</th><th>Пользователь</th><th>Статус</th><th></th>
+            <th>&#x2714;</th><th>Название</th><th>URL</th><th>Тип</th><th>Пользователь</th><th>Авторизация</th><th>Статус</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -27,6 +27,9 @@
             <td class="url-cell">{{ p.baseUrl }}</td>
             <td><span class="badge" :class="p.instanceType">{{ p.instanceType }}</span></td>
             <td>{{ p.email }}</td>
+            <td>
+              <span class="badge" :class="p.authType || 'token'">{{ authTypeLabel(p.authType) }}</span>
+            </td>
             <td>
               <span v-if="jiraTestResults[p.id] === 'ok'" class="status-ok">&#x2705; OK</span>
               <span v-else-if="jiraTestResults[p.id] === 'err'" class="status-err">&#x274C; Ошибка</span>
@@ -88,21 +91,64 @@
     <div v-if="jiraFormOpen" class="modal-backdrop" @click.self="jiraFormOpen = false">
       <div class="modal">
         <h2>{{ jiraForm.id ? 'Редактирование Jira-профиля' : 'Новый Jira-профиль' }}</h2>
+
         <label>Название <input v-model="jiraForm.name" placeholder="Work Jira" /></label>
-        <label>Тип
-          <select v-model="jiraForm.instanceType">
-            <option value="cloud">Cloud</option>
+
+        <label>Тип инстанса
+          <select v-model="jiraForm.instanceType" @change="onInstanceTypeChange">
+            <option value="cloud">Cloud (atlassian.net)</option>
             <option value="server">Server / Data Center</option>
           </select>
         </label>
-        <label>Base URL <input v-model="jiraForm.baseUrl" placeholder="https://yourorg.atlassian.net" /></label>
-        <label>Email / Логин <input v-model="jiraForm.email" placeholder="user@example.com" /></label>
-        <label>API Token / PAT
-          <input v-model="jiraForm.token" type="password" placeholder="Токен (Cloud: API token, Server: PAT)" autocomplete="new-password" />
+
+        <label>Base URL <input v-model="jiraForm.baseUrl" :placeholder="jiraForm.instanceType === 'cloud' ? 'https://yourorg.atlassian.net' : 'https://jira.corp.local'" /></label>
+
+        <!-- Auth type — only shown for Server; Cloud always uses API Token -->
+        <template v-if="jiraForm.instanceType === 'server'">
+          <label>Способ авторизации
+            <select v-model="jiraForm.authType">
+              <option value="pat">Personal Access Token (PAT) — Jira ≥ 8.14</option>
+              <option value="server_basic">Логин + Пароль (Basic Auth) — Jira &lt; 8.14 / без PAT</option>
+            </select>
+          </label>
+          <div v-if="jiraForm.authType === 'server_basic'" class="auth-hint">
+            ⚠️ Basic Auth передаёт пароль в заголовке Authorization (Base64). Убедитесь, что соединение по HTTPS.
+            Пароль сохраняется в Windows Credential Manager, а не в базе приложения.
+          </div>
+          <div v-else class="auth-hint">
+            PAT появился в Jira Server 8.14. Для более ранних версий (например, 8.3.x) выберите «Логин + Пароль».
+          </div>
+        </template>
+
+        <label>{{ jiraForm.instanceType === 'cloud' ? 'Email' : 'Логин (username)' }}
+          <input v-model="jiraForm.email" :placeholder="jiraForm.instanceType === 'cloud' ? 'user@example.com' : 'john.smith'" />
         </label>
+
+        <!-- Credential field changes by authType -->
+        <label v-if="jiraForm.instanceType === 'cloud' || jiraForm.authType === 'pat'">
+          {{ jiraForm.instanceType === 'cloud' ? 'API Token' : 'Personal Access Token (PAT)' }}
+          <input v-model="jiraForm.token" type="password"
+            :placeholder="jiraForm.instanceType === 'cloud' ? 'Atlassian API token' : 'Jira Server PAT'"
+            autocomplete="new-password" />
+          <span class="hint" v-if="jiraForm.instanceType === 'cloud'">
+            Получить: <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank">id.atlassian.com → API tokens</a>
+          </span>
+          <span class="hint" v-else>
+            Создать в Jira: Профиль → Personal Access Tokens (требуется Jira ≥ 8.14)
+          </span>
+        </label>
+
+        <label v-else-if="jiraForm.authType === 'server_basic'">
+          Пароль
+          <input v-model="jiraForm.token" type="password"
+            placeholder="Пароль от учётной записи Jira"
+            autocomplete="new-password" />
+        </label>
+
         <label class="checkbox-label">
           <input type="checkbox" v-model="jiraForm.isActive" /> Сделать активным
         </label>
+
         <div class="modal-actions">
           <button class="btn" @click="jiraFormOpen = false">Отмена</button>
           <button class="btn btn-primary" :disabled="jiraSaving" @click="saveJiraProfile">
@@ -185,6 +231,8 @@ interface JiraProfile {
   id: number;
   name: string;
   instanceType: string;
+  /** 'token' (Cloud API token) | 'pat' (Server PAT) | 'server_basic' (login+password) */
+  authType?: string;
   baseUrl: string;
   email: string;
   secretRef: string;
@@ -223,6 +271,8 @@ const jiraForm = reactive({
   id: null as number | null,
   name: '',
   instanceType: 'cloud',
+  /** 'token' | 'pat' | 'server_basic' */
+  authType: 'token',
   baseUrl: '',
   email: '',
   token: '',
@@ -251,6 +301,26 @@ const exchForm = reactive({
   isActive: false,
 });
 
+// ────────── Helpers ──────────
+
+function authTypeLabel(authType?: string): string {
+  switch (authType) {
+    case 'pat': return 'PAT';
+    case 'server_basic': return 'Basic Auth';
+    case 'token': return 'API Token';
+    default: return authType ?? 'API Token';
+  }
+}
+
+/**
+ * When user switches instance type, reset authType to sensible default:
+ * - cloud  → 'token'
+ * - server → 'server_basic' (safe default; user can switch to 'pat' manually)
+ */
+function onInstanceTypeChange() {
+  jiraForm.authType = jiraForm.instanceType === 'cloud' ? 'token' : 'server_basic';
+}
+
 // ────────── Load ──────────
 
 async function loadProfiles() {
@@ -273,11 +343,27 @@ onMounted(loadProfiles);
 function openJiraForm(p: JiraProfile | null) {
   jiraFormError.value = '';
   if (p) {
-    Object.assign(jiraForm, { id: p.id, name: p.name, instanceType: p.instanceType,
-      baseUrl: p.baseUrl, email: p.email, token: '', isActive: p.isActive });
+    Object.assign(jiraForm, {
+      id: p.id,
+      name: p.name,
+      instanceType: p.instanceType,
+      authType: p.authType ?? (p.instanceType === 'cloud' ? 'token' : 'server_basic'),
+      baseUrl: p.baseUrl,
+      email: p.email,
+      token: '',
+      isActive: p.isActive,
+    });
   } else {
-    Object.assign(jiraForm, { id: null, name: '', instanceType: 'cloud',
-      baseUrl: '', email: '', token: '', isActive: false });
+    Object.assign(jiraForm, {
+      id: null,
+      name: '',
+      instanceType: 'cloud',
+      authType: 'token',
+      baseUrl: '',
+      email: '',
+      token: '',
+      isActive: false,
+    });
   }
   jiraFormOpen.value = true;
 }
@@ -285,7 +371,12 @@ function openJiraForm(p: JiraProfile | null) {
 async function saveJiraProfile() {
   jiraFormError.value = '';
   if (!jiraForm.name || !jiraForm.baseUrl || !jiraForm.email) {
-    jiraFormError.value = 'Заполните название, URL и email.';
+    jiraFormError.value = 'Заполните название, URL и логин/email.';
+    return;
+  }
+  if (!jiraForm.token) {
+    const credLabel = jiraForm.authType === 'server_basic' ? 'пароль' : 'токен';
+    jiraFormError.value = `Введите ${credLabel} (поле не может быть пустым при сохранении новых учётных данных).`;
     return;
   }
   jiraSaving.value = true;
@@ -295,6 +386,7 @@ async function saveJiraProfile() {
         id: jiraForm.id,
         name: jiraForm.name,
         instanceType: jiraForm.instanceType,
+        authType: jiraForm.instanceType === 'cloud' ? 'token' : jiraForm.authType,
         baseUrl: jiraForm.baseUrl,
         email: jiraForm.email,
         token: jiraForm.token || null,
@@ -383,7 +475,6 @@ async function saveExchProfile() {
   }
   exchSaving.value = true;
   try {
-    // Для EWS — сохраняем пароль через keychain
     let secretRef = `exchange_${exchForm.username}`;
     if (exchForm.authMode === 'ews' && exchForm.password) {
       await invoke('set_secret', { key: secretRef, value: exchForm.password });
@@ -481,15 +572,12 @@ async function startOAuth() {
         },
       },
     );
-    // Открываем браузер для OAuth
     await openUrl(res.authUrl);
-    // Ждём loopback callback
     const completeRes = await invoke<{ ok: boolean; message: string }>(
       'complete_graph_oauth_loopback',
     );
     oauthResult.value = completeRes;
-    // Обновляем secret_ref в форме
-    exchForm.password = ''; // не нужен для Graph
+    exchForm.password = '';
   } catch (e: any) {
     oauthResult.value = { ok: false, message: String(e) };
   } finally {
@@ -499,7 +587,7 @@ async function startOAuth() {
 </script>
 
 <style scoped>
-.profiles-page { padding: 1.5rem; max-width: 1000px; }
+.profiles-page { padding: 1.5rem; max-width: 1100px; }
 .page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 1.2rem; }
 .card { background: var(--surface, #fff); border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); padding: 1.2rem 1.4rem; }
 .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
@@ -519,6 +607,9 @@ async function startOAuth() {
 .badge.server { background: #fde8cc; color: #7d4500; }
 .badge.ews { background: #fde8cc; color: #7d4500; }
 .badge.graph { background: #e0f0e8; color: #186a3b; }
+.badge.token { background: #e0e8ff; color: #1a3a8f; }
+.badge.pat { background: #f0e8ff; color: #5a1a8f; }
+.badge.server_basic { background: #fff3cd; color: #664d03; }
 .actions-cell { white-space: nowrap; }
 .icon-btn { background: none; border: none; cursor: pointer; font-size: 1rem; padding: .2rem .3rem; border-radius: 4px; }
 .icon-btn:hover { background: #f0f0f0; }
@@ -531,7 +622,7 @@ async function startOAuth() {
 
 /* Modal */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.modal { background: var(--surface, #fff); border-radius: 12px; padding: 1.8rem; min-width: 440px; max-width: 520px; box-shadow: 0 8px 32px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: .75rem; }
+.modal { background: var(--surface, #fff); border-radius: 12px; padding: 1.8rem; min-width: 460px; max-width: 540px; box-shadow: 0 8px 32px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: .75rem; max-height: 92vh; overflow-y: auto; }
 .modal h2 { margin: 0 0 .5rem; font-size: 1.1rem; }
 .modal label { display: flex; flex-direction: column; gap: .2rem; font-size: .88rem; font-weight: 500; }
 .modal input, .modal select { padding: .38rem .6rem; border: 1px solid var(--border, #d0d5dd); border-radius: 6px; font-size: .9rem; background: var(--input-bg, #fafafa); }
@@ -541,4 +632,19 @@ async function startOAuth() {
 .filters-section { border-top: 1px solid #eee; padding-top: .75rem; display: flex; flex-direction: column; gap: .4rem; }
 .filters-title { font-size: .82rem; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
 .oauth-hint { font-size: .82rem; color: #888; }
+.auth-hint {
+  font-size: .82rem;
+  line-height: 1.45;
+  padding: .5rem .75rem;
+  border-radius: 6px;
+  background: #fffbea;
+  border: 1px solid #f5d569;
+  color: #664d03;
+}
+.hint {
+  font-size: .78rem;
+  color: var(--color-text-muted, #6b7280);
+  line-height: 1.35;
+}
+.hint a { color: #0052cc; }
 </style>
