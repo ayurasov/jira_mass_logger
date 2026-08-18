@@ -7,8 +7,14 @@ mod secrets;
 mod bulk_wizard;
 mod sync_queue;
 mod meeting_rules;
+mod network;
+mod logger;
 
+use std::sync::{Arc, Mutex};
 use tauri::{Manager, tray::TrayIconBuilder, menu::{Menu, MenuItem}};
+use crate::logger::AppLogger;
+use crate::network::NetworkMonitor;
+use crate::sync_queue::WakeSignal;
 
 fn main() {
     tauri::Builder::default()
@@ -25,6 +31,39 @@ fn main() {
             db::init_db(app.handle())?;
             bulk_wizard::setup(app.handle())?;
 
+            // ── Подсистема логирования ──────────────────────────────────
+            let app_logger = Arc::new(
+                AppLogger::new(app.handle())
+                    .expect("failed to init AppLogger"),
+            );
+            app.manage(app_logger.clone());
+
+            // ── WakeSignal для воркера очереди ──────────────────────────
+            let wake: WakeSignal = Arc::new(tokio::sync::Notify::new());
+            app.manage(wake.clone());
+
+            // ── Монитор сети ────────────────────────────────────────────
+            let net_monitor = Arc::new(NetworkMonitor::new());
+            app.manage(net_monitor.clone());
+
+            network::start_network_monitor(
+                net_monitor.clone(),
+                wake.clone(),
+                app.handle().clone(),
+                app_logger.clone(),
+            );
+
+            // ── Воркер очереди синхронизации ───────────────────────────
+            // Получаем Arc<Mutex<Connection>> из WizardDb
+            let wizard_db = app.state::<bulk_wizard::WizardDb>();
+            let db_arc: Arc<Mutex<rusqlite::Connection>> = wizard_db.0.clone();
+            sync_queue::start_worker(db_arc, wake.clone(), app_logger.clone());
+
+            // ── Планировщик (напоминания, автосинхронизация) ───────────
+            let sched_state = scheduler::init_scheduler(app.handle(), &wizard_db);
+            app.manage(sched_state);
+
+            // ── Системный трей ─────────────────────────────────────────
             let log_today = MenuItem::with_id(app, "log_today", "Залогировать сегодня", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&log_today, &quit])?;
@@ -41,6 +80,7 @@ fn main() {
                 })
                 .build(app)?;
 
+            // Событие возможного пробуждения Windows при получении фокуса окном
             let app_handle_for_resume = app.handle().clone();
             if let Some(main_window) = app.get_webview_window("main") {
                 main_window.on_window_event(move |event| {
@@ -50,10 +90,10 @@ fn main() {
                 });
             }
 
-            scheduler::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Jira
             jira_client::test_connection,
             jira_client::get_projects,
             jira_client::get_issues_by_jql,
@@ -64,6 +104,7 @@ fn main() {
             jira_client::update_worklog,
             jira_client::delete_worklog,
             jira_client::bulk_add_worklogs,
+            // Exchange
             exchange_client::test_exchange_connection,
             exchange_client::get_calendar_events,
             exchange_client::start_graph_oauth_embedded,
@@ -71,6 +112,7 @@ fn main() {
             exchange_client::list_exchange_profiles,
             exchange_client::save_exchange_profile,
             exchange_client::delete_exchange_profile,
+            // Bulk wizard
             bulk_wizard::save_wizard_template,
             bulk_wizard::list_wizard_templates,
             bulk_wizard::delete_wizard_template,
@@ -81,6 +123,7 @@ fn main() {
             bulk_wizard::import_holidays,
             bulk_wizard::write_export_file,
             bulk_wizard::write_export_file_utf8_bom,
+            // Sync queue & cached worklogs
             sync_queue::enqueue_sync_operation,
             sync_queue::list_sync_queue,
             sync_queue::mark_sync_attempt_failed,
@@ -89,15 +132,27 @@ fn main() {
             sync_queue::upsert_cached_worklog,
             sync_queue::delete_cached_worklog,
             sync_queue::list_cached_worklogs,
+            // Network / sync status indicator (Промпт 9)
+            network::get_sync_indicator,
+            network::notify_system_resume,
+            // Logger (Промпт 9)
+            logger::read_log_tail,
+            logger::get_log_dir_path,
+            logger::open_log_dir_in_explorer,
+            // Secrets
             secrets::save_secret,
             secrets::delete_secret,
-            // Промпт 6: сопоставление встреч с задачами Jira
+            // Meeting rules (Промпт 6)
             meeting_rules::suggest_issue_for_meeting,
             meeting_rules::remember_meeting_issue_match,
             meeting_rules::list_meeting_match_rules,
             meeting_rules::save_meeting_match_rule,
             meeting_rules::delete_meeting_match_rule,
             meeting_rules::get_meeting_issue_history,
+            // Scheduler
+            scheduler::get_scheduler_settings,
+            scheduler::save_scheduler_settings,
+            scheduler::trigger_sync_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running JiraTime");
