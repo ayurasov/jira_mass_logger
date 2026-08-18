@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export type JiraInstanceType = 'cloud' | 'server';
+export type ExchangeAuthMode = 'graph' | 'ews';
+export type EwsAuthType = 'basic' | 'ntlm';
 
 export interface ProxyConfig {
   url?: string | null;
@@ -16,6 +18,47 @@ export interface JiraConnectionParams {
   extraRootCaPemPath?: string | null;
   proxy?: ProxyConfig | null;
   userTimezone?: string | null;
+}
+
+export interface ExchangeConnectionParams {
+  authMode: ExchangeAuthMode;
+  ewsUrl?: string | null;
+  username: string;
+  secretRef: string;
+  tenantId?: string | null;
+  clientId?: string | null;
+  refreshTokenSecretRef?: string | null;
+  minEventMinutes?: number | null;
+  excludeFreeBusy?: boolean | null;
+  excludeDeclined?: boolean | null;
+  ewsAuthType?: EwsAuthType | null;
+}
+
+export interface CalendarEventDto {
+  id: string;
+  subject: string;
+  startAt: string;
+  endAt: string;
+  durationMinutes: number;
+  attendees: string[];
+  category?: string | null;
+  color?: string | null;
+  onlineMeetingUrl?: string | null;
+  responseStatus?: string | null;
+  showAs?: string | null;
+}
+
+export interface GraphAuthStartResult {
+  authUrl: string;
+  state: string;
+  redirectUrl: string;
+  windowLabel: string;
+  mode: string;
+}
+
+export interface GraphAuthCompleteResult {
+  ok: boolean;
+  message: string;
 }
 
 export interface ProjectDto { id: string; key: string; name: string; }
@@ -73,6 +116,20 @@ export const tauriApi = {
   // --- Jira: справочники и поиск ---
   getProjects(params: JiraConnectionParams) { return invoke<ProjectDto[]>('get_projects', { params }); },
   getIssuesByJql(params: JiraConnectionParams, jql: string) { return invoke<IssueDto[]>('get_issues_by_jql', { params, jql }); },
+
+  // --- Exchange / Outlook calendar ---
+  testExchangeConnection(params: ExchangeConnectionParams) {
+    return invoke<boolean>('test_exchange_connection', { params });
+  },
+  getCalendarEvents(params: ExchangeConnectionParams, dateFrom: string, dateTo: string, forceRefresh = false) {
+    return invoke<CalendarEventDto[]>('get_calendar_events', { params, dateFrom, dateTo, forceRefresh });
+  },
+  startGraphOauthEmbedded(params: ExchangeConnectionParams) {
+    return invoke<GraphAuthStartResult>('start_graph_oauth_embedded', { params });
+  },
+  completeGraphOauthLoopback() {
+    return invoke<GraphAuthCompleteResult>('complete_graph_oauth_loopback');
+  },
 
   // --- Jira: worklog CRUD + инкрементальный sync ---
   getWorklog(params: JiraConnectionParams, issueKey: string) { return invoke<WorklogDto[]>('get_worklog', { params, issueKey }); },
