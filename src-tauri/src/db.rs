@@ -10,8 +10,6 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&app_data_dir)?;
 
     let db_path = app_data_dir.join("jiratime.db");
-    // Единый SQLite-файл (а не множество мелких файлов) снижает риск
-    // ложных срабатываний эвристики Windows Defender/корпоративного AV.
     let conn = rusqlite::Connection::open(&db_path)?;
 
     conn.execute_batch(
@@ -30,6 +28,7 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             proxy_username TEXT,
             proxy_secret_ref TEXT,
             user_timezone TEXT,
+            accept_invalid_certs INTEGER NOT NULL DEFAULT 0,
             is_active INTEGER NOT NULL DEFAULT 0
         );
 
@@ -163,6 +162,7 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         "ALTER TABLE jira_profiles ADD COLUMN proxy_username TEXT",
         "ALTER TABLE jira_profiles ADD COLUMN proxy_secret_ref TEXT",
         "ALTER TABLE jira_profiles ADD COLUMN user_timezone TEXT",
+        "ALTER TABLE jira_profiles ADD COLUMN accept_invalid_certs INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE jira_profiles ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE exchange_profiles ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'ews'",
         "ALTER TABLE exchange_profiles ADD COLUMN ews_auth_type TEXT",
@@ -174,7 +174,6 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         "ALTER TABLE exchange_profiles ADD COLUMN exclude_declined INTEGER",
         "ALTER TABLE exchange_profiles ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE calendar_events_cache ADD COLUMN series_master_id TEXT",
-        // Промпт 9: добавляем колонку status в sync_queue для существующих БД
         "ALTER TABLE sync_queue ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
     ];
 
