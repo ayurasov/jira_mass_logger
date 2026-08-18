@@ -1,6 +1,6 @@
 {
   "productName": "JiraTime",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.ayurasov.jiratime",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -14,9 +14,12 @@
         "title": "JiraTime",
         "width": 1100,
         "height": 720,
-        "minWidth": 800,
+        "minWidth": 900,
         "minHeight": 600,
-        "theme": null
+        "theme": null,
+        "decorations": true,
+        "resizable": true,
+        "center": true
       }
     ],
     "trayIcon": {
@@ -31,18 +34,42 @@
     "active": true,
     "targets": ["msi", "nsis"],
     "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"],
+    "publisher": "Ayurasov",
+    "copyright": "Copyright © 2026 Alexander Yurasov",
+    "category": "Productivity",
+    "shortDescription": "Массовое логирование времени в Jira",
+    "longDescription": "JiraTime — настольное приложение для Windows, позволяющее быстро логировать рабочее время в Jira по нескольким задачам сразу. Поддерживает интеграцию с Microsoft Exchange для автоматического заполнения из календаря, офлайн-режим с очередью синхронизации и аналитику.",
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper",
         "silent": true
       },
       "wix": {
-        "language": ["ru-RU", "en-US"]
+        "language": ["ru-RU", "en-US"],
+        "upgradeCode": "d9a7c1e2-4b5f-4a8d-9c3e-1f2a3b4c5d6e"
       },
       "nsis": {
         "languages": ["Russian", "English"],
         "displayLanguageSelector": false,
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "headerImage": "icons/installer-header.bmp",
+        "sidebarImage": "icons/installer-sidebar.bmp"
+      },
+      "signCommand": "signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $env:CODESIGN_PFX_PATH /p $env:CODESIGN_PFX_PASSWORD $FilePath"
+    },
+    "plugins": {
+      "updater": {
+        "active": true,
+        "dialog": true,
+        "pubkey": "PLACEHOLDER_TAURI_UPDATER_PUBKEY",
+        "endpoints": [
+          "https://github.com/ayurasov/jira_mass_logger/releases/latest/download/latest.json"
+        ],
+        "windows": {
+          "installMode": "quiet"
+        }
       }
     }
   }
