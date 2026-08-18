@@ -15,13 +15,13 @@ use chrono::{DateTime, Utc};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use keyring::Entry as KeyringEntry;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 
 use crate::bulk_wizard::WizardDb;
-use crate::secrets;
 
 // ─────────────────────────────────────────────────────────────────
 // Типы данных
@@ -117,7 +117,7 @@ fn basic_auth_header(username: &str, password: &str) -> String {
     format!("Basic {}", BASE64.encode(format!("{username}:{password}")))
 }
 
-fn lock_db(db: &State<'_, WizardDb>) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+fn lock_db<'a>(db: &'a State<'a, WizardDb>) -> Result<std::sync::MutexGuard<'a, Connection>, String> {
     db.0.lock().map_err(|e| e.to_string())
 }
 
@@ -337,14 +337,15 @@ async fn get_graph_access_token(conn_params: &ExchangeConnectionParams) -> Resul
         .as_deref()
         .ok_or_else(|| anyhow!("refresh_token_secret_ref is required for Graph auth"))?;
 
-    let refresh_token = secrets::get_secret_value(refresh_ref)
+    let refresh_token = keyring::Entry::new("jiratime", refresh_ref)
+        .and_then(|e| e.get_password())
         .map_err(|e| anyhow!("keychain read: {e}"))?;
 
     let token_resp = refresh_graph_access_token(client_id, tenant_id, &refresh_token).await?;
 
     // Если пришёл новый refresh_token — сохраняем
     if let Some(new_rt) = &token_resp.refresh_token {
-        let _ = secrets::set_secret_value(refresh_ref, new_rt);
+        let _ = keyring::Entry::new("jiratime", refresh_ref).and_then(|e| e.set_password(new_rt));
     }
 
     Ok(token_resp.access_token)
@@ -397,7 +398,7 @@ struct EwsRawEvent {
 
 fn parse_ews_finditem_response(xml: &str) -> Vec<EwsRawEvent> {
     let mut reader = Reader::from_str(xml);
-    reader.trim_text(true);
+    reader.config_mut().trim_text = true;
     let mut buf = Vec::new();
 
     let mut in_item = false;
@@ -711,7 +712,8 @@ pub async fn test_exchange_connection(
                 .ews_url
                 .as_deref()
                 .ok_or("ews_url is required".to_string())?;
-            let password = secrets::get_secret_value(&params.secret_ref)
+            let password = keyring::Entry::new("jiratime", &params.secret_ref)
+                .and_then(|e| e.get_password())
                 .map_err(|e| e.to_string())?;
             let auth = basic_auth_header(&params.username, &password);
             let client = reqwest::Client::builder()
@@ -788,7 +790,8 @@ pub async fn get_calendar_events(
                 .ews_url
                 .as_deref()
                 .ok_or("ews_url is required")?;
-            let password = secrets::get_secret_value(&params.secret_ref)
+            let password = keyring::Entry::new("jiratime", &params.secret_ref)
+                .and_then(|e| e.get_password())
                 .map_err(|e| e.to_string())?;
             let auth_type = params.ews_auth_type.as_deref().unwrap_or("basic");
             let auth_header = if auth_type == "ntlm" {
@@ -954,7 +957,9 @@ pub async fn complete_graph_oauth_loopback(
     let refresh_token = token
         .refresh_token
         .ok_or("Token response missing refresh_token")?;
-    secrets::set_secret_value(&ctx.secret_ref, &refresh_token).map_err(|e| e.to_string())?;
+    keyring::Entry::new("jiratime", &ctx.secret_ref)
+        .and_then(|e| e.set_password(&refresh_token))
+        .map_err(|e| e.to_string())?;
 
     let response = tiny_http::Response::from_string(
         "<html><body><h2>Авторизация прошла успешно — можно закрыть это окно.</h2></body></html>",
