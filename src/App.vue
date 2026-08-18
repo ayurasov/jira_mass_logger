@@ -3,19 +3,21 @@ import { onMounted } from 'vue';
 import { useSettingsStore } from './store/settings';
 import SyncStatusIndicator from './components/SyncStatusIndicator.vue';
 import { usePowerEvents } from './composables/usePowerEvents';
+import { useHotkeys } from './composables/useHotkeys';
 import './styles/theme.css';
 
 const settings = useSettingsStore();
 onMounted(() => settings.loadTheme());
 
-// Слушаем события пробуждения Windows и триггерим проверку очереди
-// (возобновление после сна/гибернации, получение фокуса, tauri://focus)
+// Слушаем события пробуждения Windows
 usePowerEvents();
+// Глобальные горячие клавиши
+useHotkeys();
 </script>
 
 <template>
   <div :class="['app', settings.theme]">
-    <!-- Индикатор сети/синхронизации — отображается в шапке приложения -->
+    <!-- Индикатор сети/синхронизации -->
     <SyncStatusIndicator class="app-sync-indicator" />
     <router-view />
   </div>
@@ -24,9 +26,11 @@ usePowerEvents();
 <style scoped>
 .app {
   position: relative;
+  /* Минимальный размер окна: 900x600 */
+  min-width: 900px;
+  min-height: 600px;
 }
 
-/* Индикатор фиксируется в правом верхнем углу поверх навигации */
 .app-sync-indicator {
   position: fixed;
   top: 8px;
