@@ -74,8 +74,11 @@
       ],
       "dialog": true,
       "windows": {
-        "installMode": "currentUser"
+        "installMode": "passive"
       }
+    },
+    "autostart": {
+      "mobile": false
     }
   }
 }
