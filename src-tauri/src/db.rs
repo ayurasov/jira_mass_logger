@@ -30,6 +30,7 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             name TEXT NOT NULL,
             auth_mode TEXT NOT NULL DEFAULT 'graph', -- 'graph' | 'ews'
             ews_url TEXT,
+            ews_auth_type TEXT NOT NULL DEFAULT 'basic', -- 'basic' | 'ntlm'
             username TEXT NOT NULL,
             secret_ref TEXT NOT NULL,
             tenant_id TEXT,
@@ -37,7 +38,10 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             refresh_token_secret_ref TEXT,
             min_event_minutes INTEGER NOT NULL DEFAULT 0,
             exclude_free_busy INTEGER NOT NULL DEFAULT 1,
-            exclude_declined INTEGER NOT NULL DEFAULT 1
+            exclude_declined INTEGER NOT NULL DEFAULT 1,
+            is_active INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,6 +116,19 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );",
     )?;
+
+    // Главная миграция для dev-баз без ews_auth_type/is_active/created_at/updated_at,
+    // созданных до того, как в exchange_profiles были добавлены эти колонки.
+    // ALTER TABLE ... ADD COLUMN безопасен при повторном вызове — SQLite вернёт ошибку
+    // "duplicate column name", которую мы просто игнорируем.
+    for stmt in [
+        "ALTER TABLE exchange_profiles ADD COLUMN ews_auth_type TEXT NOT NULL DEFAULT 'basic'",
+        "ALTER TABLE exchange_profiles ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE exchange_profiles ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))",
+        "ALTER TABLE exchange_profiles ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    ] {
+        let _ = conn.execute(stmt, []);
+    }
 
     Ok(())
 }
