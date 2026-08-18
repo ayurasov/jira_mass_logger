@@ -1,0 +1,240 @@
+/* ============================================================
+   Dashboard Analytics — CSS
+   Совместимо с системными темами через .app.light / .app.dark
+   (наследует токены из theme.css).
+   ============================================================ */
+
+/* ────────────────────────────────────────────
+   Heatmap цветовые токены (GitHub-стиль)
+   ──────────────────────────────────────────── */
+.app.light {
+  --heatmap-0: #ebedf0;
+  --heatmap-1: #9be9a8;
+  --heatmap-2: #40c463;
+  --heatmap-3: #30a14e;
+  --heatmap-4: #216e39;
+}
+.app.dark {
+  --heatmap-0: #1e2535;
+  --heatmap-1: #0e4429;
+  --heatmap-2: #006d32;
+  --heatmap-3: #26a641;
+  --heatmap-4: #39d353;
+}
+
+/* ────────────────────────────────────────────
+   Основной layout страницы
+   ──────────────────────────────────────────── */
+.analytics-page {
+  max-width: 96rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.analytics-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.analytics-header h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  flex: 1 1 auto;
+}
+.analytics-header .muted-text {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* ────────────────────────────────────────────
+   Bento-сетка (4 колонки)
+   ──────────────────────────────────────────── */
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+.analytics-grid .span-2   { grid-column: span 2; }
+.analytics-grid .span-3   { grid-column: span 3; }
+.analytics-grid .span-full { grid-column: 1 / -1; }
+
+/* ────────────────────────────────────────────
+   dash-card — универсальная обёртка виджета
+   ──────────────────────────────────────────── */
+.dash-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: var(--shadow);
+  padding: 1rem 1.125rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  /* плавное появление */
+  animation: card-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* задержка для карточек чтобы появлялись последовательно */
+.analytics-grid .dash-card:nth-child(1) { animation-delay: 0ms; }
+.analytics-grid .dash-card:nth-child(2) { animation-delay: 40ms; }
+.analytics-grid .dash-card:nth-child(3) { animation-delay: 80ms; }
+.analytics-grid .dash-card:nth-child(4) { animation-delay: 120ms; }
+.analytics-grid .dash-card:nth-child(5) { animation-delay: 160ms; }
+.analytics-grid .dash-card:nth-child(6) { animation-delay: 200ms; }
+
+.dash-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.dash-card-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* ────────────────────────────────────────────
+   Область графика ECharts
+   ──────────────────────────────────────────── */
+.dash-chart-area {
+  width: 100%;
+  height: 260px;
+  /* WebView2 fix: явное значение размеров до initChart */
+  min-width: 0;
+}
+
+/* ────────────────────────────────────────────
+   Tab-кнопки
+   ──────────────────────────────────────────── */
+.dash-tab-group {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+.dash-tab {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.82rem;
+  background: var(--card);
+  color: var(--muted);
+  border: none;
+  border-right: 1px solid var(--border);
+  transition: background 0.15s, color 0.15s;
+}
+.dash-tab:last-child { border-right: none; }
+.dash-tab.active {
+  background: var(--primary);
+  color: #ffffff;
+}
+.dash-tab:not(.active):hover { background: var(--chip); color: var(--fg); }
+
+/* ────────────────────────────────────────────
+   date-инпут внутри карточки
+   ──────────────────────────────────────────── */
+.dash-date-input {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--card);
+  color: var(--fg);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.dash-date-input:focus { border-color: var(--primary); }
+
+/* ────────────────────────────────────────────
+   Бэджи статуса
+   ──────────────────────────────────────────── */
+.dash-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--chip);
+}
+.dash-badge[data-variant='success'] { color: var(--success); border-color: var(--success); background: transparent; }
+.dash-badge[data-variant='warning'] { color: var(--warning); border-color: var(--warning); background: transparent; }
+
+/* ────────────────────────────────────────────
+   Skeleton презагрузка
+   ──────────────────────────────────────────── */
+@keyframes skeleton-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  border-radius: 1rem;
+  background: linear-gradient(
+    90deg,
+    var(--chip) 25%,
+    var(--border) 50%,
+    var(--chip) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+.skeleton-card {
+  height: 20rem;
+}
+.analytics-skeleton {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+.analytics-skeleton .skeleton-card:nth-child(1),
+.analytics-skeleton .skeleton-card:nth-child(2) { grid-column: span 2; height: 22rem; }
+.analytics-skeleton .skeleton-card:nth-child(3) { grid-column: 1 / -1; height: 14rem; }
+
+/* ────────────────────────────────────────────
+   Адаптивность
+   ──────────────────────────────────────────── */
+@media (max-width: 80rem) {
+  .analytics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .analytics-grid .span-2,
+  .analytics-grid .span-3 { grid-column: span 2; }
+  .analytics-skeleton {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .analytics-skeleton .skeleton-card:nth-child(1),
+  .analytics-skeleton .skeleton-card:nth-child(2) { grid-column: span 2; }
+  .analytics-skeleton .skeleton-card:nth-child(3) { grid-column: span 2; }
+}
+
+@media (max-width: 48rem) {
+  .analytics-page { padding: 0.75rem; }
+  .analytics-grid {
+    grid-template-columns: 1fr;
+  }
+  .analytics-grid .span-2,
+  .analytics-grid .span-3,
+  .analytics-grid .span-full { grid-column: span 1; }
+  .analytics-skeleton { grid-template-columns: 1fr; }
+  .analytics-skeleton .skeleton-card,
+  .analytics-skeleton .skeleton-card:nth-child(1),
+  .analytics-skeleton .skeleton-card:nth-child(2),
+  .analytics-skeleton .skeleton-card:nth-child(3) { grid-column: span 1; }
+  .dash-chart-area { height: 200px; }
+}
+
+/* уважаем prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .dash-card { animation: none; }
+  .skeleton { animation: none; }
+}
