@@ -1,59 +1,66 @@
-/**
- * Глобальные горячие клавиши в Windows-стиле (Промпт 10).
- *
- * Поддерживаемые шорткаты из корня приложения (App.vue):
- *   Ctrl+N  — Мастер массового трекинга (/bulk-log)
- *   Ctrl+L  — Таблица worklog (/my-worklog)
- *   Ctrl+M  — Свернуть в трей
- *   Ctrl+,  — Настройки (/settings)
- *   F1      — Логи (/logs)
- *
- * Enter/Escape реализованы локально в компонентах редактирования.
- *
- * API: передайте массив HotkeyBinding[]. Композабл сам подпишется/отпишется.
- */
 import { onMounted, onUnmounted } from 'vue';
-
-export interface HotkeyBinding {
-  /** Клавиша (строчная, lower-case: 'n', 'l', ',', 'F1') */
-  key: string;
-  ctrl?: boolean;
-  shift?: boolean;
-  alt?: boolean;
-  /** Описание для дебага */
-  description?: string;
-  handler: () => void | Promise<void>;
-}
+import { useRouter } from 'vue-router';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 /**
- * Регистрирует глобальные шорткаты через массив описаний.
- * Автоматически отписывается при unmount компонента.
- * Не перехватывает события внутри полей ввода (INPUT, TEXTAREA, SELECT, contenteditable).
+ * Глобальные горячие клавиши в Windows-стиле.
+ *
+ * Ctrl+N  — быстрое открытие мастера массового трекинга
+ * Ctrl+L  — переход на страницу «Мой worklog»
+ * Ctrl+M  — свернуть в системный трей
+ * Enter   — сабмит inline-редактирование (custom event на активный элемент)
+ * Esc     — отменяет редактирование / закрывает диалог (дефолтное поведение браузера)
+ *
+ * Enter/Esc работают через нативный focus-механизм HTML —
+ * этот композабл не переопределяет их поведение;
+ * каждый inline-редактор обрабатывает Enter/Esc самостоятельно.
  */
-export function useHotkeys(bindings: HotkeyBinding[]) {
-  function handleKeydown(e: KeyboardEvent) {
-    // Не перехватываем если фокус на поле ввода
-    const tag = (e.target as HTMLElement)?.tagName ?? '';
-    const isInputLike =
-      ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) ||
-      (e.target as HTMLElement)?.isContentEditable;
+export function useHotkeys() {
+  const router = useRouter();
 
-    for (const binding of bindings) {
-      const keyMatch = e.key.toLowerCase() === binding.key.toLowerCase() ||
-                       e.key === binding.key; // F1 и т.п. сохраняют регистр
-      const ctrlMatch = !!binding.ctrl === e.ctrlKey;
-      const shiftMatch = !!binding.shift === e.shiftKey;
-      const altMatch = !!binding.alt === e.altKey;
+  async function handler(e: KeyboardEvent) {
+    // --- Ctrl+N: Мастер массового трекинга ---
+    if (e.ctrlKey && e.key === 'n') {
+      e.preventDefault();
+      await router.push({ name: 'bulk' });
+      return;
+    }
 
-      if (keyMatch && ctrlMatch && shiftMatch && altMatch) {
-        // Пропускаем Enter/Escape в полях ввода — они обрабатываются локально
-        if (isInputLike && !binding.ctrl && !binding.alt) continue;
-        e.preventDefault();
-        void binding.handler();
+    // --- Ctrl+L: Таблица worklog ---
+    if (e.ctrlKey && e.key === 'l') {
+      e.preventDefault();
+      await router.push({ name: 'worklog' });
+      return;
+    }
+
+    // --- Ctrl+M: Свернуть в трей ---
+    if (e.ctrlKey && e.key === 'm') {
+      e.preventDefault();
+      try {
+        const win = getCurrentWindow();
+        await win.hide();
+      } catch {
+        // WebView2-сессия без Tauri-контекста (напр., dev-превью) — игнорируем
       }
+      return;
+    }
+
+    // --- Esc: закрыть текущий открытый диалог (если нет фокуса в инпуте) ---
+    if (e.key === 'Escape') {
+      const active = document.activeElement as HTMLElement | null;
+      const isEditing =
+        active &&
+        (active.tagName === 'INPUT' ||
+          active.tagName === 'TEXTAREA' ||
+          active.isContentEditable);
+      if (!isEditing) {
+        // Генерируем событие для компонентов диалогов/панелей
+        document.dispatchEvent(new CustomEvent('jiratime:close-active-dialog'));
+      }
+      return;
     }
   }
 
-  onMounted(() => window.addEventListener('keydown', handleKeydown));
-  onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
+  onMounted(() => window.addEventListener('keydown', handler));
+  onUnmounted(() => window.removeEventListener('keydown', handler));
 }
