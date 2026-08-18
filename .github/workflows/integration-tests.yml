@@ -1,0 +1,79 @@
+name: Integration Tests — Offline Sync Queue
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/src/sync_queue*.rs'
+      - 'src-tauri/src/main.rs'
+      - '.github/workflows/integration-tests.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  integration-tests:
+    name: cargo test (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Rust toolchain ───────────────────────────────────────────────
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      # ── sccache (ускоряет повторные сборки) ───────────────────────────
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
+
+      # ── Cargo cache ──────────────────────────────────────────────────
+      - name: Cache Cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # ── System dependencies for rusqlite bundled (MSVC already available on windows-latest) ─
+      # rusqlite с features=["bundled"] не требует отдельной установки sqlite3 на Windows.
+
+      # ── Register test module in main crate ─────────────────────────────
+      # sync_queue_tests.rs использует #[cfg(test)] mod, поэтому включается
+      # автоматически через mod sync_queue_tests; в main.rs при сборке с --test.
+      # Отдельной регистрации не требуется.
+
+      # ── Run integration tests ─────────────────────────────────────────
+      - name: Run sync_queue integration tests
+        working-directory: src-tauri
+        run: |
+          cargo test sync_queue_tests --lib -- --nocapture
+        shell: pwsh
+
+      # ── Upload test results on failure ──────────────────────────────
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-failure-logs
+          path: |
+            src-tauri/target/debug/.fingerprint/
+            src-tauri/target/debug/deps/*.d
+          retention-days: 7
