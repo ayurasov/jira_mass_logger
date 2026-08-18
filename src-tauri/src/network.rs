@@ -114,7 +114,7 @@ pub fn start_network_monitor(
     let app2 = app.clone();
     let lg2 = logger.clone();
     let wake2 = wake.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
             let (url, email, token) = {
@@ -160,7 +160,7 @@ pub fn start_network_monitor(
     let app3 = app.clone();
     let lg3 = logger.clone();
     let wake3 = wake.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         // WM_POWERBROADCAST / PBT_APMRESUMESUSPEND триггерится через tauri system "resume"
         // В Tauri v2 слушаем через on_system_tray / global shortcut или Window event:
         // app.listen_global(в v2 = app.listen("событие"))
