@@ -77,9 +77,17 @@ onMounted(async () => {
   </div>
 </template>
 
-<style scoped>
+<!--
+  @import взят из-под scoped: правила в dashboard.css должны быть
+  глобальными — они описывают .analytics-grid, .dash-card и т.д.,
+  которые рендерятся внутри дочерних компонентов.
+  scoped блок сохранён только для правил, уникальных для этого view.
+-->
+<style>
 @import '../styles/dashboard.css';
+</style>
 
+<style scoped>
 .global-error {
   display: flex;
   align-items: center;
