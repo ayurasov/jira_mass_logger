@@ -1,241 +1,97 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { invoke } from '@tauri-apps/api/core';
-import { useOnboardingStore } from '../store/onboarding';
+import { useSettingsStore } from '../store/settings';
+import { useJiraProfilesStore } from '../store/jiraProfiles';
+import JiraConnectionStep from '../components/onboarding/JiraConnectionStep.vue';
+import ExchangeConnectionStep from '../components/onboarding/ExchangeConnectionStep.vue';
+import WorkScheduleStep from '../components/onboarding/WorkScheduleStep.vue';
+import TourStep from '../components/onboarding/TourStep.vue';
 
 const router = useRouter();
-const store = useOnboardingStore();
+const settings = useSettingsStore();
+const jiraProfiles = useJiraProfilesStore();
 
-// Шаг 1: Jira
-const jiraUrl = ref('');
-const jiraEmail = ref('');
-const jiraToken = ref('');
-const jiraTestLoading = ref(false);
-const jiraTestError = ref('');
-const jiraTestOk = ref(false);
+const currentStep = ref(0);
 
-async function testJira() {
-  jiraTestLoading.value = true;
-  jiraTestError.value = '';
-  jiraTestOk.value = false;
-  try {
-    await invoke('test_connection', {
-      baseUrl: jiraUrl.value,
-      email: jiraEmail.value,
-      apiToken: jiraToken.value,
-    });
-    jiraTestOk.value = true;
-    store.jiraConnected = true;
-  } catch (e: any) {
-    jiraTestError.value = String(e);
-  } finally {
-    jiraTestLoading.value = false;
-  }
-}
-
-// Шаг 2: Exchange
-const exchangeTestLoading = ref(false);
-const exchangeTestError = ref('');
-const exchangeTestOk = ref(false);
-
-async function testExchange() {
-  exchangeTestLoading.value = true;
-  exchangeTestError.value = '';
-  try {
-    await invoke('test_exchange_connection', {});
-    exchangeTestOk.value = true;
-    store.exchangeConnected = true;
-  } catch (e: any) {
-    exchangeTestError.value = String(e);
-  } finally {
-    exchangeTestLoading.value = false;
-  }
-}
-
-// Шаг 3: расписание
-const hoursPerDay = ref(store.scheduleHoursPerDay);
-const workDays = ref([...store.scheduleDays]);
-const dayLabels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
-
-function toggleDay(d: number) {
-  const idx = workDays.value.indexOf(d);
-  if (idx >= 0) workDays.value.splice(idx, 1);
-  else workDays.value.push(d);
-  workDays.value.sort();
-}
-
-// Шаг 4: тур
-const tourStep = ref(0);
-const tourItems = [
-  {
-    icon: '📋',
-    title: 'Массовое логирование',
-    text: 'Нажмите Ctrl+N или кнопку «Новый ворклог». В мастере выберите период и задачи, нажмите «Предпросмотр» — всё уйдёт в Jira одной кнопкой.',
-  },
-  {
-    icon: '📊',
-    title: 'Дашборд аналитики',
-    text: 'Главный экран показывает вашу неделю план/факт, heatmap за 3 месяца и дни с пробелами в ворклоге.',
-  },
-  {
-    icon: '🔄',
-    title: 'Offline-режим',
-    text: 'Если сети нет — записи сохраняются локально. Индикатор в шапке покажет статус. При восстановлении сети всё автоматически уйдёт в Jira.',
-  },
-  {
-    icon: '⌨️',
-    title: 'Горячие клавиши',
-    text: 'Ctrl+N — новый ворклог, Ctrl+L — таблица ворклогов, Ctrl+M — свернуть в трей, Enter — сохранить строку, Esc — отмена.',
-  },
+const steps = [
+  { id: 'jira',     title: 'Подключение к Jira',        icon: '🔗' },
+  { id: 'exchange', title: 'Подключение к Exchange',     icon: '📅' },
+  { id: 'schedule', title: 'Рабочий график',             icon: '⏱️' },
+  { id: 'tour',     title: 'Быстрый тур',                icon: '🚀' },
 ];
 
-const canProceedJira = computed(() => store.jiraConnected);
-const canProceedExchange = computed(() => store.exchangeConnected || store.exchangeSkipped);
-const canProceedSchedule = computed(() => workDays.value.length > 0 && hoursPerDay.value > 0);
+const isLastStep = computed(() => currentStep.value === steps.length - 1);
 
-function saveScheduleAndNext() {
-  store.scheduleHoursPerDay = hoursPerDay.value;
-  store.scheduleDays = [...workDays.value];
-  store.goNext();
+function next() {
+  if (isLastStep.value) {
+    finish();
+  } else {
+    currentStep.value++;
+  }
+}
+
+function skip() {
+  // Exchange step is optional — skip directly to schedule
+  if (currentStep.value === 1) {
+    currentStep.value = 2;
+  }
 }
 
 function finish() {
-  store.complete();
-  router.push('/');
+  settings.setOnboardingDone(true);
+  router.replace({ name: 'dashboard' });
+}
+
+function goToStep(idx: number) {
+  if (idx < currentStep.value) currentStep.value = idx;
 }
 </script>
 
 <template>
   <div class="onboarding-overlay">
-    <div class="onboarding-card">
-      <!-- Прогресс-бар -->
-      <div class="onboarding-progress">
-        <div
-          class="onboarding-progress-fill"
-          :style="{ width: store.progressPercent + '%' }"
-        />
-      </div>
+    <div class="onboarding-card" role="dialog" aria-modal="true" aria-label="Мастер первоначальной настройки">
+      <!-- Прогресс -->
+      <nav class="onboarding-steps" aria-label="Шаги настройки">
+        <button
+          v-for="(step, idx) in steps"
+          :key="step.id"
+          class="step-dot"
+          :class="{ active: idx === currentStep, done: idx < currentStep }"
+          :aria-current="idx === currentStep ? 'step' : undefined"
+          :title="step.title"
+          @click="goToStep(idx)"
+        >
+          <span class="step-icon">{{ step.icon }}</span>
+          <span class="step-label">{{ step.title }}</span>
+        </button>
+      </nav>
 
-      <!-- Хедер -->
-      <div class="onboarding-header">
-        <span class="onboarding-step-label">
-          Шаг {{ store.currentStepIndex + 1 }} из 4
-        </span>
-        <h1 class="onboarding-title">
-          <template v-if="store.currentStep === 'jira'">Подключение Jira</template>
-          <template v-else-if="store.currentStep === 'exchange'">Microsoft Exchange</template>
-          <template v-else-if="store.currentStep === 'schedule'">Рабочий график</template>
-          <template v-else>Краткий обзор</template>
-        </h1>
-      </div>
-
-      <!-- Шаг 1: Jira -->
-      <div v-if="store.currentStep === 'jira'" class="onboarding-body">
-        <p class="onboarding-hint">
-          Введите URL вашего Jira-сервера и API-токен.
-          <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener"
-            >Как получить токен?</a
-          >
-        </p>
-        <label class="field-label">
-          Jira URL
-          <input v-model="jiraUrl" type="url" placeholder="https://yourcompany.atlassian.net" class="field-input" />
-        </label>
-        <label class="field-label">
-          Email
-          <input v-model="jiraEmail" type="email" placeholder="you@company.com" class="field-input" />
-        </label>
-        <label class="field-label">
-          API Token
-          <input v-model="jiraToken" type="password" placeholder="ATL..." class="field-input" />
-        </label>
-        <div v-if="jiraTestError" class="onboarding-error">{{ jiraTestError }}</div>
-        <div v-if="jiraTestOk" class="onboarding-success">✓ Подключение успешно!</div>
-        <div class="onboarding-actions">
-          <button class="btn-secondary" :disabled="jiraTestLoading || !jiraUrl" @click="testJira">
-            {{ jiraTestLoading ? 'Проверка...' : 'Проверить соединение' }}
-          </button>
-          <button class="btn-primary" :disabled="!canProceedJira" @click="store.goNext">
-            Далее &rarr;
-          </button>
-        </div>
-      </div>
-
-      <!-- Шаг 2: Exchange -->
-      <div v-else-if="store.currentStep === 'exchange'" class="onboarding-body">
-        <p class="onboarding-hint">
-          Интеграция с календарём Microsoft позволяет автоматически заполнять ворклог из событий.
-          Можно пропустить и настроить позже в разделе «Профили».
-        </p>
-        <div v-if="exchangeTestError" class="onboarding-error">{{ exchangeTestError }}</div>
-        <div v-if="exchangeTestOk" class="onboarding-success">✓ Exchange подключён!</div>
-        <div class="onboarding-actions">
-          <button class="btn-ghost" @click="store.skipExchange">Пропустить</button>
-          <button class="btn-secondary" :disabled="exchangeTestLoading" @click="testExchange">
-            {{ exchangeTestLoading ? 'Подключение...' : 'Подключить Exchange' }}
-          </button>
-          <button class="btn-primary" :disabled="!canProceedExchange" @click="store.goNext">
-            Далее &rarr;
-          </button>
-        </div>
-      </div>
-
-      <!-- Шаг 3: Рабочий график -->
-      <div v-else-if="store.currentStep === 'schedule'" class="onboarding-body">
-        <p class="onboarding-hint">
-          Эти данные используются для подсчёта плановых часов на дашборде. Можно изменить
-          позже в Настройках.
-        </p>
-        <label class="field-label">
-          Часов в день
-          <input v-model.number="hoursPerDay" type="number" min="1" max="24" class="field-input field-input--sm" />
-        </label>
-        <div class="field-label">
-          Рабочие дни
-          <div class="day-picker">
-            <button
-              v-for="(label, i) in dayLabels"
-              :key="i"
-              :class="['day-btn', { active: workDays.includes(i + 1) }]"
-              @click="toggleDay(i + 1)"
-            >
-              {{ label }}
-            </button>
-          </div>
-        </div>
-        <div class="onboarding-actions">
-          <button class="btn-ghost" @click="store.goPrev">&larr; Назад</button>
-          <button class="btn-primary" :disabled="!canProceedSchedule" @click="saveScheduleAndNext">
-            Далее &rarr;
-          </button>
-        </div>
-      </div>
-
-      <!-- Шаг 4: Тур -->
-      <div v-else class="onboarding-body">
-        <div class="tour-card">
-          <div class="tour-icon">{{ tourItems[tourStep].icon }}</div>
-          <h2 class="tour-title">{{ tourItems[tourStep].title }}</h2>
-          <p class="tour-text">{{ tourItems[tourStep].text }}</p>
-        </div>
-        <div class="tour-dots">
-          <span
-            v-for="(_, i) in tourItems"
-            :key="i"
-            :class="['tour-dot', { active: i === tourStep }]"
-            @click="tourStep = i"
+      <!-- Шаги -->
+      <div class="onboarding-body">
+        <Transition name="slide-step" mode="out-in">
+          <JiraConnectionStep
+            v-if="currentStep === 0"
+            key="jira"
+            @done="next"
           />
-        </div>
-        <div class="onboarding-actions">
-          <button v-if="tourStep > 0" class="btn-ghost" @click="tourStep--">&larr;</button>
-          <button v-if="tourStep < tourItems.length - 1" class="btn-secondary" @click="tourStep++">
-            Далее
-          </button>
-          <button v-else class="btn-primary" @click="finish">
-            Начать работу ✨
-          </button>
-        </div>
+          <ExchangeConnectionStep
+            v-else-if="currentStep === 1"
+            key="exchange"
+            @done="next"
+            @skip="skip"
+          />
+          <WorkScheduleStep
+            v-else-if="currentStep === 2"
+            key="schedule"
+            @done="next"
+          />
+          <TourStep
+            v-else-if="currentStep === 3"
+            key="tour"
+            @done="finish"
+          />
+        </Transition>
       </div>
     </div>
   </div>
@@ -245,190 +101,85 @@ function finish() {
 .onboarding-overlay {
   position: fixed;
   inset: 0;
-  background: var(--color-bg);
+  background: oklch(from var(--color-bg) l c h / 0.92);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 10000;
 }
 
 .onboarding-card {
-  width: min(520px, 94vw);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
-  overflow: hidden;
-}
-
-.onboarding-progress {
-  height: 3px;
-  background: var(--color-surface-offset);
-}
-.onboarding-progress-fill {
-  height: 100%;
-  background: var(--color-primary);
-  transition: width 0.35s ease;
-}
-
-.onboarding-header {
-  padding: 24px 28px 0;
-}
-.onboarding-step-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-.onboarding-title {
-  margin-top: 6px;
-  font-size: 1.35rem;
-  font-weight: 700;
-  color: var(--color-text);
-}
-
-.onboarding-body {
-  padding: 20px 28px 28px;
+  width: min(640px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: var(--space-8);
   display: flex;
   flex-direction: column;
-  gap: 14px;
-}
-.onboarding-hint {
-  font-size: 0.875rem;
-  color: var(--color-text-muted);
-  line-height: 1.5;
-}
-.onboarding-hint a {
-  color: var(--color-primary);
+  gap: var(--space-6);
 }
 
-.field-label {
+/* Прогресс-шаги */
+.onboarding-steps {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--color-text-muted);
-}
-.field-input {
-  padding: 8px 10px;
-  background: var(--color-surface-offset);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  font-size: 0.9rem;
-  color: var(--color-text);
-  outline: none;
-  transition: border-color 0.15s;
-}
-.field-input:focus {
-  border-color: var(--color-primary);
-}
-.field-input--sm { width: 80px; }
-
-.day-picker {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 4px;
-}
-.day-btn {
-  padding: 5px 10px;
-  border-radius: 20px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  border: 1.5px solid var(--color-border);
-  background: var(--color-surface-offset);
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.day-btn.active {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
+  align-items: flex-start;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
 }
 
-.onboarding-error {
-  font-size: 0.85rem;
-  color: var(--color-error);
-  background: var(--color-error-highlight);
-  border-radius: 6px;
-  padding: 8px 12px;
-}
-.onboarding-success {
-  font-size: 0.85rem;
-  color: var(--color-success);
-  background: var(--color-success-highlight);
-  border-radius: 6px;
-  padding: 8px 12px;
-}
-
-.onboarding-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-  margin-top: 6px;
-}
-
-.btn-primary,
-.btn-secondary,
-.btn-ghost {
-  padding: 9px 18px;
-  border-radius: 7px;
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
-}
-.btn-primary {
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-}
-.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn-primary:not(:disabled):hover { background: var(--color-primary-hover); }
-.btn-secondary {
-  background: var(--color-surface-offset);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-}
-.btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn-ghost {
-  background: none;
-  color: var(--color-text-muted);
-  border: none;
-}
-.btn-ghost:hover { color: var(--color-text); }
-
-/* Tour */
-.tour-card {
-  background: var(--color-surface-offset);
-  border-radius: 10px;
-  padding: 24px;
-  text-align: center;
-  min-height: 160px;
+.step-dot {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 80px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 2px solid transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  cursor: default;
+  transition: all var(--transition-interactive);
 }
-.tour-icon { font-size: 2.2rem; }
-.tour-title { font-size: 1rem; font-weight: 700; color: var(--color-text); }
-.tour-text  { font-size: 0.875rem; color: var(--color-text-muted); line-height: 1.55; max-width: 380px; }
 
-.tour-dots {
-  display: flex;
-  gap: 7px;
-  justify-content: center;
-}
-.tour-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-border);
+.step-dot.done {
+  color: var(--color-primary);
   cursor: pointer;
-  transition: background 0.15s;
 }
-.tour-dot.active { background: var(--color-primary); }
+
+.step-dot.active {
+  background: var(--color-primary-highlight);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.step-icon { font-size: 1.5em; }
+
+/* Анимация переходов между шагами */
+.slide-step-enter-active,
+.slide-step-leave-active {
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.slide-step-enter-from {
+  opacity: 0;
+  transform: translateX(24px);
+}
+.slide-step-leave-to {
+  opacity: 0;
+  transform: translateX(-24px);
+}
+
+/* Масштабирование Windows 125-200%: используем em-единицы */
+@media (min-resolution: 120dpi) {
+  .onboarding-card {
+    width: min(600px, 90vw);
+  }
+}
 </style>
