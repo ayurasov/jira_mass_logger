@@ -76,9 +76,6 @@
       "windows": {
         "installMode": "passive"
       }
-    },
-    "autostart": {
-      "mobile": false
     }
   }
 }
