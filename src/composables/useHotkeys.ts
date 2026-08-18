@@ -8,12 +8,8 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
  * Ctrl+N  — быстрое открытие мастера массового трекинга
  * Ctrl+L  — переход на страницу «Мой worklog»
  * Ctrl+M  — свернуть в системный трей
- * Enter   — сабмит inline-редактирование (custom event на активный элемент)
- * Esc     — отменяет редактирование / закрывает диалог (дефолтное поведение браузера)
- *
- * Enter/Esc работают через нативный focus-механизм HTML —
- * этот композабл не переопределяет их поведение;
- * каждый inline-редактор обрабатывает Enter/Esc самостоятельно.
+ * Enter   — сабмит inline-редактирование (обрабатывается каждым компонентом самостоятельно)
+ * Esc     — отменяет редактирование / закрывает диалог
  */
 export function useHotkeys() {
   const router = useRouter();
@@ -22,14 +18,14 @@ export function useHotkeys() {
     // --- Ctrl+N: Мастер массового трекинга ---
     if (e.ctrlKey && e.key === 'n') {
       e.preventDefault();
-      await router.push({ name: 'bulk' });
+      await router.push({ name: 'bulk-log' });
       return;
     }
 
     // --- Ctrl+L: Таблица worklog ---
     if (e.ctrlKey && e.key === 'l') {
       e.preventDefault();
-      await router.push({ name: 'worklog' });
+      await router.push({ name: 'my-worklog' });
       return;
     }
 
