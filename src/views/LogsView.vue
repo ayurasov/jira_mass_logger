@@ -1,270 +1,280 @@
-<template>
-  <div class="logs-view">
-    <div class="logs-toolbar">
-      <h2>Диагностика / Логи</h2>
-
-      <div class="toolbar-right">
-        <!-- Фильтр уровня -->
-        <select v-model="levelFilter" class="level-select">
-          <option value="">ALL</option>
-          <option value="DEBUG">DEBUG</option>
-          <option value="INFO">INFO</option>
-          <option value="WARN">WARN</option>
-          <option value="ERROR">ERROR</option>
-        </select>
-
-        <!-- Автообновление -->
-        <label class="auto-refresh-toggle">
-          <input type="checkbox" v-model="autoRefresh" />
-          <span>Авто</span>
-        </label>
-
-        <button class="btn-ghost" @click="loadLogs" :disabled="loading">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16"
-            :class="{ spin: loading }">
-            <path d="M17 10a7 7 0 1 1-2.05-4.95" stroke-linecap="round"/>
-            <polyline points="17 3 17 10 10 10" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Обновить
-        </button>
-
-        <button class="btn-ghost" @click="copyAll" :title="'Копировать всё'">
-          📋 Копировать
-        </button>
-
-        <button class="btn-primary" @click="openFolder">
-          📂 Открыть папку
-        </button>
-      </div>
-    </div>
-
-    <div class="log-path" v-if="logPath">Папка: <code>{{ logPath }}</code></div>
-
-    <div class="log-terminal" ref="terminalEl">
-      <div v-if="filtered.length === 0" class="empty-state">
-        <span>Логи пусты</span>
-      </div>
-      <div
-        v-for="(line, i) in filtered"
-        :key="i"
-        class="log-line"
-        :class="lineClass(line)"
-      >
-        <span class="log-level-badge">{{ extractLevel(line) }}</span>
-        <span class="log-content">{{ stripLevel(line) }}</span>
-      </div>
-    </div>
-  </div>
-</template>
-
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+/**
+ * Экран логов — диагностика для пользователя.
+ *
+ * Функции:
+ *  - Показывает последние N строк текущего лог-файла
+ *  - Кнопка "Обновить" и автообновление каждые 5 секунд
+ *  - Кнопка "Открыть папку логов" — открывает %LOCALAPPDATA%\JiraTime\logs в Проводнике
+ *  - Фильтр по уровню (DEBUG / INFO / WARN / ERROR)
+ */
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
-const lines = ref<string[]>([])
-const levelFilter = ref('')
-const autoRefresh = ref(false)
-const loading = ref(false)
-const logPath = ref('')
-const terminalEl = ref<HTMLElement | null>(null)
+const LOG_LINES = 300
+const REFRESH_INTERVAL_MS = 5000
 
-const filtered = computed(() => {
-  if (!levelFilter.value) return lines.value
-  return lines.value.filter(l => l.includes(`[${levelFilter.value}]`))
+const lines      = ref<string[]>([])
+const loading    = ref(false)
+const logDirPath = ref('')
+const filterLevel = ref<'ALL' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'>('ALL')
+const autoScroll  = ref(true)
+const logContainer = ref<HTMLPreElement | null>(null)
+let timer: ReturnType<typeof setInterval> | null = null
+
+const filteredLines = computed(() => {
+  if (filterLevel.value === 'ALL') return lines.value
+  return lines.value.filter(l => l.includes(`[${filterLevel.value}]`) || l.includes(`[${filterLevel.value.padEnd(5)}]`))
 })
 
-function extractLevel(line: string): string {
-  const m = line.match(/\[(DEBUG|INFO|WARN|ERROR)\s*\]/)
-  return m ? m[1] : ''
-}
-function stripLevel(line: string): string {
-  return line.replace(/^\S+\s+\[\S+\]\s+/, '')
-}
-function lineClass(line: string): string {
-  const lvl = extractLevel(line)
-  return { DEBUG: 'lvl-debug', INFO: 'lvl-info', WARN: 'lvl-warn', ERROR: 'lvl-error' }[lvl] ?? ''
+function levelClass(line: string): string {
+  if (line.includes('[ERROR]')) return 'log-error'
+  if (line.includes('[WARN ]') || line.includes('[WARN]'))  return 'log-warn'
+  if (line.includes('[DEBUG]')) return 'log-debug'
+  return 'log-info'
 }
 
-async function loadLogs() {
+async function fetchLogs() {
   loading.value = true
   try {
-    lines.value = await invoke<string[]>('read_log_tail', { lines: 200 })
-    await nextTick()
-    if (terminalEl.value) {
-      terminalEl.value.scrollTop = terminalEl.value.scrollHeight
+    lines.value = await invoke<string[]>('read_log_tail', { lines: LOG_LINES })
+    if (autoScroll.value) {
+      await nextTick()
+      if (logContainer.value) {
+        logContainer.value.scrollTop = logContainer.value.scrollHeight
+      }
     }
   } catch (e) {
-    console.error('read_log_tail error', e)
+    lines.value = [`Ошибка чтения логов: ${e}`]
   } finally {
     loading.value = false
   }
 }
 
-async function openFolder() {
+async function fetchLogDirPath() {
+  try {
+    logDirPath.value = await invoke<string>('get_log_dir_path')
+  } catch {}
+}
+
+async function openLogDir() {
   try {
     await invoke('open_log_dir_in_explorer')
   } catch (e) {
-    console.error('open_log_dir_in_explorer error', e)
+    alert(`Не удалось открыть папку: ${e}`)
   }
 }
 
-async function copyAll() {
-  try {
-    await navigator.clipboard.writeText(lines.value.join('\n'))
-  } catch {
-    // fallback: create textarea and copy
-    const ta = document.createElement('textarea')
-    ta.value = lines.value.join('\n')
-    document.body.appendChild(ta)
-    ta.select()
-    document.execCommand('copy')
-    document.body.removeChild(ta)
-  }
+async function nextTick() {
+  return new Promise(resolve => setTimeout(resolve, 0))
 }
-
-let timer: ReturnType<typeof setInterval> | null = null
-watch(autoRefresh, (val) => {
-  if (val) {
-    timer = setInterval(loadLogs, 10_000)
-  } else {
-    if (timer) { clearInterval(timer); timer = null }
-  }
-})
 
 onMounted(async () => {
-  await loadLogs()
-  try {
-    logPath.value = await invoke<string>('get_log_dir_path')
-  } catch {}
+  await fetchLogDirPath()
+  await fetchLogs()
+  timer = setInterval(fetchLogs, REFRESH_INTERVAL_MS)
 })
+
 onUnmounted(() => {
   if (timer) clearInterval(timer)
 })
 </script>
+
+<template>
+  <div class="logs-view">
+    <!-- Заголовок -->
+    <div class="logs-header">
+      <div class="logs-title-row">
+        <h2 class="logs-title">Логи приложения</h2>
+        <span class="logs-path">{{ logDirPath }}</span>
+      </div>
+
+      <div class="logs-controls">
+        <!-- Фильтр уровня -->
+        <div class="logs-filter">
+          <button
+            v-for="lvl in ['ALL','DEBUG','INFO','WARN','ERROR']"
+            :key="lvl"
+            class="filter-btn"
+            :class="{ active: filterLevel === lvl, [`filter-${lvl.toLowerCase()}`]: true }"
+            @click="filterLevel = lvl as typeof filterLevel.value"
+          >
+            {{ lvl }}
+          </button>
+        </div>
+
+        <label class="auto-scroll-toggle">
+          <input type="checkbox" v-model="autoScroll" />
+          Автоскролл
+        </label>
+
+        <button class="logs-action-btn" :disabled="loading" @click="fetchLogs">
+          <span v-if="loading">↻ Загрузка...</span>
+          <span v-else">↻ Обновить</span>
+        </button>
+
+        <button class="logs-action-btn" @click="openLogDir">
+          📂 Открыть папку
+        </button>
+      </div>
+    </div>
+
+    <!-- Контент -->
+    <pre
+      ref="logContainer"
+      class="logs-content"
+      aria-label="Файл логов"
+    >
+      <template v-if="filteredLines.length === 0">
+        <span class="logs-empty">Логи пусты — приложение только запустилось.</span>
+      </template>
+      <template v-else>
+        <span
+          v-for="(line, idx) in filteredLines"
+          :key="idx"
+          :class="['log-line', levelClass(line)]"
+        >{{ line }}\n</span>
+      </template>
+    </pre>
+
+    <!-- Строк статуса -->
+    <div class="logs-footer">
+      Показано {{ filteredLines.length }} строк (max {{ LOG_LINES }})
+      &bull; Автообновление: каждые 5 секунд
+    </div>
+  </div>
+</template>
 
 <style scoped>
 .logs-view {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: var(--space-4, 1rem);
-  gap: var(--space-3, 0.75rem);
+  min-height: 0;
+  padding: 0;
+  background: var(--color-bg, #f7f6f2);
 }
-.logs-toolbar {
+
+.logs-header {
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-surface, #fafafa);
+  flex-shrink: 0;
+}
+
+.logs-title-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-2, 0.5rem);
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
 }
-.logs-toolbar h2 {
-  font-size: var(--text-lg, 1.25rem);
-  font-weight: 600;
+.logs-title {
+  font-size: 16px;
+  font-weight: 700;
   margin: 0;
 }
-.toolbar-right {
+.logs-path {
+  font-size: 11px;
+  color: var(--color-text-muted, #64748b);
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logs-controls {
   display: flex;
   align-items: center;
-  gap: var(--space-2, 0.5rem);
+  gap: 8px;
   flex-wrap: wrap;
 }
-.level-select {
-  padding: 0.25rem 0.5rem;
-  border-radius: 6px;
-  border: 1px solid var(--color-border, #d4d1ca);
-  background: var(--color-surface, #f9f8f5);
-  color: var(--color-text, #28251d);
-  font-size: 0.875rem;
+
+.logs-filter {
+  display: flex;
+  gap: 4px;
 }
-.auto-refresh-toggle {
+.filter-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.filter-btn.active { background: var(--color-primary, #01696f); color: #fff; border-color: transparent; }
+.filter-debug { color: #94a3b8; }
+.filter-debug.active { background: #94a3b8; color: #fff; }
+.filter-info  { color: var(--color-text, #1e293b); }
+.filter-warn  { color: #f59e0b; }
+.filter-warn.active  { background: #f59e0b; color: #fff; }
+.filter-error { color: #ef4444; }
+.filter-error.active { background: #ef4444; color: #fff; }
+
+.auto-scroll-toggle {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  font-size: 0.875rem;
+  gap: 4px;
+  font-size: 12px;
   cursor: pointer;
-  user-select: none;
-}
-.btn-ghost {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: 6px;
-  border: 1px solid var(--color-border, #d4d1ca);
-  background: transparent;
-  color: var(--color-text, #28251d);
-  font-size: 0.875rem;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.btn-ghost:hover { background: var(--color-surface-offset, #f3f0ec); }
-.btn-ghost:disabled { opacity: 0.5; cursor: default; }
-.btn-primary {
-  padding: 0.25rem 0.75rem;
-  border-radius: 6px;
-  border: none;
-  background: var(--color-primary, #01696f);
-  color: #fff;
-  font-size: 0.875rem;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.btn-primary:hover { background: var(--color-primary-hover, #0c4e54); }
-
-.log-path {
-  font-size: 0.8rem;
-  color: var(--color-text-muted, #7a7974);
-}
-.log-path code {
-  user-select: all;
-  word-break: break-all;
+  color: var(--color-text-muted, #64748b);
 }
 
-.log-terminal {
+.logs-action-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-surface, #fff);
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+.logs-action-btn:hover:not(:disabled) { background: var(--color-surface-offset, #f3f0ec); }
+.logs-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Содержимое логов */
+.logs-content {
   flex: 1;
   overflow-y: auto;
-  background: var(--color-bg, #171614);
-  color: #c9d1d9;
-  border-radius: 8px;
-  padding: var(--space-3, 0.75rem);
-  font-family: 'Consolas', 'Cascadia Code', 'Fira Mono', monospace;
-  font-size: 0.8125rem;
+  overflow-x: auto;
+  padding: 10px 16px;
+  margin: 0;
+  font-family: 'Consolas', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 11.5px;
   line-height: 1.55;
-  border: 1px solid var(--color-border, #393836);
+  background: var(--color-bg, #f7f6f2);
+  color: var(--color-text, #1e293b);
+  white-space: pre;
+  min-height: 0;
 }
 
-/* Цвета в светлой теме */
-[data-theme="light"] .log-terminal,
-:root:not([data-theme="dark"]) .log-terminal {
-  background: #1e1e1e;
-  color: #d4d4d4;
+/* Темная тема */
+@media (prefers-color-scheme: dark) {
+  .logs-content { background: #0d1117; color: #c9d1d9; }
 }
+[data-theme="dark"] .logs-content { background: #0d1117; color: #c9d1d9; }
 
-.log-line {
-  display: flex;
-  gap: 0.5rem;
-  padding: 1px 0;
-}
-.log-level-badge {
-  flex-shrink: 0;
-  font-weight: 700;
-  width: 4.5rem;
-  opacity: 0.9;
-}
-.log-content { word-break: break-all; }
+.log-line   { display: block; }
+.log-error  { color: #ef4444; }
+.log-warn   { color: #f59e0b; }
+.log-debug  { color: #94a3b8; }
+.log-info   { color: inherit; }
 
-.lvl-debug .log-level-badge { color: #8b8b8b; }
-.lvl-info  .log-level-badge { color: #56d1e0; }
-.lvl-warn  .log-level-badge { color: #f4c542; }
-.lvl-error .log-level-badge { color: #f14c4c; }
-.lvl-error .log-content     { color: #f97171; }
-
-.empty-state {
-  color: #666;
+.logs-empty {
+  display: block;
   text-align: center;
-  padding: 3rem 0;
+  margin-top: 48px;
+  color: var(--color-text-muted, #94a3b8);
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
-.spin { animation: spin 0.7s linear infinite; }
+.logs-footer {
+  padding: 6px 16px;
+  font-size: 11px;
+  color: var(--color-text-muted, #64748b);
+  border-top: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-surface, #fafafa);
+  flex-shrink: 0;
+}
 </style>
