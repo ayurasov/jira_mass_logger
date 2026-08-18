@@ -46,7 +46,7 @@ pub struct MatchSuggestion {
     pub matched_rule_name: Option<String>,
 }
 
-fn lock_db(db: &State<'_, WizardDb>) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+fn lock_db<'a>(db: &'a State<'a, WizardDb>) -> Result<std::sync::MutexGuard<'a, Connection>, String> {
     db.0.lock().map_err(|e| e.to_string())
 }
 
