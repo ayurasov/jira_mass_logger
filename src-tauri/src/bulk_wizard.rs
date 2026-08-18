@@ -127,6 +127,64 @@ pub fn get_ru_holidays() -> Vec<String> {
     ].into_iter().map(String::from).collect()
 }
 
+
+// ────────────────────────────────────────────────────────────────
+// Пользовательские праздники (custom holidays, хранятся в SQLite)
+// ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_custom_holidays(db: State<'_, WizardDb>) -> Result<Vec<String>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    // Таблица создаётся лениво при первом вызове import_holidays
+    let exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='custom_holidays'",
+        [],
+        |row| row.get::<_, i64>(0),
+    ).map(|n| n > 0).unwrap_or(false);
+    if !exists { return Ok(vec![]); }
+    let mut stmt = conn.prepare("SELECT date FROM custom_holidays ORDER BY date")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn import_holidays(db: State<'_, WizardDb>, dates: Vec<String>) -> Result<usize, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS custom_holidays (
+            date TEXT PRIMARY KEY
+        );"
+    ).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM custom_holidays", []).map_err(|e| e.to_string())?;
+    let mut count = 0usize;
+    for date in &dates {
+        conn.execute("INSERT OR IGNORE INTO custom_holidays (date) VALUES (?1)", params![date])
+            .map_err(|e| e.to_string())?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+// ────────────────────────────────────────────────────────────────
+// Запись файлов (экспорт CSV/XLSX с учётом кодировки)
+// ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn write_export_file(path: String, content: String) -> Result<(), String> {
+    fs::write(&path, content.as_bytes()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn write_export_file_utf8_bom(path: String, content: String) -> Result<(), String> {
+    // UTF-8 BOM нужен для корректного открытия CSV в Excel (Windows)
+    let bom: &[u8] = &[0xEF, 0xBB, 0xBF];
+    let mut bytes = bom.to_vec();
+    bytes.extend_from_slice(content.as_bytes());
+    fs::write(&path, bytes).map_err(|e| e.to_string())
+}
+
 // ────────────────────────────────────────────────────────────────
 // Setup: открыть / создать SQLite, применить схему, зарегистрировать
 // ────────────────────────────────────────────────────────────────
