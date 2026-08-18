@@ -77,6 +77,10 @@ pub struct JiraConnectionParams {
     /// системной настройки Windows на фронтенде и передаётся сюда явно —
     /// так избегаем хардкода offset и ошибок при переходе на летнее/зимнее время.
     pub user_timezone: Option<String>,
+    /// Пропустить проверку TLS-сертификата (самоподписанный или корпоративный CA).
+    /// Использовать только во внутренних сетях.
+    #[serde(default)]
+    pub accept_invalid_certs: bool,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -111,6 +115,10 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
         .timeout(Duration::from_secs(30));
+
+    if params.accept_invalid_certs {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
 
     // Явный root CA для сетей с SSL-инспекцией на корпоративном прокси.
     if let Some(path) = &params.extra_root_ca_pem_path {
