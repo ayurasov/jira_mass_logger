@@ -85,6 +85,8 @@ export interface CalendarEventDto {
   onlineMeetingUrl?: string | null;
   responseStatus?: string | null;
   showAs?: string | null;
+  /** ID серии повторяющейся встречи (Graph: seriesMasterId, EWS: RecurringMasterItemId). */
+  seriesMasterId?: string | null;
 }
 
 export interface GraphAuthStartResult {
@@ -139,6 +141,35 @@ export interface CachedWorklogRow {
   comment?: string | null;
   updated?: string | null;
   syncedAt?: string | null;
+}
+
+// ─── Промпт 6: meeting_rules типы ────────────────────────────────────────────
+
+export interface MeetingMatchRule {
+  id?: number | null;
+  name: string;
+  /** 'regex' | 'keyword' | 'prefix' */
+  kind: string;
+  pattern: string;
+  issueKey: string;
+  priority: number;
+  isActive: boolean;
+}
+
+export interface MeetingIssueHistoryEntry {
+  seriesKey: string;
+  issueKey: string;
+  issueSummary?: string | null;
+  lastUsedAt: string;
+  useCount: number;
+}
+
+export interface MatchSuggestion {
+  issueKey?: string | null;
+  issueSummary?: string | null;
+  /** 'history' | 'rule' | 'prefix' | 'none' */
+  source: 'history' | 'rule' | 'prefix' | 'none';
+  matchedRuleName?: string | null;
 }
 
 /** Ошибка конфликта версий: приходит из Rust как "CONFLICT:<json WorklogDto>". */
@@ -225,7 +256,7 @@ export const tauriApi = {
   writeExportFile(path: string, content: string) { return invoke<void>('write_export_file', { path, content }); },
   writeExportFileUtf8Bom(path: string, content: string) { return invoke<void>('write_export_file_utf8_bom', { path, content }); },
 
-  // --- Локальный кэш и очередь несинхронизированных изменений (экран "Мой worklog") ---
+  // --- Локальный кэш и очередь несинхронизированных изменений ---
   listCachedWorklogs(fromDate: string, toDate: string) { return invoke<CachedWorklogRow[]>('list_cached_worklogs', { fromDate, toDate }); },
   upsertCachedWorklog(row: CachedWorklogRow) { return invoke<void>('upsert_cached_worklog', { row }); },
   deleteCachedWorklog(rowKey: string) { return invoke<void>('delete_cached_worklog', { rowKey }); },
@@ -236,4 +267,18 @@ export const tauriApi = {
   markSyncAttemptFailed(id: number, error: string) { return invoke<void>('mark_sync_attempt_failed', { id, error }); },
   removeSyncQueueItem(id: number) { return invoke<void>('remove_sync_queue_item', { id }); },
   clearSyncQueue() { return invoke<void>('clear_sync_queue'); },
+
+  // --- Промпт 6: meeting_rules ---
+  suggestIssueForMeeting(subject: string, seriesMasterId: string | null) {
+    return invoke<MatchSuggestion>('suggest_issue_for_meeting', { subject, seriesMasterId });
+  },
+  rememberMeetingIssueMatch(subject: string, seriesMasterId: string | null, issueKey: string, issueSummary: string | null) {
+    return invoke<void>('remember_meeting_issue_match', { subject, seriesMasterId, issueKey, issueSummary });
+  },
+  listMeetingMatchRules() { return invoke<MeetingMatchRule[]>('list_meeting_match_rules'); },
+  saveMeetingMatchRule(rule: MeetingMatchRule) { return invoke<number>('save_meeting_match_rule', { rule }); },
+  deleteMeetingMatchRule(id: number) { return invoke<void>('delete_meeting_match_rule', { id }); },
+  getMeetingIssueHistory() { return invoke<MeetingIssueHistoryEntry[]>('get_meeting_issue_history'); },
+
+  profileToConnectionParams,
 };
