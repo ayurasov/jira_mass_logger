@@ -12,9 +12,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Listener};
 
-use crate::logger::AppLogger;
+use crate::logger::{AppLogger, LogSink};
 use crate::sync_queue::WakeSignal;
 
 // ──────────────────────────────────────────────────────
