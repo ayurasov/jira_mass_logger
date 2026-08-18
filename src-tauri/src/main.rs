@@ -7,6 +7,7 @@ mod secrets;
 mod bulk_wizard;
 mod sync_queue;
 mod meeting_rules;
+mod settings_commands;
 
 use tauri::{Manager, tray::TrayIconBuilder, menu::{Menu, MenuItem}};
 
@@ -25,9 +26,10 @@ fn main() {
             db::init_db(app.handle())?;
             bulk_wizard::setup(app.handle())?;
 
-            let log_today = MenuItem::with_id(app, "log_today", "Залогировать сегодня", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&log_today, &quit])?;
+            let log_today  = MenuItem::with_id(app, "log_today",  "Залогировать сегодня", true, None::<&str>)?;
+            let open_app   = MenuItem::with_id(app, "open_app",   "Открыть JiraTime",        true, None::<&str>)?;
+            let quit       = MenuItem::with_id(app, "quit",       "Выход",                        true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open_app, &log_today, &quit])?;
 
             let _tray = TrayIconBuilder::new()
                 .menu(&menu)
@@ -35,17 +37,58 @@ fn main() {
                 .on_menu_event(|app, event| {
                     match event.id.as_ref() {
                         "log_today" => { let _ = app.emit("tray:log_today", ()); }
+                        "open_app" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
                         "quit" => { app.exit(0); }
                         _ => {}
                     }
                 })
+                // Двойной клик по иконке трея — открывает окно
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::DoubleClick { .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
                 .build(app)?;
 
-            let app_handle_for_resume = app.handle().clone();
+            // Событие CloseRequested: проверяем настройку close_to_tray
+            let app_handle_close = app.handle().clone();
             if let Some(main_window) = app.get_webview_window("main") {
+                let win_close = main_window.clone();
                 main_window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Focused(true) = event {
-                        let _ = app_handle_for_resume.emit("system:possible_resume", ());
+                    match event {
+                        tauri::WindowEvent::CloseRequested { api, .. } => {
+                            let close_to_tray = app_handle_close
+                                .try_state::<bulk_wizard::WizardDb>()
+                                .and_then(|db| {
+                                    let conn = db.0.lock().ok()?;
+                                    let v: Option<String> = conn
+                                        .query_row(
+                                            "SELECT value FROM app_settings WHERE key='close_to_tray'",
+                                            [],
+                                            |r| r.get(0),
+                                        )
+                                        .ok();
+                                    Some(v.as_deref() == Some("true"))
+                                })
+                                .unwrap_or(true); // по умолчанию — свернуть в трей
+                            if close_to_tray {
+                                api.prevent_close();
+                                let _ = win_close.hide();
+                            }
+                        }
+                        tauri::WindowEvent::Focused(true) => {
+                            let _ = app_handle_close.emit("system:possible_resume", ());
+                        }
+                        _ => {}
                     }
                 });
             }
@@ -91,13 +134,24 @@ fn main() {
             sync_queue::list_cached_worklogs,
             secrets::save_secret,
             secrets::delete_secret,
-            // Промпт 6: сопоставление встреч с задачами Jira
             meeting_rules::suggest_issue_for_meeting,
             meeting_rules::remember_meeting_issue_match,
             meeting_rules::list_meeting_match_rules,
             meeting_rules::save_meeting_match_rule,
             meeting_rules::delete_meeting_match_rule,
             meeting_rules::get_meeting_issue_history,
+            // Промпт 7: настройки
+            settings_commands::get_app_settings,
+            settings_commands::set_app_settings,
+            settings_commands::open_data_folder,
+            settings_commands::export_settings_dialog,
+            settings_commands::import_settings_dialog,
+            settings_commands::list_description_templates,
+            settings_commands::save_description_template,
+            settings_commands::delete_description_template,
+            settings_commands::use_description_template,
+            settings_commands::render_description_template,
+            settings_commands::list_favorite_issues,
         ])
         .run(tauri::generate_context!())
         .expect("error while running JiraTime");

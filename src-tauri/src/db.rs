@@ -1,17 +1,11 @@
-// Инициализация локальной SQLite БД (профили, шаблоны, кэш worklog, настройки,
-// Exchange-профили и кэш событий, правила сопоставления встреч, история матчей).
-// На Windows БД хранится в %APPDATA%/JiraTime (не в директории установки Program Files),
-// путь берётся через tauri path API (app.path().app_data_dir()), а не хардкодится.
+// Инициализация локальной SQLite БД.
 use std::fs;
 use tauri::{AppHandle, Manager};
 
 pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let app_data_dir = app.path().app_data_dir()?; // Windows: %APPDATA%\JiraTime
+    let app_data_dir = app.path().app_data_dir()?;
     fs::create_dir_all(&app_data_dir)?;
-
     let db_path = app_data_dir.join("jiratime.db");
-    // Единый SQLite-файл (а не множество мелких файлов) снижает риск
-    // ложных срабатываний эвристик Windows Defender/корпоративного AV.
     let conn = rusqlite::Connection::open(&db_path)?;
 
     conn.execute_batch(
@@ -150,10 +144,22 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             issue_summary TEXT,
             last_used_at TEXT NOT NULL DEFAULT (datetime('now')),
             use_count INTEGER NOT NULL DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS description_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            body TEXT NOT NULL,
+            use_count INTEGER NOT NULL DEFAULT 0
         );",
     )?;
 
-    // Migrations: add columns that may be missing in existing DBs
+    // Migrations: safe to run repeatedly, ignore duplicate-column errors
     let migrations: &[&str] = &[
         "ALTER TABLE jira_profiles ADD COLUMN instance_type TEXT NOT NULL DEFAULT 'cloud'",
         "ALTER TABLE jira_profiles ADD COLUMN extra_root_ca_pem_path TEXT",
@@ -172,10 +178,9 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         "ALTER TABLE exchange_profiles ADD COLUMN exclude_declined INTEGER",
         "ALTER TABLE exchange_profiles ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE calendar_events_cache ADD COLUMN series_master_id TEXT",
+        "ALTER TABLE description_templates ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0",
     ];
-
     for migration in migrations {
-        // duplicate column = "table already has column": safe to ignore
         let _ = conn.execute_batch(migration);
     }
 
