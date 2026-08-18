@@ -10,6 +10,7 @@ const form = reactive({
   email: '',
   token: '',
   authType: 'Bearer' as 'Bearer' | 'Basic',
+  acceptInvalidCerts: false,
 });
 
 const testing = ref(false);
@@ -40,6 +41,7 @@ async function testAndSave() {
       secret_ref: secretRef,
       instance_type: instanceType(),
       extra_root_ca_pem_path: null,
+      accept_invalid_certs: form.acceptInvalidCerts,
       proxy: null,
       user_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
@@ -153,7 +155,14 @@ async function testAndSave() {
       </transition>
 
       <div class="step-actions">
-        <button type="submit" class="btn btn-primary" :disabled="testing">
+  
+      <!-- TLS опция для корпоративных серверов с самоподписанным сертификатом -->
+      <label class="field-label field-checkbox" style="margin-top:0.25rem">
+        <input type="checkbox" v-model="form.acceptInvalidCerts" />
+        <span>Не проверять TLS-сертификат сервера (для самоподписанных/корпоративных)</span>
+      </label>
+
+      <button type="submit" class="btn btn-primary" :disabled="testing">
           <span v-if="testing" class="spinner" aria-hidden="true"></span>
           {{ testing ? 'Проверка…' : 'Проверить и продолжить' }}
         </button>
