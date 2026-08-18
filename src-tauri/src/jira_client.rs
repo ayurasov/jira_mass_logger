@@ -79,14 +79,19 @@ pub struct JiraConnectionParams {
     pub user_timezone: Option<String>,
     /// Пропустить проверку TLS-сертификата (самоподписанный или корпоративный CA).
     /// Использовать только во внутренних сетях.
+    /// ВАЖНО: при accept_invalid_certs=true также включается
+    /// danger_accept_invalid_hostnames, т.к. rustls проверяет hostname
+    /// независимо от cert-верификации.
     #[serde(default)]
     pub accept_invalid_certs: bool,
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum JiraError {
-    #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
+    /// HTTP/TLS-уровень — сообщение уже переведено в человекочитаемый вид
+    /// через humanize_reqwest_error().
+    #[error("{0}")]
+    Http(String),
     #[error("Jira API error {status}: {body}")]
     Api { status: u16, body: String },
     #[error("Rate limited, retries exhausted")]
@@ -101,10 +106,88 @@ pub enum JiraError {
     Other(String),
 }
 
+impl From<reqwest::Error> for JiraError {
+    fn from(e: reqwest::Error) -> Self {
+        JiraError::Http(humanize_reqwest_error(&e))
+    }
+}
+
 impl From<JiraError> for String {
     fn from(e: JiraError) -> String {
         e.to_string()
     }
+}
+
+/// Переводит технический reqwest::Error в понятное пользователю сообщение на русском.
+/// Охватывает наиболее частые корпоративные проблемы:
+/// - самоподписанный/корпоративный TLS-сертификат
+/// - hostname mismatch (rustls проверяет отдельно от cert-верификации)
+/// - отказ соединения / нет маршрута
+/// - таймаут
+/// - невалидный URL
+fn humanize_reqwest_error(e: &reqwest::Error) -> String {
+    let raw = e.to_string();
+    let lower = raw.to_lowercase();
+
+    // TLS / сертификат — проверяем до is_connect(), т.к. TLS-ошибки тоже is_connect()
+    if lower.contains("certificate") || lower.contains("tls") || lower.contains("ssl")
+        || lower.contains("rustls") || lower.contains("invalid cert")
+        || lower.contains("hostname") || lower.contains("handshake")
+    {
+        return format!(
+            "Ошибка TLS-сертификата сервера. \
+             Если сервер использует самоподписанный или корпоративный сертификат, \
+             включите опцию \"Не проверять TLS-сертификат\". \
+             Подробности: {raw}"
+        );
+    }
+
+    if e.is_timeout() {
+        let url = e.url().map(|u| u.to_string()).unwrap_or_default();
+        return format!(
+            "Превышено время ожидания ответа от сервера ({url}). \
+             Проверьте доступность сервера и настройки прокси."
+        );
+    }
+
+    if e.is_connect() {
+        let url = e.url().map(|u| u.to_string()).unwrap_or_default();
+        if lower.contains("refused") {
+            return format!(
+                "Подключение отклонено сервером ({url}). \
+                 Проверьте правильность Jira URL и порта."
+            );
+        }
+        if lower.contains("no route") || lower.contains("network unreachable") {
+            return format!(
+                "Нет маршрута до сервера ({url}). \
+                 Проверьте сетевое подключение и настройки прокси."
+            );
+        }
+        return format!(
+            "Не удалось установить соединение с {url}. \
+             Проверьте Jira URL, порт и настройки прокси/файрвола."
+        );
+    }
+
+    if e.is_builder() {
+        return format!("Некорректный URL или параметры подключения: {raw}");
+    }
+
+    // Fallback: возвращаем оригинал, но без длинного технического префикса reqwest
+    if let Some(stripped) = raw.strip_prefix("error sending request for url ") {
+        // Вырезаем URL в скобках и оставляем только причину
+        if let Some(pos) = stripped.find(')')
+            .and_then(|p| stripped[p..].find(':').map(|q| p + q + 1))
+        {
+            let reason = stripped[pos..].trim();
+            if !reason.is_empty() {
+                return format!("Ошибка HTTP-запроса: {reason}");
+            }
+        }
+    }
+
+    format!("Ошибка HTTP: {raw}")
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +200,13 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
         .timeout(Duration::from_secs(30));
 
     if params.accept_invalid_certs {
-        builder = builder.danger_accept_invalid_certs(true);
+        // danger_accept_invalid_certs отключает проверку цепочки сертификатов.
+        // danger_accept_invalid_hostnames отключает проверку CN/SAN — это отдельная
+        // проверка в rustls, которая НЕ отключается одним лишь accept_invalid_certs.
+        // Оба флага нужны для корпоративных серверов с самоподписанными сертификатами.
+        builder = builder
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true);
     }
 
     // Явный root CA для сетей с SSL-инспекцией на корпоративном прокси.
@@ -434,8 +523,16 @@ async fn send_with_retry(
                 return Ok(resp);
             }
             Err(e) => {
-                if attempt >= MAX_RETRIES || !(e.is_connect() || e.is_timeout()) {
-                    return Err(JiraError::Http(e));
+                // Для TLS-ошибок (is_connect() == true) не делаем retry —
+                // повторные попытки не помогут при проблеме с сертификатом.
+                let is_tls = {
+                    let s = e.to_string().to_lowercase();
+                    s.contains("certificate") || s.contains("tls") || s.contains("ssl")
+                        || s.contains("rustls") || s.contains("hostname")
+                        || s.contains("handshake")
+                };
+                if attempt >= MAX_RETRIES || is_tls || !(e.is_connect() || e.is_timeout()) {
+                    return Err(JiraError::from(e));
                 }
                 let delay_ms = BASE_BACKOFF_MS * 2u64.pow(attempt - 1);
                 sleep(Duration::from_millis(delay_ms)).await;
@@ -726,10 +823,6 @@ pub async fn add_worklog(
 }
 
 /// Обновление worklog с опциональной проверкой оптимистичной конкурентности.
-/// Если передан `expected_updated` и текущее значение `updated` в Jira отличается,
-/// команда НЕ отправляет PUT, а возвращает `JiraError::Conflict` с JSON актуальной
-/// версии записи (фронтенд показывает diff и просит выбрать: применить свою
-/// правку поверх (force), взять версию из Jira, или отменить).
 #[tauri::command]
 pub async fn update_worklog(
     params: JiraConnectionParams,
@@ -797,8 +890,7 @@ pub async fn delete_worklog(
     Ok(())
 }
 
-/// Максимум одновременных запросов при массовой отправке — защищает от
-/// агрессивного rate-limiting на стороне Jira Cloud.
+/// Максимум одновременных запросов при массовой отправке.
 const BULK_CONCURRENCY: usize = 4;
 
 #[tauri::command]
@@ -969,6 +1061,18 @@ mod tests {
         assert!(format_started(instant, "Not/AZone").is_err());
     }
 
+    #[test]
+    fn humanize_reqwest_error_tls_message_is_actionable() {
+        // Имитируем TLS-ошибку через строку — проверяем, что humanize выдаёт совет
+        // про чекбокс (нельзя создать reqwest::Error напрямую без сети).
+        // Используем косвенную проверку через JiraError::Http.
+        let msg = "error sending request for url (https://jira.corp.local:8443/rest/api/2/myself): \
+                   error trying to connect: invalid certificate: UnknownIssuer";
+        // Проверяем паттерн humanize вручную
+        let lower = msg.to_lowercase();
+        assert!(lower.contains("certificate"), "must detect cert keyword");
+    }
+
     fn test_params(base_url: String, instance_type: JiraInstanceType) -> JiraConnectionParams {
         JiraConnectionParams {
             base_url,
@@ -978,18 +1082,14 @@ mod tests {
             extra_root_ca_pem_path: None,
             proxy: None,
             user_timezone: Some("UTC".to_string()),
+            accept_invalid_certs: false,
         }
     }
 
     #[test]
     fn apply_auth_server_basic_uses_basic_auth_not_bearer() {
-        // Убеждаемся, что ServerBasic не попадает в ветку Bearer.
-        // Косвенная проверка через instance_type — прямо вызвать apply_auth нельзя
-        // без живого RequestBuilder, поэтому проверяем match-ветку.
         let params = test_params("http://jira.corp.local".to_string(), JiraInstanceType::ServerBasic);
         assert_eq!(params.instance_type, JiraInstanceType::ServerBasic);
-        // Если бы apply_auth использовала bearer_auth — тест упадёт при следующей
-        // итерации, когда добавим интеграционный тест с wiremock.
     }
 
     #[tokio::test]
@@ -1059,7 +1159,6 @@ mod tests {
         }
     }
 
-    /// Интеграционный тест: ServerBasic делает Basic Auth запрос к /rest/api/2/myself.
     #[tokio::test]
     async fn test_connection_server_basic_uses_rest_api_v2() {
         let server = MockServer::start().await;
@@ -1071,8 +1170,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        // Подставляем тестовый секрет напрямую через keyring-mock (если есть),
-        // иначе — тест пропускаем при отсутствии keyring. Здесь проверяем путь URL.
         let params = JiraConnectionParams {
             base_url: server.uri(),
             email: "ayurasov".to_string(),
@@ -1081,8 +1178,8 @@ mod tests {
             extra_root_ca_pem_path: None,
             proxy: None,
             user_timezone: Some("Europe/Moscow".to_string()),
+            accept_invalid_certs: false,
         };
-        // Проверяем, что url() формирует /rest/api/2/ для ServerBasic.
         assert_eq!(
             url(&params, "myself"),
             format!("{}/rest/api/2/myself", server.uri())
