@@ -34,6 +34,45 @@ export interface ExchangeConnectionParams {
   ewsAuthType?: EwsAuthType | null;
 }
 
+/**
+ * Exchange profile stored in the local SQLite DB.
+ * Mirrors ExchangeProfileDto in exchange_client.rs.
+ */
+export interface ExchangeProfileDto {
+  id?: number | null;
+  name: string;
+  authMode: ExchangeAuthMode;
+  ewsUrl?: string | null;
+  ewsAuthType?: EwsAuthType | null;
+  username: string;
+  secretRef: string;
+  tenantId?: string | null;
+  clientId?: string | null;
+  refreshTokenSecretRef?: string | null;
+  minEventMinutes?: number | null;
+  excludeFreeBusy?: boolean | null;
+  excludeDeclined?: boolean | null;
+  /** When true this profile is used as the active calendar source. Only one can be active at a time. */
+  isActive?: boolean | null;
+}
+
+/** Convert a saved profile to connection params for invoke calls. */
+export function profileToConnectionParams(p: ExchangeProfileDto): ExchangeConnectionParams {
+  return {
+    authMode: p.authMode,
+    ewsUrl: p.ewsUrl,
+    username: p.username,
+    secretRef: p.secretRef,
+    tenantId: p.tenantId,
+    clientId: p.clientId,
+    refreshTokenSecretRef: p.refreshTokenSecretRef,
+    minEventMinutes: p.minEventMinutes,
+    excludeFreeBusy: p.excludeFreeBusy,
+    excludeDeclined: p.excludeDeclined,
+    ewsAuthType: p.ewsAuthType,
+  };
+}
+
 export interface CalendarEventDto {
   id: string;
   subject: string;
@@ -117,7 +156,18 @@ export const tauriApi = {
   getProjects(params: JiraConnectionParams) { return invoke<ProjectDto[]>('get_projects', { params }); },
   getIssuesByJql(params: JiraConnectionParams, jql: string) { return invoke<IssueDto[]>('get_issues_by_jql', { params, jql }); },
 
-  // --- Exchange / Outlook calendar ---
+  // --- Exchange / Outlook: profile CRUD ---
+  listExchangeProfiles() {
+    return invoke<ExchangeProfileDto[]>('list_exchange_profiles');
+  },
+  saveExchangeProfile(profile: ExchangeProfileDto) {
+    return invoke<number>('save_exchange_profile', { profile });
+  },
+  deleteExchangeProfile(id: number) {
+    return invoke<boolean>('delete_exchange_profile', { id });
+  },
+
+  // --- Exchange / Outlook: calendar access ---
   testExchangeConnection(params: ExchangeConnectionParams) {
     return invoke<boolean>('test_exchange_connection', { params });
   },
