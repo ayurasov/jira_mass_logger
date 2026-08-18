@@ -26,6 +26,23 @@ function instanceType() {
   return form.url.includes('atlassian.net') ? 'cloud' : 'server';
 }
 
+/**
+ * Tauri invoke отдаёт ошибку как строку (Rust String -> IPC),
+ * а не как объект с .message. Извлекаем текст универсально.
+ */
+function extractError(e: unknown): string {
+  if (typeof e === 'string') return e;
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === 'object') {
+    const obj = e as Record<string, unknown>;
+    if (typeof obj['message'] === 'string') return obj['message'];
+    // Tauri v2 иногда кладёт текст в .error
+    if (typeof obj['error'] === 'string') return obj['error'];
+    try { return JSON.stringify(e); } catch { /* ignore */ }
+  }
+  return String(e);
+}
+
 async function testAndSave() {
   error.value = '';
   testing.value = true;
@@ -45,6 +62,16 @@ async function testAndSave() {
       proxy: null,
       user_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
+
+    console.debug('[JiraConnectionStep] test_connection params:', {
+      base_url: params.base_url,
+      email: params.email,
+      instance_type: params.instance_type,
+      accept_invalid_certs: params.accept_invalid_certs,
+      has_proxy: params.proxy !== null,
+      user_timezone: params.user_timezone,
+    });
+
     await invoke('test_connection', { params });
 
     // 3. Сохраняем профиль в SQLite
@@ -58,8 +85,10 @@ async function testAndSave() {
 
     success.value = true;
     setTimeout(() => emit('done'), 800);
-  } catch (e: any) {
-    error.value = e?.message ?? String(e);
+  } catch (e: unknown) {
+    const msg = extractError(e);
+    console.error('[JiraConnectionStep] test_connection error:', e, '| extracted:', msg);
+    error.value = msg;
   } finally {
     testing.value = false;
   }
@@ -313,7 +342,7 @@ select.field-input {
 }
 
 /* Плавное появление/исчезновение статусов */
-.fade-enter-active, .fade-leave-active { transition: opacity 200ms ease; }
+.fade-enter-active, .fade-leave-active { transition: opacity 200ms ease; } 
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
 /* Адаптация под узкий экран */

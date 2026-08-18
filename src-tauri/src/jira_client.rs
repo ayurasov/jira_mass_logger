@@ -129,6 +129,8 @@ fn humanize_reqwest_error(e: &reqwest::Error) -> String {
     let raw = e.to_string();
     let lower = raw.to_lowercase();
 
+    log::debug!("[jira_client] reqwest error raw: {raw}");
+
     // TLS / сертификат — проверяем до is_connect(), т.к. TLS-ошибки тоже is_connect()
     if lower.contains("certificate") || lower.contains("tls") || lower.contains("ssl")
         || lower.contains("rustls") || lower.contains("invalid cert")
@@ -195,11 +197,17 @@ fn humanize_reqwest_error(e: &reqwest::Error) -> String {
 // ---------------------------------------------------------------------------
 
 fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, JiraError> {
+    log::debug!(
+        "[jira_client] build_http_client: url={} instance_type={:?} accept_invalid_certs={}",
+        params.base_url, params.instance_type, params.accept_invalid_certs
+    );
+
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
         .timeout(Duration::from_secs(30));
 
     if params.accept_invalid_certs {
+        log::debug!("[jira_client] TLS verification disabled (accept_invalid_certs=true)");
         // danger_accept_invalid_certs отключает проверку цепочки сертификатов.
         // danger_accept_invalid_hostnames отключает проверку CN/SAN — это отдельная
         // проверка в rustls, которая НЕ отключается одним лишь accept_invalid_certs.
@@ -211,11 +219,13 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
 
     // Явный root CA для сетей с SSL-инспекцией на корпоративном прокси.
     if let Some(path) = &params.extra_root_ca_pem_path {
+        log::debug!("[jira_client] loading extra root CA from: {path}");
         let pem = std::fs::read(path)
             .map_err(|e| JiraError::Other(format!("cannot read root CA {path}: {e}")))?;
         let cert = reqwest::Certificate::from_pem(&pem)
             .map_err(|e| JiraError::Other(format!("invalid root CA pem: {e}")))?;
         builder = builder.add_root_certificate(cert);
+        log::debug!("[jira_client] extra root CA loaded OK");
     }
 
     // Приоритет: явный прокси из UI -> переменные окружения -> системный (WinINet на Windows).
@@ -229,21 +239,30 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
         .or_else(|| std::env::var("http_proxy").ok())
         .or_else(read_windows_system_proxy);
 
-    if let Some(url) = proxy_url {
-        let mut proxy = reqwest::Proxy::all(&url)
+    if let Some(ref url) = proxy_url {
+        log::debug!("[jira_client] using proxy: {url}");
+        let mut proxy = reqwest::Proxy::all(url)
             .map_err(|e| JiraError::Other(format!("invalid proxy url {url}: {e}")))?;
         if let Some(cfg) = &params.proxy {
             if let (Some(user), Some(pass)) = (&cfg.username, &cfg.password) {
+                log::debug!("[jira_client] proxy basic auth user: {user}");
                 proxy = proxy.basic_auth(user, pass);
             }
         }
         builder = builder.proxy(proxy);
+    } else {
+        log::debug!("[jira_client] no proxy configured");
     }
     // без явного прокси разрешаем reqwest самому подхватить системные ENV-переменные
 
-    builder
+    let client = builder
         .build()
-        .map_err(|e| JiraError::Other(format!("cannot build http client: {e}")))
+        .map_err(|e| JiraError::Other(format!("cannot build http client: {e}")));
+
+    if client.is_ok() {
+        log::debug!("[jira_client] http client built successfully");
+    }
+    client
 }
 
 /// Best-effort чтение системного прокси Windows через WinINet/реестр.
@@ -561,14 +580,35 @@ fn init(params: &JiraConnectionParams) -> Result<AuthedClient, JiraError> {
 
 #[tauri::command]
 pub async fn test_connection(params: JiraConnectionParams) -> Result<bool, String> {
-    let ctx = init(&params).map_err(String::from)?;
+    log::info!(
+        "[jira_client] test_connection: url={} email={} instance_type={:?} accept_invalid_certs={}",
+        params.base_url, params.email, params.instance_type, params.accept_invalid_certs
+    );
+
+    let ctx = init(&params).map_err(|e| {
+        log::error!("[jira_client] test_connection init error: {e}");
+        String::from(e)
+    })?;
+
     let endpoint = url(&params, "myself");
-    let resp = send_with_retry(&ctx.client, || {
+    log::debug!("[jira_client] test_connection endpoint: {endpoint}");
+
+    let result = send_with_retry(&ctx.client, || {
         apply_auth(ctx.client.get(&endpoint), &params, &ctx.token)
     })
-    .await
-    .map_err(String::from)?;
-    Ok(resp.status().is_success())
+    .await;
+
+    match result {
+        Ok(resp) => {
+            let status = resp.status();
+            log::info!("[jira_client] test_connection HTTP status: {status}");
+            Ok(status.is_success())
+        }
+        Err(e) => {
+            log::error!("[jira_client] test_connection failed: {e}");
+            Err(e.to_string())
+        }
+    }
 }
 
 #[tauri::command]
