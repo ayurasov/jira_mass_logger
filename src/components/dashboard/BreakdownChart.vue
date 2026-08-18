@@ -40,7 +40,6 @@ const { scheduleInit } = useEChart(chartEl, toRef(settings, 'theme'));
 const mode = ref<'project' | 'issue'>('project');
 const chartType = ref<'donut' | 'bar'>('donut');
 
-// период по умолчанию: последние 30 дней
 const now = new Date();
 const defaultFrom = new Date(now); defaultFrom.setDate(now.getDate() - 30);
 const from = ref(defaultFrom.toISOString().slice(0, 10));
@@ -76,7 +75,7 @@ function buildOption() {
         backgroundColor: isDark ? '#1e2535' : '#fff',
         borderColor: isDark ? '#2e3a50' : '#d8deea',
         textStyle: { color: textColor },
-        formatter: (p: any) => `${p.name}: <b>${p.value} ч</b> (${p.percent}%)`,
+        formatter: (p: any) => `${p.name}: <b>${p.value} ч</b> (${p.percent}%)`,
       },
       legend: {
         type: 'scroll',
@@ -90,36 +89,62 @@ function buildOption() {
         type: 'pie',
         radius: ['42%', '68%'],
         center: ['38%', '50%'],
-        data: data.map((s, i) => ({ value: Math.round(s.hours * 100) / 100, name: s.label, itemStyle: { color: PALETTE[i % PALETTE.length] } })),
+        data: data.map((s, i) => ({
+          value: Math.round(s.hours * 100) / 100,
+          name: s.label,
+          itemStyle: { color: PALETTE[i % PALETTE.length] },
+        })),
         label: { show: false },
         emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.2)' } },
       }],
     };
   }
 
-  // stacked bar (horizontal)
+  // Простой горизонтальный bar.
+  // Предыдущая реализация использовала stack + N серий, где каждая
+  // серия содержала массив из N нулей и одного значения — ECharts
+  // рендерил это некорректно. Теперь одна серия с N значениями и N категориями Y.
   return {
     animation: true,
     animationDuration: 400,
     backgroundColor: 'transparent',
-    color: PALETTE,
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
       backgroundColor: isDark ? '#1e2535' : '#fff',
       borderColor: isDark ? '#2e3a50' : '#d8deea',
       textStyle: { color: textColor },
+      formatter: (params: any) => {
+        const p = params[0];
+        return `${p.name}: <b>${p.value} ч</b>`;
+      },
     },
-    grid: { left: 100, right: 20, top: 12, bottom: 28 },
-    xAxis: { type: 'value', axisLabel: { color: textColor, formatter: '{value} ч' }, splitLine: { lineStyle: { color: gridColor } } },
-    yAxis: { type: 'category', data: data.map(s => s.label.length > 14 ? s.label.slice(0, 14) + '…' : s.label), axisLabel: { color: textColor, fontSize: 11 } },
-    series: data.map((s, i) => ({
-      name: s.label,
+    grid: { left: 110, right: 50, top: 8, bottom: 24 },
+    xAxis: {
+      type: 'value',
+      axisLabel: { color: textColor, formatter: '{value} ч' },
+      splitLine: { lineStyle: { color: gridColor } },
+    },
+    yAxis: {
+      type: 'category',
+      data: data.map(s => s.label.length > 15 ? s.label.slice(0, 15) + '…' : s.label),
+      axisLabel: { color: textColor, fontSize: 11 },
+      inverse: true,
+    },
+    series: [{
       type: 'bar',
-      stack: 'total',
-      data: data.map((_, j) => j === i ? s.hours : 0),
-      itemStyle: { color: PALETTE[i % PALETTE.length], borderRadius: i === data.length - 1 ? [0, 4, 4, 0] : 0 },
-    })),
+      data: data.map((s, i) => ({
+        value: Math.round(s.hours * 100) / 100,
+        itemStyle: { color: PALETTE[i % PALETTE.length], borderRadius: [0, 4, 4, 0] },
+      })),
+      label: {
+        show: true,
+        position: 'right',
+        color: textColor,
+        fontSize: 11,
+        formatter: (p: any) => `${p.value} ч`,
+      },
+    }],
   };
 }
 
