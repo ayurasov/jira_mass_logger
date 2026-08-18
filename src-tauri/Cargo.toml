@@ -37,16 +37,26 @@ oauth2 = "4"
 # tiny_http: локальный loopback-листенер http://localhost:PORT/callback для
 # захвата authorization code без внешних зависимостей от тяжёлого async-стека.
 tiny_http = "0.12"
-# httpntlm: NTLM-автентификация для SOAP-запросов к on-premise EWS в доменах
-# Active Directory, где Kerberos/NTLM необходим вместо Basic Auth.
-httpntlm = "0.3"
+# sspi: чистый Rust, без платформо-зависимых cfg-гейтов в NTLM-модуле,
+# реализация NTLMSSP (Negotiate/Challenge/Authenticate) для SOAP-запросов к on-premise
+# EWS в доменах Active Directory. Работает на Windows 10/11 без внешних systemwide
+# зависимостей и без необходимости WinHTTP FFI-обёртки.
+sspi = "0.21"
 # quick-xml: парсинг SOAP-ответов EWS FindItem (CalendarItem элементы).
 quick-xml = "0.36"
 base64 = "0.22"
 sha2 = "0.10"
 rand = "0.8"
 url = "2"
+# urlencoding: query-параметры Graph calendarview (startDateTime/endDateTime в ISO 8601
+# могут содержать символы, требующие percent-encoding, например '+' и ':').
+urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+# whoami: для NTLM identity нужно знать NetBIOS-домен/хост текущего Windows-пользователя,
+# если он не указан явно в виде DOMAIN\\user в настройках.
+whoami = "1"
 
 [dev-dependencies]
 wiremock = "0.6"
