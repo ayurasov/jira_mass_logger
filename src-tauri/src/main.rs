@@ -6,9 +6,11 @@ mod scheduler;
 mod secrets;
 mod bulk_wizard;
 mod sync_queue;
+mod sync_queue_helpers;
 mod meeting_rules;
 mod network;
 mod logger;
+mod logger_noop;
 
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, tray::TrayIconBuilder, menu::{Menu, MenuItem}};
@@ -54,7 +56,6 @@ fn main() {
             );
 
             // ── Воркер очереди синхронизации ───────────────────────────
-            // Получаем Arc<Mutex<Connection>> из WizardDb
             let wizard_db = app.state::<bulk_wizard::WizardDb>();
             let db_arc: Arc<Mutex<rusqlite::Connection>> = wizard_db.0.clone();
             sync_queue::start_worker(db_arc, wake.clone(), app_logger.clone());
