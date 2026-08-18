@@ -1,0 +1,148 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.0.0)'
+        required: true
+
+jobs:
+  build-windows:
+    name: Build Windows (${{ matrix.target }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Rust toolchain + target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      # Код-сайнинг: PFX-сертификат хранится в GitHub Secrets
+      # CODESIGN_PFX_BASE64 — base64(путь/к файлу.pfx)
+      # CODESIGN_PFX_PASSWORD — пароль от pfx
+      - name: Decode codesign certificate
+        if: env.CODESIGN_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $bytes = [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64)
+          $certPath = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($certPath, $bytes)
+          echo "CODESIGN_PFX_PATH=$certPath" >> $env:GITHUB_ENV
+        env:
+          CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
+
+      # Генерация ключа автообновления tauri-updater
+      # TAURI_SIGNING_PRIVATE_KEY + TAURI_SIGNING_PRIVATE_KEY_PASSWORD — в Secrets
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN:                    ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY:       ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CODESIGN_PFX_PASSWORD:           ${{ secrets.CODESIGN_PFX_PASSWORD }}
+          RUST_BACKTRACE: 1
+        with:
+          tagName:      ${{ github.ref_name }}
+          releaseName:  'JiraTime ${{ github.ref_name }}'
+          releaseBody:  'See CHANGELOG.md for details.'
+          releaseDraft: false
+          prerelease:   false
+          args:         --target ${{ matrix.target }}
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ matrix.arch }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/
+          retention-days: 5
+
+  # Генерация latest.json для tauri-plugin-updater
+  publish-updater-manifest:
+    name: Publish updater manifest
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        uses: robinraju/release-downloader@v1.9
+        with:
+          tag: ${{ github.ref_name }}
+          fileName: '*.sig'
+          out-file-path: dist_sigs/
+
+      - name: Generate latest.json
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          REPO="$GITHUB_REPOSITORY"
+          BASE_URL="https://github.com/$REPO/releases/download/$GITHUB_REF_NAME"
+
+          SIG_X64=$(cat dist_sigs/JiraTime_${VERSION}_x64-setup.nsis.zip.sig 2>/dev/null || echo "")
+          SIG_ARM=$(cat dist_sigs/JiraTime_${VERSION}_arm64-setup.nsis.zip.sig 2>/dev/null || echo "")
+
+          cat > latest.json <<EOF
+          {
+            "version": "$VERSION",
+            "notes": "See https://github.com/$REPO/releases/tag/$GITHUB_REF_NAME",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "$SIG_X64",
+                "url": "$BASE_URL/JiraTime_${VERSION}_x64-setup.nsis.zip"
+              },
+              "windows-aarch64": {
+                "signature": "$SIG_ARM",
+                "url": "$BASE_URL/JiraTime_${VERSION}_arm64-setup.nsis.zip"
+              }
+            }
+          }
+          EOF
+
+      - name: Upload latest.json to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
