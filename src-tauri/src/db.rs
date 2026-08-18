@@ -11,7 +11,7 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     let db_path = app_data_dir.join("jiratime.db");
     // Единый SQLite-файл (а не множество мелких файлов) снижает риск
-    // ложных срабатываний эвристик Windows Defender/корпоративного AV.
+    // ложных срабатываний эвристики Windows Defender/корпоративного AV.
     let conn = rusqlite::Connection::open(&db_path)?;
 
     conn.execute_batch(
@@ -123,11 +123,13 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             synced_at TEXT
         );
 
+        -- status: pending | syncing | synced | failed
         CREATE TABLE IF NOT EXISTS sync_queue (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             row_key TEXT NOT NULL,
             operation TEXT NOT NULL,
             payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
             attempts INTEGER NOT NULL DEFAULT 0,
             last_error TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -172,6 +174,8 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         "ALTER TABLE exchange_profiles ADD COLUMN exclude_declined INTEGER",
         "ALTER TABLE exchange_profiles ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE calendar_events_cache ADD COLUMN series_master_id TEXT",
+        // Промпт 9: добавляем колонку status в sync_queue для существующих БД
+        "ALTER TABLE sync_queue ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
     ];
 
     for migration in migrations {
