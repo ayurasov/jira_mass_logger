@@ -6,7 +6,7 @@ edition = "2021"
 
 # Целевые ОС: Windows 10 и Windows 11 (x86_64-pc-windows-msvc).
 # Сборка: `rustup target add x86_64-pc-windows-msvc` + MSVC Build Tools (C++ workload).
-# Кросс-сборка с macOS/Linux не поддерживается nativно — используй CI с `windows-latest` runner.
+# Кросс-сборка с macOS/Linux не поддерживается nativno — используй CI с `windows-latest` runner.
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -19,9 +19,11 @@ tauri-plugin-notification = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
+# Автообновление через GitHub Releases (Промпт 10)
+tauri-plugin-updater = "2"
 keyring = { version = "2", features = ["windows-native"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
-# rustls-tls важен именно для Windows: не зависит от системных корпоративных SSL-инспекторов/proxy
+# rustls-tls важен для Windows: не зависит от системных SSL-инспекторов/proxy
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
