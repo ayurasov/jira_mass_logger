@@ -1,5 +1,5 @@
 // Pinia-стор аналитики дашборда.
-// Агрегирует данные из кэша worklog'ов и вычисляет метрики для 5 виджетов:
+// Агрегирует данные из кэша worklog’ов и вычисляет метрики для 5 виджетов:
 //  1. Диаграмма часов по дням за текущую/прошлую неделю (план vs факт)
 //  2. Разбивка по задачам/проектам за выбранный период (donut / stacked bar)
 //  3. Calendar heatmap за последние 3 месяца
@@ -11,7 +11,6 @@ import { useSettingsStore } from './settings';
 
 // ────────────────────────────────────────────
 // Утилиты дат
-// ────────────────────────────────────────────
 function toIsoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -42,7 +41,6 @@ function isWorkday(date: string): boolean {
 
 // ────────────────────────────────────────────
 // Типы
-// ────────────────────────────────────────────
 export interface DayBar {
   date: string;   // YYYY-MM-DD
   label: string;  // «Пн», «Вт» …
@@ -68,7 +66,7 @@ export interface MissingDay {
   deficit: number; // сколько не хватает
 }
 
-export interface BulkSavingMetric {
+export interface BulkSavingMetricData {
   totalBulkEntries: number;
   estimatedManualMinutes: number; // ~2 мин на ручной ввод каждой записи
   bulkMinutes: number;            // ~0.2 мин (bulk-мастер)
@@ -89,10 +87,11 @@ const DAY_LABELS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
 // ────────────────────────────────────────────
 // Store
-// ────────────────────────────────────────────
 export const useAnalyticsStore = defineStore('analytics', {
   state: () => ({
     loading: false,
+    error: null as string | null,
+    lastFetched: null as number | null,
     // raw rows за последние 3 месяца + текущий месяц
     _rows: [] as CachedWorklogRow[],
 
@@ -106,7 +105,7 @@ export const useAnalyticsStore = defineStore('analytics', {
   }),
 
   getters: {
-    // ── Виджет 1: текущая и прошлая неделя ──────────────────────────
+    // ── Виджет 1: текущая и прошлая неделя ────────────────────
     currentWeekBars(): DayBar[] {
       return this._weekBars(startOfWeek(new Date()));
     },
@@ -114,7 +113,7 @@ export const useAnalyticsStore = defineStore('analytics', {
       return this._weekBars(addDays(startOfWeek(new Date()), -7));
     },
 
-    // ── Виджет 2: разбивка за выбранный период ────────────────────────
+    // ── Виджет 2: разбивка за выбранный период ─────────────────
     breakdownSlices(): ProjectSlice[] {
       const from = this.breakdownFrom || toIsoDate(addDays(new Date(), -30));
       const to   = this.breakdownTo   || toIsoDate(new Date());
@@ -137,7 +136,7 @@ export const useAnalyticsStore = defineStore('analytics', {
         .sort((a, b) => b.hours - a.hours);
     },
 
-    // ── Виджет 3: heatmap за 3 месяца ────────────────────────────────
+    // ── Виджет 3: heatmap за 3 месяца ────────────────────────
     heatmapCells(): HeatmapCell[] {
       const today = new Date();
       const start = addDays(today, -90);
@@ -157,7 +156,7 @@ export const useAnalyticsStore = defineStore('analytics', {
       return cells;
     },
 
-    // ── Виджет 4: дни с недозаполненным worklog в текущем месяце ─────
+    // ── Виджет 4: дни с недозаполненным worklog в текущем месяце ───
     missingDays(): MissingDay[] {
       const settings = useSettingsStore();
       const norm = settings.workHoursPerDay ?? 8;
@@ -184,8 +183,8 @@ export const useAnalyticsStore = defineStore('analytics', {
       return result.sort((a, b) => a.date.localeCompare(b.date));
     },
 
-    // ── Виджет 5: метрика экономии через bulk-мастер ─────────────────
-    bulkSavingMetric(): BulkSavingMetric {
+    // ── Виджет 5: метрика экономии через bulk-мастер ───────────
+    bulkSavingMetric(): BulkSavingMetricData {
       const n = this.bulkEntriesCreated;
       const manualMins = n * 2.0;
       const bulkMins   = n * 0.2;
@@ -223,15 +222,18 @@ export const useAnalyticsStore = defineStore('analytics', {
       });
     },
 
-    async loadData() {
+    async fetchAll() {
       this.loading = true;
+      this.error = null;
       try {
         const today = new Date();
         const from = toIsoDate(addDays(today, -95));
         const to   = toIsoDate(today);
         this._rows = await tauriApi.listCachedWorklogs(from, to);
-        // читаем счётчик bulk-записей из localStorage
         this.bulkEntriesCreated = Number(localStorage.getItem('jiratime-bulk-entries-created') ?? '0');
+        this.lastFetched = Date.now();
+      } catch (e) {
+        this.error = e instanceof Error ? e.message : 'Не удалось загрузить данные';
       } finally {
         this.loading = false;
       }

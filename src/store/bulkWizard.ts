@@ -65,10 +65,17 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
       try {
         const entries = this.previewRows.filter((row) => !row.skipped).map((row) => ({ issueKey: row.issueKey, startedAt: row.startedAt, timeSpentSeconds: Math.round(row.hours * 3600), comment: row.description }));
         this.results = await tauriApi.bulkAddWorklogs(params, entries);
+        let successCount = 0;
         for (let i = 0; i < this.results.length; i++) {
           const result = this.results[i]; const row = this.previewRows.filter((r) => !r.skipped)[i]; if (!row) continue;
           row.status = result.success ? 'success' : (result.attempts > 1 ? 'retry' : 'error'); row.error = result.error;
+          if (result.success) successCount++;
           this.statusLogLines.push(`${row.date} | ${row.issueKey} | ${result.success ? 'Успех' : 'Ошибка'} | попыток: ${result.attempts}${result.error ? ` | ${result.error}` : ''}`);
+        }
+        // ─── Трекинг bulk-метрики (виджет 5 дашборда) ───
+        if (successCount > 0) {
+          const prev = Number(localStorage.getItem('jiratime-bulk-entries-created') ?? '0');
+          localStorage.setItem('jiratime-bulk-entries-created', String(prev + successCount));
         }
         await tauriApi.touchRecentIssue(this.issueKey, this.issueSummary || undefined).catch(() => undefined);
       } finally { this.sending = false; }
