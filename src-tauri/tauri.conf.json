@@ -34,19 +34,24 @@
     "active": true,
     "targets": ["msi", "nsis"],
     "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"],
-    "publisher": "Ayurasov",
-    "copyright": "Copyright © 2026 Alexander Yurasov",
+    "publisher": "Alexander Yurasov",
+    "copyright": "Copyright \u00a9 2026 Alexander Yurasov",
     "category": "Productivity",
-    "shortDescription": "Массовое логирование времени в Jira",
-    "longDescription": "JiraTime — настольное приложение для Windows, позволяющее быстро логировать рабочее время в Jira по нескольким задачам сразу. Поддерживает интеграцию с Microsoft Exchange для автоматического заполнения из календаря, офлайн-режим с очередью синхронизации и аналитику.",
+    "shortDescription": "\u041c\u0430\u0441\u0441\u043e\u0432\u043e\u0435 \u043b\u043e\u0433\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u0432\u0440\u0435\u043c\u0435\u043d\u0438 \u0432 Jira",
+    "longDescription": "JiraTime \u2014 \u043d\u0430\u0441\u0442\u043e\u043b\u044c\u043d\u043e\u0435 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u0434\u043b\u044f Windows, \u043f\u043e\u0437\u0432\u043e\u043b\u044f\u044e\u0449\u0435\u0435 \u0431\u044b\u0441\u0442\u0440\u043e \u043b\u043e\u0433\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u0430\u0431\u043e\u0447\u0435\u0435 \u0432\u0440\u0435\u043c\u044f \u0432 Jira \u043f\u043e \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u0438\u043c \u0437\u0430\u0434\u0430\u0447\u0430\u043c \u0441\u0440\u0430\u0437\u0443. \u041f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442 \u0438\u043d\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u044e \u0441 Microsoft Exchange \u0434\u043b\u044f \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0433\u043e \u0437\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u044f \u0438\u0437 \u043a\u0430\u043b\u0435\u043d\u0434\u0430\u0440\u044f, \u043e\u0444\u043b\u0430\u0439\u043d-\u0440\u0435\u0436\u0438\u043c \u0441 \u043e\u0447\u0435\u0440\u0435\u0434\u044c\u044e \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438 \u0438 \u0430\u043d\u0430\u043b\u0438\u0442\u0438\u043a\u0443.",
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper",
         "silent": true
       },
+      "webviewInstallModeFallback": {
+        "type": "offlineInstaller",
+        "path": "resources/MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+      },
       "wix": {
         "language": ["ru-RU", "en-US"],
-        "upgradeCode": "d9a7c1e2-4b5f-4a8d-9c3e-1f2a3b4c5d6e"
+        "upgradeCode": "d9a7c1e2-4b5f-4a8d-9c3e-1f2a3b4c5d6e",
+        "componentGroupRefs": ["RTMergeModule"]
       },
       "nsis": {
         "languages": ["Russian", "English"],
