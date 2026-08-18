@@ -72,6 +72,10 @@ fn main() {
             jira_client::update_worklog,
             jira_client::delete_worklog,
             jira_client::bulk_add_worklogs,
+            exchange_client::test_exchange_connection,
+            exchange_client::get_calendar_events,
+            exchange_client::start_graph_oauth_embedded,
+            exchange_client::complete_graph_oauth_loopback,
             bulk_wizard::save_wizard_template,
             bulk_wizard::list_wizard_templates,
             bulk_wizard::delete_wizard_template,
@@ -90,7 +94,6 @@ fn main() {
             sync_queue::upsert_cached_worklog,
             sync_queue::delete_cached_worklog,
             sync_queue::list_cached_worklogs,
-            exchange_client::test_exchange_connection,
             secrets::save_secret,
             secrets::delete_secret,
         ])
