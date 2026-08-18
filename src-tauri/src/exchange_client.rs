@@ -381,7 +381,7 @@ fn ews_find_item_body(date_from: &str, date_to: &str) -> String {
       </m:ParentFolderIds>
     </m:FindItem>
   </soap:Body>
-</soap:Envelope>"
+</soap:Envelope>"#
     )
 }
 
@@ -424,7 +424,6 @@ fn parse_ews_finditem_response(xml: &str) -> Vec<EwsRawEvent> {
                         start: String::new(), end: String::new(),
                         show_as: None, response_status: None, series_master_id: None,
                     };
-                    // Читаем ItemId attr из следующих элементов
                 }
                 if local == "ItemId" && in_item {
                     for attr in e.attributes().flatten() {
@@ -752,12 +751,10 @@ pub async fn get_calendar_events(
     date_to: String,
     force_refresh: bool,
 ) -> Result<Vec<CalendarEventDto>, String> {
-    // Определяем «дату кэша» = date_from без времени
     let cache_date = date_from.get(..10).unwrap_or(&date_from).to_string();
 
     if !force_refresh {
         let conn = lock_db(&db)?;
-        // Ищем ID профиля по secret_ref (уникально)
         let profile_id: Option<i64> = conn
             .query_row(
                 "SELECT id FROM exchange_profiles WHERE secret_ref = ?1 LIMIT 1",
@@ -777,7 +774,6 @@ pub async fn get_calendar_events(
         }
     }
 
-    // Фетчим с сервера
     let events: Vec<CalendarEventDto> = match params.auth_mode.as_str() {
         "graph" => {
             let token = get_graph_access_token(&params)
@@ -808,7 +804,6 @@ pub async fn get_calendar_events(
         _ => return Err("Unknown auth_mode".to_string()),
     };
 
-    // Сохраняем в кэш
     {
         let conn = lock_db(&db)?;
         let profile_id: i64 = conn
@@ -859,7 +854,6 @@ pub async fn start_graph_oauth_embedded(
         .unwrap_or_else(|| "common".into());
     let redirect_uri = "http://localhost:43782/callback".to_string();
 
-    // PKCE verifier (random 64 chars url-safe)
     let verifier: String = {
         use rand::Rng;
         let mut rng = rand::thread_rng();
@@ -882,13 +876,12 @@ pub async fn start_graph_oauth_embedded(
          &code_challenge={challenge}\
          &code_challenge_method=S256\
          &state={state}",
-        redir  = urlencoding::encode(&redirect_uri),
-        scope  = urlencoding::encode("Calendars.Read offline_access"),
+        redir     = urlencoding::encode(&redirect_uri),
+        scope     = urlencoding::encode("Calendars.Read offline_access"),
         challenge = challenge,
-        state  = state_token,
+        state     = state_token,
     );
 
-    // Сохраняем контекст для complete_graph_oauth_loopback
     if let Some(loopback_state) = app.try_state::<OAuthLoopbackState>() {
         let mut lock = loopback_state.0.lock().map_err(|e| e.to_string())?;
         *lock = Some(LoopbackContext {
@@ -920,10 +913,9 @@ pub async fn complete_graph_oauth_loopback(
             .try_state::<OAuthLoopbackState>()
             .ok_or("OAuth state not found")?;
         let mut lock = state.0.lock().map_err(|e| e.to_string())?;
-        lock.take().ok_or("No pending OAuth flow")?  
+        lock.take().ok_or("No pending OAuth flow")?
     };
 
-    // Запускаем tiny_http loopback сервер для перехвата code
     let server = tiny_http::Server::http("127.0.0.1:43782").map_err(|e| e.to_string())?;
     let request = server
         .recv_timeout(std::time::Duration::from_secs(120))
@@ -938,7 +930,6 @@ pub async fn complete_graph_oauth_loopback(
         .map(|(_, v)| v.into_owned())
         .ok_or("OAuth redirect missing 'code' parameter")?;
 
-    // Обмениваем code на токены
     let http_client = reqwest::Client::builder().use_rustls_tls().build().map_err(|e| e.to_string())?;
     let form = [
         ("client_id", ctx.client_id.as_str()),
@@ -960,13 +951,11 @@ pub async fn complete_graph_oauth_loopback(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Сохраняем refresh_token в keychain
     let refresh_token = token
         .refresh_token
         .ok_or("Token response missing refresh_token")?;
     secrets::set_secret_value(&ctx.secret_ref, &refresh_token).map_err(|e| e.to_string())?;
 
-    // Отвечаем браузеру
     let response = tiny_http::Response::from_string(
         "<html><body><h2>Авторизация прошла успешно — можно закрыть это окно.</h2></body></html>",
     )
