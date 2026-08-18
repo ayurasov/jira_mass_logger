@@ -10,7 +10,7 @@ const router = createRouter({
     // ─── Дашборд аналитики (Промпт 8) — главный экран ───
     { path: '/', name: 'analytics', component: () => import('../views/DashboardAnalytics.vue') },
 
-    // ─── Остальные вьюхи ───
+    // ─── Основные экраны ───
     { path: '/dashboard',         name: 'dashboard',         component: () => import('../views/Dashboard.vue') },
     { path: '/my-worklog',        name: 'my-worklog',        component: () => import('../views/MyWorklog.vue') },
     { path: '/bulk-log',          name: 'bulk-log',          component: () => import('../views/BulkLogWizard.vue') },
@@ -19,21 +19,19 @@ const router = createRouter({
     { path: '/profiles',          name: 'profiles',          component: () => import('../views/Profiles.vue') },
     { path: '/templates',         name: 'templates',         component: () => import('../views/Templates.vue') },
     { path: '/settings',          name: 'settings',          component: () => import('../views/Settings.vue') },
-
-    // ─── Логи (Промпт 9) ───
     { path: '/logs',              name: 'logs',              component: () => import('../views/LogsView.vue') },
   ],
 });
 
-// Навигационный гард: первый запуск → онбординг
-// Онбординг считается пройденным, если в settings.onboardingCompleted === true
+// Guard: переднаправляем на онбординг при первом запуске
 router.beforeEach((to) => {
-  if (to.name === 'onboarding') return true;
-  const settings = useSettingsStore();
-  if (!settings.onboardingCompleted) {
+  // Избегаем бесконечного цикла если уже идём на /onboarding
+  if (to.name === 'onboarding') return;
+
+  const onboardingDone = localStorage.getItem('jiratime-onboarding-done');
+  if (!onboardingDone) {
     return { name: 'onboarding' };
   }
-  return true;
 });
 
 export default router;
