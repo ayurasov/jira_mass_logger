@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
+import { useSettingsStore } from '../store/settings';
 
 const router = createRouter({
   history: createWebHistory(),
@@ -18,17 +19,21 @@ const router = createRouter({
     { path: '/profiles',          name: 'profiles',          component: () => import('../views/Profiles.vue') },
     { path: '/templates',         name: 'templates',         component: () => import('../views/Templates.vue') },
     { path: '/settings',          name: 'settings',          component: () => import('../views/Settings.vue') },
+
     // ─── Логи (Промпт 9) ───
     { path: '/logs',              name: 'logs',              component: () => import('../views/LogsView.vue') },
   ],
 });
 
-// ─── Гард: перенаправляем на /onboarding при первом запуске ───
+// Навигационный гард: первый запуск → онбординг
+// Онбординг считается пройденным, если в settings.onboardingCompleted === true
 router.beforeEach((to) => {
-  const done = localStorage.getItem('onboarding_done');
-  if (!done && to.name !== 'onboarding') {
+  if (to.name === 'onboarding') return true;
+  const settings = useSettingsStore();
+  if (!settings.onboardingCompleted) {
     return { name: 'onboarding' };
   }
+  return true;
 });
 
 export default router;
