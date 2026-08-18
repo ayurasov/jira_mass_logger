@@ -113,6 +113,7 @@ pub fn start_network_monitor(
     let m2 = monitor.clone();
     let app2 = app.clone();
     let lg2 = logger.clone();
+    let wake2 = wake.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
@@ -143,7 +144,7 @@ pub fn start_network_monitor(
                 m2.set_online();
                 lg2.debug("network_monitor", "Jira reachable");
                 // Триггерим воркер очереди
-                wake.notify_one();
+                wake2.notify_one();
             } else {
                 m2.set_offline();
                 lg2.debug("network_monitor", "Jira unreachable");
