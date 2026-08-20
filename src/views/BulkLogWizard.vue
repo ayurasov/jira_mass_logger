@@ -3,14 +3,12 @@ import { computed, onMounted, ref } from 'vue';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useBulkWizardStore } from '../store/bulkWizard';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
-import { useSettingsStore } from '../store/settings';
 import { useAnalyticsStore } from '../store/analytics';
-import { tauriApi, type JiraConnectionParams } from '../lib/tauriApi';
+import { tauriApi } from '../lib/tauriApi';
 import { DATE_RANGE_PRESETS } from '../utils/dateRange';
 
 const wizard = useBulkWizardStore();
 const jiraProfiles = useJiraProfilesStore();
-const settings = useSettingsStore();
 const analyticsStore = useAnalyticsStore();
 
 const templateName = ref('');
@@ -25,19 +23,9 @@ onMounted(async () => {
 
 const activeProfile = computed(() => jiraProfiles.activeProfile);
 
-const jiraParams = computed<JiraConnectionParams | null>(() => {
-  const profile = activeProfile.value;
-  if (!profile) return null;
-  return {
-    baseUrl: profile.baseUrl,
-    email: profile.email,
-    secretRef: profile.secretRef,
-    instanceType: profile.instanceType ?? profile.type,
-    userTimezone: settings.timezone,
-    proxy: null,
-    extraRootCaPemPath: null,
-  };
-});
+// Используем общий геттер из jiraProfiles store (уже корректно мапит authType==='server_basic'
+// на instanceType:'server_basic' — локальная копия этой логики раньше игнорировала server_basic).
+const jiraParams = computed(() => jiraProfiles.activeConnectionParams);
 
 async function searchIssues() {
   if (!jiraParams.value) return;
@@ -216,7 +204,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
                   :key="item[0]"
                   class="weekday-item"
                 >
-                  <input v-model="wizard.weekdayFilter[item[0] as keyof typeof wizard.weekdayFilter]" type="checkbox" />
+                  <input v-model="wizard.weekdayFilter[item[0] as 'mon'|'tue'|'wed'|'thu'|'fri'|'sat'|'sun']" type="checkbox" />
                   <span>{{ item[1] }}</span>
                 </label>
               </div>

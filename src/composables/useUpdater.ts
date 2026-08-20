@@ -52,8 +52,9 @@ ${update.body ?? ''}
       installProgress.value = 0;
       await update.downloadAndInstall((event) => {
         if (event.event === 'Progress') {
-          const pct = event.data.chunkLength && event.data.contentLength
-            ? Math.round((event.data.chunkLength / event.data.contentLength) * 100)
+          const data = event.data as { chunkLength?: number; contentLength?: number };
+          const pct = data.chunkLength && data.contentLength
+            ? Math.round((data.chunkLength / data.contentLength) * 100)
             : null;
           if (pct !== null) installProgress.value = pct;
         }

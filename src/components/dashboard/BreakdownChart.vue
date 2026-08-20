@@ -25,6 +25,7 @@ import { ref, watch, computed, toRef } from 'vue';
 import { PieChart, BarChart } from 'echarts/charts';
 import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components';
 import * as echarts from 'echarts/core';
+import type { EChartsOption } from 'echarts';
 import { CanvasRenderer } from 'echarts/renderers';
 import { useEChart } from '../../composables/useEChart';
 import { useAnalyticsStore } from '../../store/analytics';
@@ -57,7 +58,7 @@ const PALETTE = [
 
 const slices = computed(() => store.breakdownSlices);
 
-function buildOption() {
+function buildOption(): EChartsOption {
   const isDark = settings.theme === 'dark';
   const textColor = isDark ? '#c9cdd4' : '#333';
   const gridColor = isDark ? '#2e3240' : '#e8e8e8';

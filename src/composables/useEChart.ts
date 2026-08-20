@@ -8,15 +8,18 @@
 //  - RAF-дебаунс resize позволяет слабым ноутбукам избежать лагов renderer.
 import { ref, onMounted, onUnmounted, type Ref } from 'vue';
 import * as echarts from 'echarts/core';
-import type { ECharts, EChartsOption } from 'echarts';
+import type { EChartsOption } from 'echarts';
 
 type Theme = 'light' | 'dark';
+// Используем тип из самого echarts/core.init, а не из 'echarts' — избегает конфликта
+// двух несовместимых объявлений ECharts (полный пакет vs core-пакет).
+type EChartsInstance = ReturnType<typeof echarts.init>;
 
 export function useEChart(
   containerRef: Ref<HTMLElement | null>,
   theme: Ref<Theme>,
 ) {
-  const chart = ref<ECharts | null>(null);
+  const chart = ref<EChartsInstance | null>(null);
   let rafId: number | null = null;
   let ro: ResizeObserver | null = null;
 

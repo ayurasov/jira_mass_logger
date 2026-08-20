@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia';
 import { invoke } from '@tauri-apps/api/core';
+import { useSettingsStore } from './settings';
+import type { JiraConnectionParams } from '../lib/tauriApi';
 
 export interface JiraProfile {
   id?: number;
@@ -9,6 +11,7 @@ export interface JiraProfile {
   /** 'cloud' | 'server' — пришедшее с backend как instanceType (camelCase, см. jira_profiles.rs) */
   type: 'cloud' | 'server';
   instanceType?: 'cloud' | 'server';
+  /** 'token' (Cloud) | 'pat' (Server PAT) | 'server_basic' (Server, логин+пароль) */
   authType?: string;
   // apiToken/PAT хранится не здесь, а в OS keychain (keyring), тут только secretRef
   secretRef: string;
@@ -37,6 +40,30 @@ export const useJiraProfilesStore = defineStore('jiraProfiles', {
     /** Активный профиль — тот, у которого isActive === true, или первый в списке, если активный не пометчен. */
     activeProfile(state): JiraProfile | null {
       return state.profiles.find((p) => p.isActive) ?? state.profiles[0] ?? null;
+    },
+
+    /**
+     * Готовые параметры подключения (для tauriApi/*) для активного профиля.
+     * ВАЖНО: учитывает authType==='server_basic' — иначе Server-профиль с
+     * логином+паролем уходил бы как Bearer PAT (см. apply_auth в jira_client.rs)
+     * и ловил бы 401 на каждом запросе.
+     */
+    activeConnectionParams(state): JiraConnectionParams | null {
+      const profile = state.profiles.find((p) => p.isActive) ?? state.profiles[0] ?? null;
+      if (!profile) return null;
+      const settings = useSettingsStore();
+      const instanceType = profile.authType === 'server_basic'
+        ? 'server_basic'
+        : (profile.instanceType ?? profile.type);
+      return {
+        baseUrl: profile.baseUrl,
+        email: profile.email,
+        secretRef: profile.secretRef,
+        instanceType,
+        userTimezone: settings.timezone,
+        proxy: null,
+        extraRootCaPemPath: null,
+      };
     },
   },
   actions: {

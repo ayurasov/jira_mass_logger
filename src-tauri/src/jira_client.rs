@@ -509,6 +509,65 @@ struct AuthedClient {
     token: String,
 }
 
+/// Минимальный набор идентификаторов текущего пользователя из `/myself`.
+/// Cloud отдаёт `accountId`; Server/DC отдаёт `key`/`name`+`emailAddress` (нет accountId).
+struct MyselfInfo {
+    account_id: Option<String>,
+    key: Option<String>,
+    name: Option<String>,
+    email: Option<String>,
+}
+
+async fn fetch_myself(ctx: &AuthedClient, params: &JiraConnectionParams) -> Result<MyselfInfo, JiraError> {
+    let ep = url(params, "myself");
+    let resp = send_with_retry(&ctx.client, || {
+        apply_auth(ctx.client.get(&ep), params, &ctx.token)
+    }).await?;
+    let v: Value = resp.json().await.map_err(JiraError::from)?;
+    Ok(MyselfInfo {
+        account_id: v.get("accountId").and_then(|x| x.as_str()).map(|s| s.to_string()),
+        key: v.get("key").and_then(|x| x.as_str()).map(|s| s.to_string()),
+        name: v.get("name").and_then(|x| x.as_str()).map(|s| s.to_string()),
+        email: v.get("emailAddress").and_then(|x| x.as_str()).map(|s| s.to_string()),
+    })
+}
+
+/// Cloud: worklog считается моим только при точном совпадении author.accountId.
+/// Вынесена в функцию, чтобы production-код и тесты проверяли одну и ту же логику.
+fn cloud_author_matches(v: &Value, my_account_id: &str) -> bool {
+    v.get("author")
+        .and_then(|a| a.get("accountId"))
+        .and_then(|x| x.as_str())
+        .map(|id| id == my_account_id)
+        .unwrap_or(false)
+}
+
+/// Server/ServerBasic: собирает кандидаты для сопоставления автора worklog с текущим пользователем:
+/// key/name из /myself + email (из /myself, иначе из params.email профиля). Пустые/пробельные
+/// строки отсеиваем после trim, иначе пустой params.email сделает candidates.is_empty() ложным false.
+fn server_author_candidates(myself: &MyselfInfo, params_email: &str) -> Vec<String> {
+    [
+        myself.key.clone(),
+        myself.name.clone(),
+        myself.email.clone().or_else(|| Some(params_email.to_string())),
+    ].into_iter().flatten()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Server/ServerBasic: сравнивает author.{key,name,emailAddress} с кандидатами (без регистра).
+fn server_author_matches(v: &Value, candidates: &[String]) -> bool {
+    let author = match v.get("author") { Some(a) => a, None => return false };
+    for field in ["key", "name", "emailAddress"] {
+        if let Some(val) = author.get(field).and_then(|x| x.as_str()) {
+            let lv = val.to_lowercase();
+            if candidates.iter().any(|c| c == &lv) { return true; }
+        }
+    }
+    false
+}
+
 fn init(params: &JiraConnectionParams) -> Result<AuthedClient, JiraError> {
     let client = build_http_client(params)?;
     let token = get_secret(&params.secret_ref)?;
@@ -631,6 +690,15 @@ pub async fn get_worklogs_since(
 ) -> Result<Vec<WorklogDto>, String> {
     let ctx = init(&params).map_err(String::from)?;
     if matches!(params.instance_type, JiraInstanceType::Server | JiraInstanceType::ServerBasic) {
+        // Server/DC: в `issue/{KEY}/worklog` лежат worklog ВСЕХ пользователей —
+        // обязательная фильтрация «только мои» по author.{key,name,emailAddress}.
+        // Кандидаты для сопоставления: key/name из /myself + email из /myself или params.email.
+        let myself = fetch_myself(&ctx, &params).await
+            .map_err(|e| format!("Не удалось получить текущего пользователя Jira (/myself): {e}"))?;
+        let candidates = server_author_candidates(&myself, &params.email);
+        if candidates.is_empty() {
+            return Err("Не удалось определить идентификатор пользователя (нет key/name/email в /myself и нет email в профиле) — невозможно отфильтровать только ваши worklog".to_string());
+        }
         let mut all = Vec::new();
         for key in issue_keys_for_fallback.unwrap_or_default() {
             let endpoint = url(&params, &format!("issue/{key}/worklog"));
@@ -639,10 +707,28 @@ pub async fn get_worklogs_since(
             }).await.map_err(String::from)?;
             let body: Value = resp.json().await.map_err(|e| e.to_string())?;
             let worklogs = body.get("worklogs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            all.extend(parse_worklogs(worklogs, Some(&key)));
+            for v in worklogs {
+                if !server_author_matches(&v, &candidates) { continue; }
+                if let Some(dto) = parse_one_worklog(&v, Some(&key)) {
+                    all.push(dto);
+                }
+            }
         }
         return Ok(all);
     }
+    // ПАМЯТКА по Jira REST API:
+    //   - `worklog/updated` + `worklog/list` (только Cloud) возвращают worklog-объекты
+    //     от ВСЕХ пользователей, не только текущего. Без фильтрации по
+    //     `author.accountId` таблица «Мой worklog» показала бы чужие записи,
+    //     залогированные на тех же задачах.
+    //   - Каждый объект содержит `issueId` — ВНУТРЕННИЙ числовой ID задачи
+    //     (напр. "10005"), а НЕ ключ "PROJ-123". `issueKey` в ответе нет;
+    //     его резолвим отдельно через `GET /rest/api/3/issue/{issueId}?fields=summary`,
+    //     иначе в WorklogDto.issue_key ложился бы numeric id и фронт-код
+    //     `issueKey.split('-')[0]` (для projectKey) отдавал бы мусор.
+    //   - Jira Server/DC не имеет bulk `worklog/updated`/`worklog/list` — единственный
+    //     путь — перебор issue keys из переданного fallback-списка.
+
     let mut all_ids: Vec<i64> = Vec::new();
     let mut since = since_epoch_millis;
     loop {
@@ -661,7 +747,17 @@ pub async fn get_worklogs_since(
         since = body.get("until").and_then(|v| v.as_i64()).unwrap_or(since);
     }
     if all_ids.is_empty() { return Ok(Vec::new()); }
-    let mut all = Vec::new();
+
+    // Шаг 1. Определяем accountId текущего пользователя через /myself.
+    // worklog/list содержит worklog ВСЕХ пользователей — без жёсткого accountId
+    // мы показали бы чужие часы как «мои». Поэтому /myself обязателен.
+    let myself = fetch_myself(&ctx, &params).await
+        .map_err(|e| format!("Не удалось получить текущего пользователя Jira (/myself): {e}"))?;
+    let my_account_id = myself.account_id
+        .ok_or_else(|| "Jira /myself не вернул accountId — невозможно отфильтровать только ваши worklog".to_string())?;
+
+    // Шаг 2. Получаем worklog-объекты через worklog/list (bulk, 1000 id за раз).
+    let mut raw_worklogs: Vec<Value> = Vec::new();
     for chunk in all_ids.chunks(1000) {
         let endpoint = url(&params, "worklog/list");
         let ids_body = json!({ "ids": chunk });
@@ -669,21 +765,91 @@ pub async fn get_worklogs_since(
             apply_auth(ctx.client.post(&endpoint), &params, &ctx.token).json(&ids_body)
         }).await.map_err(String::from)?;
         let arr: Vec<Value> = resp.json().await.map_err(|e| e.to_string())?;
-        all.extend(parse_worklogs(arr, None));
+        raw_worklogs.extend(arr);
     }
+
+    // Шаг 3. Жёсткая фильтрация: оставляем только worklog с author.accountId == my_account_id.
+    // Worklog без author или с чужим accountId — пропускаем.
+    let my_worklogs: Vec<Value> = raw_worklogs.into_iter()
+        .filter(|v| cloud_author_matches(v, &my_account_id))
+        .collect();
+
+    // Шаг 4. Резолюция numeric issueId → человекочитаемый issueKey.
+    // Берём уникальные issueId выживших worklog и делаем GET /issue/{id}?fields=summary.
+    let mut issue_map: std::collections::HashMap<String, (String, Option<String>)> =
+        std::collections::HashMap::new();
+    let unique_issue_ids: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        my_worklogs.iter()
+            .filter_map(|v| v.get("issueId").and_then(|x| x.as_str()).map(|s| s.to_string()))
+            .filter(|id| seen.insert(id.clone()))
+            .collect()
+    };
+    for issue_id in &unique_issue_ids {
+        let ep = url(&params, &format!("issue/{}?fields=summary", issue_id));
+        if let Ok(resp) = send_with_retry(&ctx.client, || {
+            apply_auth(ctx.client.get(&ep), &params, &ctx.token)
+        }).await {
+            if let Ok(v) = resp.json::<Value>().await {
+                if let (Some(key), summary) = (
+                    v.get("key").and_then(|k| k.as_str()).map(|s| s.to_string()),
+                    v.get("fields").and_then(|f| f.get("summary")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                ) {
+                    issue_map.insert(issue_id.clone(), (key, summary));
+                }
+            }
+        }
+    }
+
+    // Шаг 5. Сборка: парсим worklog уже с резольвнутыми ключами.
+    let all = parse_worklogs_with_map(my_worklogs, &issue_map);
     Ok(all)
 }
 
+/// Парсит worklog-объекты из Cloud-ответа `worklog/list`, заменяя numeric issueId
+/// на человекочитаемый issueKey через переданный HashMap.
+fn parse_worklogs_with_map(
+    values: Vec<Value>,
+    issue_map: &std::collections::HashMap<String, (String, Option<String>)>,
+) -> Vec<WorklogDto> {
+    values.into_iter().filter_map(|v| {
+        let id = v.get("id")?.as_str()?.to_string();
+        let started = v.get("started")?.as_str()?.to_string();
+        let time_spent_seconds = v.get("timeSpentSeconds").and_then(|x| x.as_i64()).unwrap_or(0);
+        let comment = v.get("comment").map(|c| adf_to_plain_text(c));
+        let author = v.get("author").and_then(|a| a.get("displayName")).and_then(|d| d.as_str()).map(|s| s.to_string());
+        let updated = v.get("updated").and_then(|x| x.as_str()).map(|s| s.to_string());
+        // Резолюция: issue_map берёт приоритет над сырым issueId.
+        let numeric_id = v.get("issueId").and_then(|x| x.as_str()).map(|s| s.to_string());
+        let issue_key = numeric_id.as_deref()
+            .and_then(|nid| issue_map.get(nid))
+            .map(|(key, _)| key.clone())
+            .or(numeric_id);
+        Some(WorklogDto { id, issue_key, started, time_spent_seconds, comment, author, updated })
+    }).collect()
+}
+
+/// Вариант `parse_worklogs` для одного worklog-объекта (используется в Server-ветке
+/// `get_worklogs_since`, где каждый worklog уже проверен на авторство до парсинга).
+fn parse_one_worklog(v: &Value, fallback_issue_key: Option<&str>) -> Option<WorklogDto> {
+    parse_worklogs(vec![v.clone()], fallback_issue_key).into_iter().next()
+}
+
+/// Парсит worklog-объекты с уже известным issue key (напр. из `issue/{KEY}/worklog`).
+/// `fallback_issue_key` имеет приоритет над `issueId`-полем, потому что
+/// `issueId` в собственном ответе `issue/{KEY}/worklog` — числовой id,
+/// а не KEY — и его использовать было бы ошибкой.
 fn parse_worklogs(values: Vec<Value>, fallback_issue_key: Option<&str>) -> Vec<WorklogDto> {
     values.into_iter().filter_map(|v| {
         let id = v.get("id")?.as_str()?.to_string();
         let started = v.get("started")?.as_str()?.to_string();
         let time_spent_seconds = v.get("timeSpentSeconds").and_then(|x| x.as_i64()).unwrap_or(0);
-        let comment = v.get("comment").map(adf_to_plain_text);
+        let comment = v.get("comment").map(|c| adf_to_plain_text(c));
         let author = v.get("author").and_then(|a| a.get("displayName")).and_then(|d| d.as_str()).map(|s| s.to_string());
         let updated = v.get("updated").and_then(|x| x.as_str()).map(|s| s.to_string());
-        let issue_key = v.get("issueId").and_then(|x| x.as_str()).map(|s| s.to_string())
-            .or_else(|| fallback_issue_key.map(|s| s.to_string()));
+        // fallback_issue_key имеет приоритет над issueId (последнее — непригодный числовой id).
+        let issue_key = fallback_issue_key.map(|s| s.to_string())
+            .or_else(|| v.get("issueId").and_then(|x| x.as_str()).map(|s| s.to_string()));
         Some(WorklogDto { id, issue_key, started, time_spent_seconds, comment, author, updated })
     }).collect()
 }
@@ -982,18 +1148,111 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_connection_server_basic_uses_rest_api_v2() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET")).and(path("/rest/api/2/myself"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"name": "ayurasov"})))
-            .expect(1).mount(&server).await;
+    async fn url_server_basic_uses_rest_api_v2() {
+        // Сам по URL-хелпер, без сети: ServerBasic должен использовать REST API v2, как Server.
+        // (Отдельно от apply_auth_server_basic_uses_basic_auth_not_bearer, который проверяет basic-авторизацию.)
         let params = JiraConnectionParams {
-            base_url: server.uri(), email: "ayurasov".to_string(),
+            base_url: "https://jira.example.com".to_string(), email: "ayurasov".to_string(),
             secret_ref: "test-basic-ref".to_string(),
             instance_type: JiraInstanceType::ServerBasic,
             extra_root_ca_pem_path: None, proxy: None,
             user_timezone: Some("Europe/Moscow".to_string()), accept_invalid_certs: false,
         };
-        assert_eq!(url(&params, "myself"), format!("{}/rest/api/2/myself", server.uri()));
+        assert_eq!(url(&params, "myself"), "https://jira.example.com/rest/api/2/myself");
+    }
+
+    // ── тесты для логики идентификации/фильтрации worklog — главный риск этой сессии ──
+
+    #[test]
+    fn parse_worklogs_fallback_issue_key_takes_priority_over_raw_issue_id() {
+        // fallback_issue_key (из issue/{KEY}/worklog) должен перебивать сырой числовой issueId,
+        // иначе в UI вместо "PROJ-123" попадёт сырой нечитаемый id типа "10005".
+        let v = json!({
+            "id": "1001", "started": "2024-01-01T10:00:00.000+0000",
+            "timeSpentSeconds": 3600, "issueId": "10005",
+        });
+        let out = parse_worklogs(vec![v], Some("PROJ-123"));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].issue_key.as_deref(), Some("PROJ-123"));
+    }
+
+    #[test]
+    fn parse_worklogs_falls_back_to_raw_issue_id_when_no_fallback_key() {
+        let v = json!({
+            "id": "1001", "started": "2024-01-01T10:00:00.000+0000",
+            "timeSpentSeconds": 3600, "issueId": "10005",
+        });
+        let out = parse_worklogs(vec![v], None);
+        assert_eq!(out[0].issue_key.as_deref(), Some("10005"));
+    }
+
+    #[test]
+    fn parse_worklogs_with_map_resolves_numeric_issue_id_to_key() {
+        // Cloud worklog/list возвращает только числовой issueId — его надо резолвить
+        // через GET /issue/{id} и подставить человеческий ключ в issue_map.
+        let v = json!({
+            "id": "1001", "started": "2024-01-01T10:00:00.000+0000",
+            "timeSpentSeconds": 3600, "issueId": "10005",
+        });
+        let mut issue_map = std::collections::HashMap::new();
+        issue_map.insert("10005".to_string(), ("PROJ-42".to_string(), Some("Fix bug".to_string())));
+        let out = parse_worklogs_with_map(vec![v], &issue_map);
+        assert_eq!(out[0].issue_key.as_deref(), Some("PROJ-42"));
+    }
+
+    #[test]
+    fn parse_worklogs_with_map_falls_back_to_raw_id_when_unresolved() {
+        let v = json!({
+            "id": "1001", "started": "2024-01-01T10:00:00.000+0000",
+            "timeSpentSeconds": 3600, "issueId": "99999",
+        });
+        let issue_map = std::collections::HashMap::new();
+        let out = parse_worklogs_with_map(vec![v], &issue_map);
+        assert_eq!(out[0].issue_key.as_deref(), Some("99999"));
+    }
+
+    #[test]
+    fn cloud_author_filter_excludes_other_users_accountid() {
+        // Тестирует реальную cloud_author_matches, вызываемую из get_worklogs_since (Cloud, шаг 3).
+        let my_account_id = "acc-mine";
+        let raw_worklogs = vec![
+            json!({ "id": "1", "author": { "accountId": "acc-mine" } }),
+            json!({ "id": "2", "author": { "accountId": "acc-other" } }),
+            json!({ "id": "3" }), // нет author вообще
+        ];
+        let my_worklogs: Vec<Value> = raw_worklogs.into_iter()
+            .filter(|v| cloud_author_matches(v, my_account_id))
+            .collect();
+        assert_eq!(my_worklogs.len(), 1);
+        assert_eq!(my_worklogs[0]["id"], "1");
+    }
+
+    #[test]
+    fn server_author_candidates_ignores_blank_email_and_dedupes_case() {
+        // Пустой/пробельный params.email не должен попасть в кандидаты как пустая строка —
+        // иначе candidates.is_empty() ложно вернёт false, и ошибка о невозможной идентификации не сработает.
+        let myself = MyselfInfo { account_id: None, key: None, name: None, email: None };
+        let candidates = server_author_candidates(&myself, "   ");
+        assert!(candidates.is_empty());
+
+        let myself2 = MyselfInfo {
+            account_id: None, key: Some("AYURASOV".to_string()), name: None, email: None,
+        };
+        let candidates2 = server_author_candidates(&myself2, "a.yurasov@example.com");
+        assert_eq!(candidates2, vec!["ayurasov".to_string(), "a.yurasov@example.com".to_string()]);
+    }
+
+    #[test]
+    fn server_author_matches_by_key_name_or_email_case_insensitive() {
+        // Тестирует реальную server_author_matches, вызываемую из get_worklogs_since (Server/ServerBasic).
+        let candidates: Vec<String> = vec!["ayurasov".to_string(), "alexander yurasov".to_string(), "a.yurasov@example.com".to_string()];
+        let mine_by_key = json!({ "author": { "key": "AYURASOV" } });
+        let mine_by_email = json!({ "author": { "emailAddress": "A.Yurasov@Example.com" } });
+        let other = json!({ "author": { "key": "other.user", "name": "Other User", "emailAddress": "other@example.com" } });
+        let no_author = json!({ "id": "1" });
+        assert!(server_author_matches(&mine_by_key, &candidates));
+        assert!(server_author_matches(&mine_by_email, &candidates));
+        assert!(!server_author_matches(&other, &candidates));
+        assert!(!server_author_matches(&no_author, &candidates));
     }
 }

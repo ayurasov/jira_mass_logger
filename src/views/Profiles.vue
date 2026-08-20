@@ -240,7 +240,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { open as openUrl } from '@tauri-apps/plugin-opener';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 // ────────── Types ──────────
 
@@ -487,10 +487,16 @@ async function deleteJiraProfile(id: number) {
 
 // ────────── Exchange actions ──────────
 
+// Исходный username при открытии формы редактирования — сравниваем при сохранении,
+// так как secretRef выводится из username — при смене имя он тихо меняется, и без нового
+// пароля под новым именем не окажется сохранённого секрета.
+const exchFormOriginalUsername = ref('');
+
 function openExchForm(p: ExchProfile | null) {
   exchFormError.value = '';
   oauthResult.value = null;
   if (p) {
+    exchFormOriginalUsername.value = p.username;
     Object.assign(exchForm, {
       id: p.id, name: p.name, authMode: p.authMode,
       owaUrl: '',
@@ -503,6 +509,7 @@ function openExchForm(p: ExchProfile | null) {
       isActive: p.isActive,
     });
   } else {
+    exchFormOriginalUsername.value = '';
     Object.assign(exchForm, {
       id: null, name: '', authMode: 'ews',
       owaUrl: '',
@@ -522,6 +529,21 @@ async function saveExchProfile() {
   }
   if (exchForm.authMode === 'ews' && !exchForm.ewsUrl) {
     exchFormError.value = 'Укажите EWS URL (или вставьте ссылку OWA — адрес подберётся автоматически).';
+    return;
+  }
+  // Новый EWS-профиль без пароля бесполезен — подключение к EWS всегда требует базовую авторизацию.
+  if (exchForm.authMode === 'ews' && !exchForm.id && !exchForm.password) {
+    exchFormError.value = 'Введите пароль — для нового EWS-профиля он обязателен.';
+    return;
+  }
+  // При редактировании: secretRef выводится из username. Если имя изменилось, а новый
+  // пароль не введён — новый secretRef окажется без сохранённого секрета — подключение сломается
+  // без явной причины. Требуем ввод нового пароля в этом случае.
+  if (
+    exchForm.authMode === 'ews' && exchForm.id &&
+    exchForm.username !== exchFormOriginalUsername.value && !exchForm.password
+  ) {
+    exchFormError.value = 'Вы изменили логин — введите пароль повторно, иначе подключение перестанет работать (ссылка на сохранённый пароль привязана к логину).';
     return;
   }
   exchSaving.value = true;

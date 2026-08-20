@@ -15,7 +15,10 @@ const selectedDate = ref(new Date().toISOString().slice(0, 10));
 const issueSearchMap = ref<Record<number, string>>({});
 const issueOptionsMap = ref<Record<number, { key: string; summary: string }[]>>({});
 
-onMounted(() => store.loadDay(selectedDate.value));
+onMounted(async () => {
+  await jiraStore.ensureLoaded();
+  await store.loadDay(selectedDate.value);
+});
 
 function fmtTime(iso: string): string {
   const dt = new Date(iso);
@@ -51,9 +54,10 @@ function timelineHeight(sec: number): number {
 async function searchIssues(idx: number, q: string) {
   issueSearchMap.value[idx] = q;
   if (q.length < 2) { issueOptionsMap.value[idx] = []; return; }
-  if (!jiraStore.activeProfile) return;
+  const params = jiraStore.activeConnectionParams;
+  if (!params) return;
   const res = await tauriApi.getIssuesByJql(
-    jiraStore.activeConnectionParams,
+    params,
     `text ~ "${q}" ORDER BY updated DESC`,
   );
   issueOptionsMap.value[idx] = res.map((i) => ({ key: i.key, summary: i.summary ?? '' }));

@@ -85,6 +85,31 @@ function toLevel(hours: number, isWD: boolean): 0 | 1 | 2 | 3 | 4 {
 
 const DAY_LABELS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
+// Вычислитель баров недели (вынесен из стора, так как вызывается из getters,
+// где `this._weekBars(...)` как вызов action из getter не типизируется Pinia'ой).
+function computeWeekBars(rows: CachedWorklogRow[], monday: Date): DayBar[] {
+  const settings = useSettingsStore();
+  const norm = settings.workHoursPerDay ?? 8;
+  const dates = weekDates(monday);
+  const hoursByDate = new Map<string, number>();
+  for (const r of rows) {
+    const d = r.started.slice(0, 10);
+    if (dates.includes(d)) {
+      hoursByDate.set(d, (hoursByDate.get(d) ?? 0) + (r.timeSpentSeconds ?? 0) / 3600);
+    }
+  }
+  return dates.map((date) => {
+    const wd = isWorkday(date);
+    const dayOfWeek = new Date(date).getDay();
+    return {
+      date,
+      label: DAY_LABELS[dayOfWeek],
+      plan: wd ? norm : 0,
+      fact: Math.round((hoursByDate.get(date) ?? 0) * 100) / 100,
+    };
+  });
+}
+
 // ────────────────────────────────────────────
 // Store
 export const useAnalyticsStore = defineStore('analytics', {
@@ -107,10 +132,10 @@ export const useAnalyticsStore = defineStore('analytics', {
   getters: {
     // ── Виджет 1: текущая и прошлая неделя ────────────────────
     currentWeekBars(): DayBar[] {
-      return this._weekBars(startOfWeek(new Date()));
+      return computeWeekBars(this._rows, startOfWeek(new Date()));
     },
     prevWeekBars(): DayBar[] {
-      return this._weekBars(addDays(startOfWeek(new Date()), -7));
+      return computeWeekBars(this._rows, addDays(startOfWeek(new Date()), -7));
     },
 
     // ── Виджет 2: разбивка за выбранный период ─────────────────
@@ -198,30 +223,6 @@ export const useAnalyticsStore = defineStore('analytics', {
   },
 
   actions: {
-    // внутренний вычислитель баров недели
-    _weekBars(monday: Date): DayBar[] {
-      const settings = useSettingsStore();
-      const norm = settings.workHoursPerDay ?? 8;
-      const dates = weekDates(monday);
-      const hoursByDate = new Map<string, number>();
-      for (const r of this._rows) {
-        const d = r.started.slice(0, 10);
-        if (dates.includes(d)) {
-          hoursByDate.set(d, (hoursByDate.get(d) ?? 0) + (r.timeSpentSeconds ?? 0) / 3600);
-        }
-      }
-      return dates.map((date) => {
-        const wd = isWorkday(date);
-        const dayOfWeek = new Date(date).getDay();
-        return {
-          date,
-          label: DAY_LABELS[dayOfWeek],
-          plan: wd ? norm : 0,
-          fact: Math.round((hoursByDate.get(date) ?? 0) * 100) / 100,
-        };
-      });
-    },
-
     async fetchAll() {
       this.loading = true;
       this.error = null;

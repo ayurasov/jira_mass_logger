@@ -41,7 +41,7 @@
       <input v-model="store.filters.searchText" class="filters__input filters__input--search" placeholder="🔎 Поиск в описании…" />
       <label class="filters__norm">
         Норма в день, ч:
-        <input v-model.number="settings.workHoursPerDay" type="number" min="1" max="24" step="0.5" />
+        <input v-model.number="settings.workdayHours" type="number" min="1" max="24" step="0.5" />
       </label>
     </div>
 
@@ -197,11 +197,13 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { useMyWorklogStore, type WorklogRow } from '../store/myWorklog';
 import { useSettingsStore } from '../store/settings';
+import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { tauriApi } from '../lib/tauriApi';
 import { WEEKDAY_RU_SHORT } from '../utils/dateRange';
 
 const store = useMyWorklogStore();
 const settings = useSettingsStore();
+const jiraProfiles = useJiraProfilesStore();
 
 const openAutoSyncSettings = ref(false);
 const scrollContainer = ref<HTMLElement | null>(null);
@@ -220,6 +222,7 @@ onMounted(async () => {
   store.filters.fromDate = from.toISOString().slice(0, 10);
   store.filters.toDate = now.toISOString().slice(0, 10);
 
+  await jiraProfiles.ensureLoaded();
   await store.loadFromCache();
   store.setupNetworkListeners();
   store.startAutoSync();

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 
 export type Theme = 'light' | 'dark' | 'system';
@@ -64,6 +64,10 @@ export const useSettingsStore = defineStore('settings', () => {
     _savedSchedule ? (JSON.parse(_savedSchedule) as WorkSchedule).timezone : DEFAULT_SCHEDULE.timezone,
   );
 
+  // alias `workHoursPerDay` (используется в analytics, dayFromCalendar, MyWorklog) —
+  // computed, чтобы корректно разворачиваться в шаблонах (v-model) и быть реактивным.
+  const workHoursPerDay = computed(() => workdayHours.value);
+
   function setWorkSchedule(s: WorkSchedule) {
     workdayHours.value = s.workdayHours;
     workdays.value = s.workdays;
@@ -77,6 +81,22 @@ export const useSettingsStore = defineStore('settings', () => {
     }).catch(console.error);
   }
 
+  // --- Авто-синхронизация Jira worklog ---
+  const autoSyncEnabled = ref<boolean>(
+    localStorage.getItem('jiratime-auto-sync-enabled') === 'true',
+  );
+  const autoSyncIntervalMinutes = ref<number>(
+    Number(localStorage.getItem('jiratime-auto-sync-interval') ?? '15') || 15,
+  );
+  function setAutoSync(enabled: boolean, minutes?: number) {
+    autoSyncEnabled.value = enabled;
+    if (typeof minutes === 'number' && minutes > 0) autoSyncIntervalMinutes.value = minutes;
+    localStorage.setItem('jiratime-auto-sync-enabled', String(enabled));
+    if (typeof minutes === 'number' && minutes > 0) {
+      localStorage.setItem('jiratime-auto-sync-interval', String(minutes));
+    }
+  }
+
   return {
     theme,
     loadTheme,
@@ -87,5 +107,9 @@ export const useSettingsStore = defineStore('settings', () => {
     workdays,
     timezone,
     setWorkSchedule,
+    workHoursPerDay,
+    autoSyncEnabled,
+    autoSyncIntervalMinutes,
+    setAutoSync,
   };
 });

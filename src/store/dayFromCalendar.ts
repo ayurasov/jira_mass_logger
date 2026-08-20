@@ -161,10 +161,12 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
       const row = this.rows[idx];
       if (!row?.selectedIssueKey || !row.startedLocal) return;
       const jp = useJiraProfilesStore();
-      if (!jp.activeProfile) throw new Error('Нет активного Jira профиля');
+      await jp.ensureLoaded();
+      const params = jp.activeConnectionParams;
+      if (!params) throw new Error('Нет активного Jira профиля');
       try {
         await tauriApi.addWorklog(
-          jp.activeConnectionParams,
+          params,
           row.selectedIssueKey,
           row.startedLocal,
           row.roundedSeconds,
@@ -199,7 +201,9 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
 
     async logBulk(items: DayBulkPreviewItem[]) {
       const jp = useJiraProfilesStore();
-      if (!jp.activeProfile) throw new Error('Нет активного Jira профиля');
+      await jp.ensureLoaded();
+      const params = jp.activeConnectionParams;
+      if (!params) throw new Error('Нет активного Jira профиля');
       const entries: NewWorklogEntry[] = items.map((i) => ({
         issueKey: i.issueKey,
         startedAt: i.startedLocal,
@@ -207,7 +211,7 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
         comment: i.comment,
       }));
       const results: BulkResultItem[] = await tauriApi.bulkAddWorklogs(
-        jp.activeConnectionParams,
+        params,
         entries,
       );
       results.forEach((res, i) => {

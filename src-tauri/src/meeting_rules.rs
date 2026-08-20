@@ -57,9 +57,11 @@ pub fn normalize_series_key(subject: &str) -> String {
     let re_paren = Regex::new(r"\(\s*\d+\s*/\s*\d+\s*\)").unwrap();
     let re_dash = Regex::new(r"[-\u{2013}]\s*(часть|part)\s*\d+").unwrap();
     let mut s = subject.to_lowercase();
+    // важен порядок: re_paren (счётчик вида "(2/5)") должен идти раньше re_date,
+    // иначе re_date (\d{1,2}[./]\d{1,2}) сковырнет цифры внутри скобок, оставив пустые "()".
+    s = re_paren.replace_all(&s, "").to_string();
     s = re_date.replace_all(&s, "").to_string();
     s = re_time.replace_all(&s, "").to_string();
-    s = re_paren.replace_all(&s, "").to_string();
     s = re_dash.replace_all(&s, "").to_string();
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }

@@ -16,6 +16,7 @@ import { ref, watch, computed, toRef } from 'vue';
 import { BarChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components';
 import * as echarts from 'echarts/core';
+import type { EChartsOption } from 'echarts';
 import { CanvasRenderer } from 'echarts/renderers';
 import { useEChart } from '../../composables/useEChart';
 import { useAnalyticsStore } from '../../store/analytics';
@@ -31,7 +32,7 @@ const { scheduleInit } = useEChart(chartEl, toRef(settings, 'theme'));
 
 const bars = computed(() => week.value === 'current' ? store.currentWeekBars : store.prevWeekBars);
 
-function buildOption() {
+function buildOption(): EChartsOption {
   const isDark = settings.theme === 'dark';
   const textColor  = isDark ? '#c9cdd4' : '#333';
   const gridColor  = isDark ? '#2e3240' : '#e8e8e8';
@@ -50,7 +51,7 @@ function buildOption() {
       backgroundColor: isDark ? '#1e2535' : '#fff',
       borderColor: isDark ? '#2e3a50' : '#d8deea',
       textStyle: { color: textColor },
-      formatter: (params: any[]) => {
+      formatter: (params: any) => {
         const d = b[params[0].dataIndex];
         return `<b>${d.label} (${d.date})</b><br/>` +
           `План: ${d.plan} ч<br/>Факт: ${d.fact} ч`;

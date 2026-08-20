@@ -129,17 +129,12 @@ export const useMyWorklogStore = defineStore('myWorklog', {
   },
   actions: {
     activeConnectionParams(): JiraConnectionParams | null {
+      // Переиспользуем геттер из jiraProfiles-стора — он правильно учитывает
+      // isActive-флаг и authType==='server_basic'. Раньше тут было profiles[0],
+      // что брало вообще первый профиль (игнорируя активный) и всегда отправляло
+      // server_basic-профиль как Bearer PAT → 401/не вижу свои часы.
       const profiles = useJiraProfilesStore();
-      const settings = useSettingsStore();
-      const profile = profiles.profiles[0];
-      if (!profile) return null;
-      return {
-        baseUrl: profile.baseUrl,
-        email: profile.email,
-        secretRef: profile.secretRef,
-        instanceType: profile.type,
-        userTimezone: settings.timezone,
-      };
+      return profiles.activeConnectionParams;
     },
 
     async loadFromCache() {
@@ -154,7 +149,14 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       try {
         const watermarkKey = 'jiratime-worklog-watermark';
         const since = force ? 0 : Number(localStorage.getItem(watermarkKey) ?? '0');
-        const dtos = await tauriApi.getWorklogsSince(params, since);
+        // Для Jira Server/ServerBasic нет эндпоинта типа worklog/updated — бэкенд идёт
+        // по fallback-списку issue keys. Берём его из уже известных кэшированных
+        // строк плюс текущий filters.issueKey, иначе первый запуск на Server
+        // ничего не найдёт (кэш пуст).
+        const cachedKeys = new Set(this.rows.map((r) => r.issueKey).filter(Boolean));
+        if (this.filters.issueKey) cachedKeys.add(this.filters.issueKey);
+        const issueKeysForFallback = Array.from(cachedKeys);
+        const dtos = await tauriApi.getWorklogsSince(params, since, issueKeysForFallback);
         for (const dto of dtos) {
           const row = dtoToRow(dto);
           await tauriApi.upsertCachedWorklog(rowToCached(row));

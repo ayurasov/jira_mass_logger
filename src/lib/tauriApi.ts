@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export type JiraInstanceType = 'cloud' | 'server';
+export type JiraInstanceType = 'cloud' | 'server' | 'server_basic';
 export type ExchangeAuthMode = 'graph' | 'ews';
 export type EwsAuthType = 'basic' | 'ntlm';
 
