@@ -164,6 +164,7 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         "ALTER TABLE jira_profiles ADD COLUMN user_timezone TEXT",
         "ALTER TABLE jira_profiles ADD COLUMN accept_invalid_certs INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE jira_profiles ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE jira_profiles ADD COLUMN auth_type TEXT",
         "ALTER TABLE exchange_profiles ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'ews'",
         "ALTER TABLE exchange_profiles ADD COLUMN ews_auth_type TEXT",
         "ALTER TABLE exchange_profiles ADD COLUMN tenant_id TEXT",
