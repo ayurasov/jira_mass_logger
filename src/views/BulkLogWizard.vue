@@ -18,11 +18,12 @@ const holidayJson = ref('');
 const issueInput = ref('');
 
 onMounted(async () => {
+  await jiraProfiles.ensureLoaded();
   await wizard.bootstrap();
   issueInput.value = wizard.issueKey;
 });
 
-const activeProfile = computed(() => jiraProfiles.profiles[0] || null);
+const activeProfile = computed(() => jiraProfiles.activeProfile);
 
 const jiraParams = computed<JiraConnectionParams | null>(() => {
   const profile = activeProfile.value;
@@ -31,7 +32,7 @@ const jiraParams = computed<JiraConnectionParams | null>(() => {
     baseUrl: profile.baseUrl,
     email: profile.email,
     secretRef: profile.secretRef,
-    instanceType: profile.type,
+    instanceType: profile.instanceType ?? profile.type,
     userTimezone: settings.timezone,
     proxy: null,
     extraRootCaPemPath: null,
@@ -126,9 +127,14 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
         </div>
       </div>
 
-      <div v-if="!activeProfile" class="empty-state">
+      <div v-if="jiraProfiles.loading" class="empty-state">
+        <h2>Загрузка профилей…</h2>
+      </div>
+
+      <div v-else-if="!activeProfile" class="empty-state">
         <h2>Нет профиля Jira</h2>
         <p>Создай или импортируй профиль Jira, чтобы использовать Bulk Log Wizard.</p>
+        <p v-if="jiraProfiles.error" class="empty-state-error">Ошибка загрузки профилей: {{ jiraProfiles.error }}</p>
         <router-link class="primary-btn" to="/profiles">Открыть профили</router-link>
       </div>
 
@@ -384,3 +390,27 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
     </section>
   </div>
 </template>
+
+<style scoped>
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.empty-state {
+  padding: 3rem 1.5rem;
+  text-align: center;
+  border: 1px dashed var(--color-border, #d0d5dd);
+  border-radius: 12px;
+}
+.empty-state-error {
+  color: var(--color-error, #dc2626);
+  font-size: 0.85rem;
+}
+</style>
