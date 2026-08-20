@@ -1,5 +1,6 @@
 // JiraTime — точка входа Tauri-приложения
 mod jira_client;
+mod jira_profiles;
 mod exchange_client;
 mod db;
 mod scheduler;
@@ -37,14 +38,14 @@ fn main() {
             db::init_db(app.handle())?;
             bulk_wizard::setup(app.handle())?;
 
-            // ── Подсистема логирования ──────────────────────────────────
+            // ── Подсистема логирования ──────────────────────────────────────
             let app_logger = Arc::new(
                 AppLogger::new(app.handle())
                     .expect("failed to init AppLogger"),
             );
             app.manage(app_logger.clone());
 
-            // ── WakeSignal для воркера очереди ──────────────────────────
+            // ── WakeSignal для воркера очереди ───────────────────────────
             let wake: WakeSignal = Arc::new(tokio::sync::Notify::new());
             app.manage(wake.clone());
 
@@ -59,7 +60,7 @@ fn main() {
                 app_logger.clone(),
             );
 
-            // ── Воркер очереди синхронизации ───────────────────────────
+            // ── Воркер очереди синхронизации ──────────────────────
             let wizard_db = app.state::<bulk_wizard::WizardDb>();
             let db_arc: Arc<Mutex<rusqlite::Connection>> = wizard_db.0.clone();
             sync_queue::start_worker(db_arc, wake.clone(), app_logger.clone());
@@ -109,6 +110,11 @@ fn main() {
             jira_client::update_worklog,
             jira_client::delete_worklog,
             jira_client::bulk_add_worklogs,
+            // Jira profiles CRUD
+            jira_profiles::list_jira_profiles,
+            jira_profiles::save_jira_profile,
+            jira_profiles::delete_jira_profile,
+            jira_profiles::test_jira_connection,
             // Exchange
             exchange_client::test_exchange_connection,
             exchange_client::get_calendar_events,
