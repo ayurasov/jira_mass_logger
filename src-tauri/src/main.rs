@@ -30,6 +30,8 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Открытие системного браузера/файлов (используется в Profiles.vue для Graph OAuth)
+        .plugin(tauri_plugin_opener::init())
         // Автообновление через GitHub Releases (Промпт 10)
         // installMode: quiet — обновление ставится в %LOCALAPPDATA% без UAC
         // если NSIS установил приложение в currentUser режиме
