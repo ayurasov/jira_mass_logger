@@ -7,6 +7,10 @@
 //! невозможным управление профилями Jira (только onboarding мог создать один
 //! профиль напрямую через SQL). Этот модуль добавляет недостающие команды и
 //! регистрирует их в `main.rs`.
+//!
+//! `reset_app_data` позволяет полностью сбросить локальные данные приложения
+//! (профили Jira/Exchange, настройки и секреты в OS keychain), чтобы пользователь мог
+//! выйти из сломанного/несогласованного состояния и пройти онбординг с чистого листа.
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -209,4 +213,61 @@ pub async fn test_jira_connection(
     };
 
     jira_client::test_connection(params).await
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Сброс всего локальных данных (profiles + settings + OS keychain secrets)
+// ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn reset_app_data(db: State<'_, WizardDb>) -> Result<(), String> {
+    let conn = lock_db(&db)?;
+
+    // Собираем все secret_ref (и refresh_token_secret_ref для Exchange Graph), чтобы
+    // очистить OS keychain перед удалением самих записей из SQLite.
+    let mut secret_refs: Vec<String> = Vec::new();
+
+    {
+        let mut stmt = conn
+            .prepare("SELECT secret_ref FROM jira_profiles")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        for r in rows.flatten() {
+            secret_refs.push(r);
+        }
+    }
+
+    {
+        let mut stmt = conn
+            .prepare("SELECT secret_ref, refresh_token_secret_ref FROM exchange_profiles")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))
+            .map_err(|e| e.to_string())?;
+        for r in rows.flatten() {
+            secret_refs.push(r.0);
+            if let Some(rt) = r.1 {
+                secret_refs.push(rt);
+            }
+        }
+    }
+
+    for secret_ref in &secret_refs {
+        if let Ok(entry) = keyring::Entry::new("jiratime", secret_ref) {
+            let _ = entry.delete_password();
+        }
+    }
+
+    conn.execute_batch(
+        "DELETE FROM jira_profiles;
+         DELETE FROM exchange_profiles;
+         DELETE FROM settings;
+         DELETE FROM meeting_match_rules;
+         DELETE FROM meeting_issue_history;",
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
 }

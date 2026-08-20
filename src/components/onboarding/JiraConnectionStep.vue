@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import Database from '@tauri-apps/plugin-sql';
 
 const emit = defineEmits<{ done: [] }>();
 
@@ -75,24 +74,21 @@ async function testAndSave() {
 
     await invoke('test_connection', { params });
 
-    // 3. Сохраняем профиль в SQLite
-    // Колонка `type` — NOT NULL в схеме (legacy), дублируем instance_type.
-    const db = await Database.load('sqlite:jiratime.db');
-    await db.execute(
-      `INSERT OR REPLACE INTO jira_profiles
-         (name, base_url, email, type, instance_type, secret_ref, accept_invalid_certs)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        'Default',
-        params.base_url,
-        form.email,
-        iType,          // type (legacy NOT NULL column)
-        iType,          // instance_type
-        secretRef,
-        form.acceptInvalidCerts ? 1 : 0,
-      ]
-    );
-    await db.close();
+    // 3. Сохраняем профиль через единую Rust-команду save_jira_profile
+    // (тот же путь данных, который используют Profiles.vue и jiraProfiles store).
+    // Не пишем в SQLite напрямую через plugin-sql — была отдельная и несогласованная с backend база данных.
+    await invoke('save_jira_profile', {
+      profile: {
+        id: null,
+        name: 'Default',
+        instanceType: iType,
+        authType: iType === 'cloud' ? 'token' : (iType === 'server_basic' ? 'server_basic' : 'pat'),
+        baseUrl: params.base_url,
+        email: form.email,
+        token: form.token,
+        isActive: true,
+      },
+    });
 
     success.value = true;
     setTimeout(() => emit('done'), 800);
