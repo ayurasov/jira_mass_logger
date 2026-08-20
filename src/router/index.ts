@@ -12,33 +12,44 @@ const router = createRouter({
     },
     {
       path: '/',
-      name: 'dashboard',
-      component: () => import('../views/DashboardAnalytics.vue'),
-    },
-    {
-      path: '/worklog',
-      name: 'worklog',
-      component: () => import('../views/MyWorklog.vue'),
-    },
-    {
-      path: '/bulk',
-      name: 'bulk',
-      component: () => import('../views/BulkLogWizard.vue'),
-    },
-    {
-      path: '/templates',
-      name: 'templates',
-      component: () => import('../views/Templates.vue'),
-    },
-    {
-      path: '/profiles',
-      name: 'profiles',
-      component: () => import('../views/Profiles.vue'),
-    },
-    {
-      path: '/settings',
-      name: 'settings',
-      component: () => import('../views/Settings.vue'),
+      component: () => import('../components/AppLayout.vue'),
+      children: [
+        {
+          path: '',
+          name: 'dashboard',
+          component: () => import('../views/DashboardAnalytics.vue'),
+        },
+        {
+          path: 'worklog',
+          name: 'worklog',
+          component: () => import('../views/MyWorklog.vue'),
+        },
+        {
+          path: 'bulk',
+          name: 'bulk',
+          component: () => import('../views/BulkLogWizard.vue'),
+        },
+        {
+          path: 'templates',
+          name: 'templates',
+          component: () => import('../views/Templates.vue'),
+        },
+        {
+          path: 'profiles',
+          name: 'profiles',
+          component: () => import('../views/Profiles.vue'),
+        },
+        {
+          path: 'logs',
+          name: 'logs',
+          component: () => import('../views/LogsView.vue'),
+        },
+        {
+          path: 'settings',
+          name: 'settings',
+          component: () => import('../views/Settings.vue'),
+        },
+      ],
     },
     {
       path: '/:pathMatch(.*)*',

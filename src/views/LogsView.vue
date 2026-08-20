@@ -110,7 +110,7 @@ onUnmounted(() => {
 
         <button class="logs-action-btn" :disabled="loading" @click="fetchLogs">
           <span v-if="loading">↻ Загрузка...</span>
-          <span v-else">↻ Обновить</span>
+          <span v-else>↻ Обновить</span>
         </button>
 
         <button class="logs-action-btn" @click="openLogDir">
