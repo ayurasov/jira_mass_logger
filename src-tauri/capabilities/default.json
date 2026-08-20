@@ -13,6 +13,7 @@
     "notification:default",
     "shell:default",
     "dialog:default",
+    "opener:default",
     "window-state:default"
   ]
 }
