@@ -75,7 +75,7 @@
             class="var-chip"
             :title="v.desc"
             @click="insertVar(v.token)"
-          >{{{ v.token }}}</button>
+          >{{ v.token }}</button>
         </div>
 
         <!-- Live-превью -->
