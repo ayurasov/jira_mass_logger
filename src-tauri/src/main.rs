@@ -117,6 +117,7 @@ fn main() {
             jira_profiles::save_jira_profile,
             jira_profiles::delete_jira_profile,
             jira_profiles::test_jira_connection,
+            jira_profiles::reset_app_data,
             // Exchange
             exchange_client::test_exchange_connection,
             exchange_client::get_calendar_events,
