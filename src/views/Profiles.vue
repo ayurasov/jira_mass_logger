@@ -166,8 +166,8 @@
         <label>Название <input v-model="exchForm.name" placeholder="Corporate Calendar" /></label>
         <label>Режим
           <select v-model="exchForm.authMode">
-            <option value="graph">Microsoft Graph API (OAuth2)</option>
-            <option value="ews">EWS (on-premise Exchange)</option>
+            <option value="ews">EWS (on-premise Exchange / OWA)</option>
+            <option value="graph">Microsoft Graph API (OAuth2, Microsoft 365)</option>
           </select>
         </label>
         <template v-if="exchForm.authMode === 'graph'">
@@ -183,15 +183,32 @@
           <div v-if="oauthResult" :class="oauthResult.ok ? 'status-ok' : 'status-err'">{{ oauthResult.message }}</div>
         </template>
         <template v-else>
-          <label>EWS URL <input v-model="exchForm.ewsUrl" placeholder="https://mail.corp.com/EWS/Exchange.asmx" /></label>
+          <div class="oauth-hint">
+            Если почта настраивается через OWA (например, вы открываете
+            <code>https://mail.your-company.ru/owa/</code> и вводите логин/пароль),
+            вставьте эту ссылку в поле ниже — EWS-адрес будет подобран автоматически.
+          </div>
+          <label>Ссылка OWA (необязательно)
+            <input v-model="exchForm.owaUrl" placeholder="https://mail.almi-partner.ru/owa/" @change="onOwaUrlChange" @blur="onOwaUrlChange" />
+          </label>
+          <label>EWS URL
+            <input v-model="exchForm.ewsUrl" placeholder="https://mail.almi-partner.ru/EWS/Exchange.asmx" />
+            <span class="hint">Обычно совпадает с адресом OWA, только вместо <code>/owa/</code> — <code>/EWS/Exchange.asmx</code>.</span>
+          </label>
           <label>Авторизация
             <select v-model="exchForm.ewsAuthType">
-              <option value="basic">Basic</option>
+              <option value="basic">Basic (логин + пароль, как на странице OWA)</option>
               <option value="ntlm">NTLM (Windows only)</option>
             </select>
           </label>
-          <label>Пользователь <input v-model="exchForm.username" placeholder="DOMAIN\\user" /></label>
-          <label>Пароль <input v-model="exchForm.password" type="password" autocomplete="new-password" /></label>
+          <label>Пользователь
+            <input v-model="exchForm.username" placeholder="DOMAIN\\user или user@almi-partner.ru" />
+            <span class="hint">Тот же логин, что вводите на странице OWA. Для домена Windows иногда нужен формат <code>DOMAIN\\user</code>.</span>
+          </label>
+          <label>Пароль
+            <input v-model="exchForm.password" type="password" autocomplete="new-password"
+              :placeholder="exchForm.id ? 'оставьте пустым, если не меняли' : 'тот же пароль, что на странице OWA'" />
+          </label>
         </template>
         <div class="filters-section">
           <div class="filters-title">Фильтры событий</div>
@@ -288,7 +305,10 @@ const oauthResult = ref<{ ok: boolean; message: string } | null>(null);
 const exchForm = reactive({
   id: null as number | null,
   name: '',
-  authMode: 'graph',
+  /** on-premise OWA-login mailboxes use EWS + Basic auth, not Graph OAuth */
+  authMode: 'ews',
+  /** OWA landing page URL, e.g. https://mail.almi-partner.ru/owa/ — used only to derive ewsUrl */
+  owaUrl: '',
   ewsUrl: '',
   ewsAuthType: 'basic',
   username: '',
@@ -319,6 +339,31 @@ function authTypeLabel(authType?: string): string {
  */
 function onInstanceTypeChange() {
   jiraForm.authType = jiraForm.instanceType === 'cloud' ? 'token' : 'server_basic';
+}
+
+/**
+ * Derives the EWS SOAP endpoint from an OWA landing-page URL.
+ * Handles the common on-premise pattern where OWA and EWS share the same host:
+ *   https://mail.almi-partner.ru/owa/            -> https://mail.almi-partner.ru/EWS/Exchange.asmx
+ *   https://mail.almi-partner.ru/owa              -> https://mail.almi-partner.ru/EWS/Exchange.asmx
+ *   https://mail.almi-partner.ru                  -> https://mail.almi-partner.ru/EWS/Exchange.asmx
+ */
+function deriveEwsUrlFromOwa(owaUrl: string): string | null {
+  const trimmed = owaUrl.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    return `${url.protocol}//${url.host}/EWS/Exchange.asmx`;
+  } catch {
+    return null;
+  }
+}
+
+function onOwaUrlChange() {
+  const derived = deriveEwsUrlFromOwa(exchForm.owaUrl);
+  if (derived) {
+    exchForm.ewsUrl = derived;
+  }
 }
 
 // ────────── Load ──────────
@@ -448,6 +493,7 @@ function openExchForm(p: ExchProfile | null) {
   if (p) {
     Object.assign(exchForm, {
       id: p.id, name: p.name, authMode: p.authMode,
+      owaUrl: '',
       ewsUrl: p.ewsUrl || '', ewsAuthType: p.ewsAuthType || 'basic',
       username: p.username, password: '',
       tenantId: p.tenantId || '', clientId: p.clientId || '',
@@ -458,7 +504,8 @@ function openExchForm(p: ExchProfile | null) {
     });
   } else {
     Object.assign(exchForm, {
-      id: null, name: '', authMode: 'graph',
+      id: null, name: '', authMode: 'ews',
+      owaUrl: '',
       ewsUrl: '', ewsAuthType: 'basic',
       username: '', password: '', tenantId: '', clientId: '',
       minEventMinutes: 0, excludeFreeBusy: true, excludeDeclined: true, isActive: false,
@@ -473,11 +520,18 @@ async function saveExchProfile() {
     exchFormError.value = 'Заполните название и пользователя.';
     return;
   }
+  if (exchForm.authMode === 'ews' && !exchForm.ewsUrl) {
+    exchFormError.value = 'Укажите EWS URL (или вставьте ссылку OWA — адрес подберётся автоматически).';
+    return;
+  }
   exchSaving.value = true;
   try {
-    let secretRef = `exchange_${exchForm.username}`;
+    const secretRef = `exchange_${exchForm.username}`;
+    // NOTE: реальная команда сохранения секрета — `save_secret` (см. secrets.rs).
+    // Пароль сохраняем не только для новых профилей, но и при редактировании,
+    // если пользователь ввёл новое значение — иначе смена пароля молча не применялась бы.
     if (exchForm.authMode === 'ews' && exchForm.password) {
-      await invoke('set_secret', { key: secretRef, value: exchForm.password });
+      await invoke('save_secret', { secretRef, value: exchForm.password });
     }
     await invoke('save_exchange_profile', {
       profile: {
