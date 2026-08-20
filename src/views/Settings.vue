@@ -2,7 +2,7 @@
   <div class="settings-screen">
     <h2>Настройки</h2>
 
-    <!-- ───────────── Exchange profiles list ───────────── -->
+    <!-- ──────────── Exchange profiles list ──────────── -->
     <section class="settings-card">
       <div class="card-header">
         <h3>Профили Exchange / Outlook</h3>
@@ -54,7 +54,7 @@
       </table>
     </section>
 
-    <!-- ───────────── Edit / create form ───────────── -->
+    <!-- ──────────── Edit / create form ──────────── -->
     <section v-if="editing" class="settings-card">
       <h3>{{ form.id == null ? 'Новый профиль' : 'Редактировать профиль' }}</h3>
 
@@ -65,7 +65,7 @@
         </label>
 
         <label>
-          Тип подключения
+          тип подключения
           <select v-model="form.authMode">
             <option value="graph">Microsoft Graph (рекомендуется)</option>
             <option value="ews">EWS / On-Prem Exchange</option>
@@ -109,7 +109,7 @@
           </label>
 
           <label>
-            Тип авторизации EWS
+            тип авторизации EWS
             <select v-model="form.ewsAuthType">
               <option value="basic">Basic</option>
               <option value="ntlm">NTLM (полный handshake через SSPI)</option>
@@ -156,10 +156,29 @@
       </p>
     </section>
 
-    <!-- ───────────── Global status (test / OAuth) ───────────── -->
+    <!-- ──────────── Global status (test / OAuth) ──────────── -->
     <p v-if="!editing && message" :class="['status-text', success ? 'status-text--ok' : 'status-text--error']" style="padding: 0 1.5rem">
       {{ message }}
     </p>
+
+    <!-- ──────────── Danger zone: сброс настроек ──────────── -->
+    <section class="settings-card danger-zone">
+      <div class="card-header">
+        <h3>Сброс настроек</h3>
+      </div>
+      <p class="muted">
+        Удалит все профили Jira и Exchange, сохранённые токены/пароли в системном
+        keychain и общие настройки, а затем запустит онбординг заново. Используйте,
+        если экран «Профили» или мастер логирования ведут себя некорректно после ошибки или
+        неудачного обновления.
+      </p>
+      <button class="btn btn--danger" :disabled="resetting" @click="resetAppData">
+        {{ resetting ? 'Сброс…' : 'Сбросить настройки и пройти онбординг заново' }}
+      </button>
+      <p v-if="resetMessage" :class="['status-text', resetSuccess ? 'status-text--ok' : 'status-text--error']">
+        {{ resetMessage }}
+      </p>
+    </section>
 
     <div class="policy-hint">
       <strong>Примечание для корпоративных Windows / Intune окружений:</strong>
@@ -172,16 +191,24 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
 import {
   tauriApi,
   profileToConnectionParams,
   type ExchangeProfileDto,
 } from '../lib/tauriApi';
+import { useSettingsStore } from '../store/settings';
+
+const settingsStore = useSettingsStore();
 
 const busy = ref(false);
 const message = ref('');
 const success = ref(false);
 const editing = ref(false);
+
+const resetting = ref(false);
+const resetMessage = ref('');
+const resetSuccess = ref(false);
 
 const profiles = ref<ExchangeProfileDto[]>([]);
 
@@ -330,6 +357,32 @@ async function testProfile(p: ExchangeProfileDto) {
     busy.value = false;
   }
 }
+
+/**
+ * Полный сброс локальных данных: вызывает Rust-команду `reset_app_data`
+ * (удаляет профили Jira/Exchange, settings и связанные секреты в OS keychain),
+ * сбрасывает флаг onboardingDone и перезагружает окно, чтобы мастер
+ * онбординга заработал с чистого листа.
+ */
+async function resetAppData() {
+  if (!confirm('Удалить все профили и настройки и пройти онбординг заново? Отменить нельзя.')) return;
+  resetting.value = true;
+  resetMessage.value = '';
+  try {
+    await invoke('reset_app_data');
+    localStorage.removeItem('jiratime-onboarding-done');
+    localStorage.removeItem('jiratime-work-schedule');
+    settingsStore.setOnboardingDone(false);
+    resetSuccess.value = true;
+    resetMessage.value = 'Данные сброшены. Перезагрузка приложения…';
+    setTimeout(() => window.location.reload(), 600);
+  } catch (err) {
+    resetSuccess.value = false;
+    resetMessage.value = String(err);
+  } finally {
+    resetting.value = false;
+  }
+}
 </script>
 
 <style scoped>
@@ -345,6 +398,13 @@ async function testProfile(p: ExchangeProfileDto) {
   border: 1px solid var(--color-border, #e5e7eb);
   border-radius: 0.75rem;
   padding: 1rem 1.25rem;
+}
+
+.danger-zone {
+  border-color: #f3c2c2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
 }
 
 .card-header {
@@ -444,7 +504,8 @@ async function testProfile(p: ExchangeProfileDto) {
 .btn--primary { background: var(--color-primary, #3366ff); color: #fff; }
 .btn--secondary { background: var(--color-surface-alt, #eef2f7); color: var(--color-text, #111827); }
 .btn--ghost { background: transparent; color: var(--color-primary, #3366ff); text-decoration: underline; padding-left: 0; padding-right: 0; }
-.btn--danger { background: transparent; color: #c92a2a; text-decoration: underline; padding-left: 0; padding-right: 0; }
+.btn--danger { background: #c92a2a; color: #fff; align-self: flex-start; }
+.btn--danger.btn--sm { background: transparent; color: #c92a2a; text-decoration: underline; padding-left: 0; padding-right: 0; }
 
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
