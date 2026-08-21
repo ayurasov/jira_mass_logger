@@ -61,7 +61,8 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="p in exchProfiles" :key="p.id" :class="{ active: p.isActive }">
+          <template v-for="p in exchProfiles" :key="p.id">
+          <tr :class="{ active: p.isActive }">
             <td>
               <button class="icon-btn" @click="setExchActive(p.id)">
                 {{ p.isActive ? '&#x1F7E2;' : '&#x26AA;' }}
@@ -72,9 +73,9 @@
             <td class="url-cell">{{ p.authMode === 'graph' ? (p.tenantId || '—') : (p.ewsUrl || '—') }}</td>
             <td>{{ p.username }}</td>
             <td>
-              <span v-if="exchTestResults[p.id] === 'ok'" class="status-ok">&#x2705; OK</span>
-              <span v-else-if="exchTestResults[p.id] === 'err'" class="status-err">&#x274C; Ошибка</span>
-              <span v-else-if="exchTestResults[p.id] === 'testing'" class="status-testing">⏳</span>
+              <span v-if="exchTestResults[p.id]?.status === 'ok'" class="status-ok">&#x2705; OK</span>
+              <span v-else-if="exchTestResults[p.id]?.status === 'err'" class="status-err" :title="exchTestResults[p.id]?.message">&#x274C; Ошибка</span>
+              <span v-else-if="exchTestResults[p.id]?.status === 'testing'" class="status-testing">⏳</span>
               <span v-else class="status-none">—</span>
             </td>
             <td class="actions-cell">
@@ -83,6 +84,10 @@
               <button class="icon-btn danger" title="Удалить" @click="deleteExchProfile(p.id)">&#x1F5D1;&#xFE0F;</button>
             </td>
           </tr>
+          <tr v-if="exchTestResults[p.id]?.status === 'err' && exchTestResults[p.id]?.message" class="err-row">
+            <td colspan="7" class="err-detail">{{ exchTestResults[p.id]?.message }}</td>
+          </tr>
+          </template>
         </tbody>
       </table>
     </section>
@@ -278,7 +283,7 @@ interface ExchProfile {
 const jiraProfiles = ref<JiraProfile[]>([]);
 const exchProfiles = ref<ExchProfile[]>([]);
 const jiraTestResults = reactive<Record<number, 'ok' | 'err' | 'testing' | undefined>>({});
-const exchTestResults = reactive<Record<number, 'ok' | 'err' | 'testing' | undefined>>({});
+const exchTestResults = reactive<Record<number, { status: 'ok' | 'err' | 'testing'; message?: string } | undefined>>({});
 
 // Jira form
 const jiraFormOpen = ref(false);
@@ -594,7 +599,7 @@ async function setExchActive(id: number) {
 }
 
 async function testExchProfile(p: ExchProfile) {
-  exchTestResults[p.id] = 'testing';
+  exchTestResults[p.id] = { status: 'testing' };
   try {
     const ok = await invoke<boolean>('test_exchange_connection', {
       params: {
@@ -611,9 +616,9 @@ async function testExchProfile(p: ExchProfile) {
         ewsAuthType: p.ewsAuthType || 'basic',
       },
     });
-    exchTestResults[p.id] = ok ? 'ok' : 'err';
-  } catch {
-    exchTestResults[p.id] = 'err';
+    exchTestResults[p.id] = ok ? { status: 'ok' } : { status: 'err', message: 'Сервер вернул false без объяснения' };
+  } catch (e: any) {
+    exchTestResults[p.id] = { status: 'err', message: String(e?.message ?? e) };
   }
 }
 
@@ -694,6 +699,11 @@ async function startOAuth() {
 .status-err { color: #dc2626; font-size: .85rem; }
 .status-testing { color: #888; font-size: .85rem; }
 .status-none { color: #bbb; font-size: .85rem; }
+.err-row td.err-detail {
+  color: #b91c1c; font-size: .8rem; line-height: 1.35;
+  background: #fef2f2; padding: .4rem .75rem;
+  border-bottom: 1px solid #fecaca; white-space: pre-wrap; word-break: break-word;
+}
 .empty-hint { color: #999; font-size: .9rem; padding: .5rem 0; }
 
 /* Modal */

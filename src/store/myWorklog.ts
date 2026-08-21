@@ -147,12 +147,14 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       if (!params) return;
       this.loading = true;
       try {
-        const watermarkKey = 'jiratime-worklog-watermark';
+        // Watermark привязан к профилю + версиям схемы. Если раньше «успешный» пустой
+        // sync записал 0 и потом фильтр отрезал все записи — новый watermark-v2
+        // заставит пересинхронизировать с since=0 при первом запуске после обновления.
+        const watermarkKey = `jiratime-worklog-watermark-v2-${params.baseUrl}-${params.email}-${params.instanceType}`;
         const since = force ? 0 : Number(localStorage.getItem(watermarkKey) ?? '0');
-        // Для Jira Server/ServerBasic нет эндпоинта типа worklog/updated — бэкенд идёт
-        // по fallback-списку issue keys. Берём его из уже известных кэшированных
-        // строк плюс текущий filters.issueKey, иначе первый запуск на Server
-        // ничего не найдёт (кэш пуст).
+        // issue_keys_for_fallback нужен только для старых Jira Server (<7.6) без bulk
+        // worklog/updated — бэкенд сам переключится на перебор по этим ключам, если
+        // bulk-эндпоинт недоступен. Для Cloud и современного Server он не используется.
         const cachedKeys = new Set(this.rows.map((r) => r.issueKey).filter(Boolean));
         if (this.filters.issueKey) cachedKeys.add(this.filters.issueKey);
         const issueKeysForFallback = Array.from(cachedKeys);

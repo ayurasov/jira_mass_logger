@@ -22,6 +22,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 
 use crate::bulk_wizard::WizardDb;
+use crate::jira_client::truncate_chars;
 
 // ─────────────────────────────────────────────────────────────────
 // Типы данных
@@ -714,8 +715,14 @@ pub async fn test_exchange_connection(
                 .ok_or("ews_url is required".to_string())?;
             let password = keyring::Entry::new("jiratime", &params.secret_ref)
                 .and_then(|e| e.get_password())
-                .map_err(|e| e.to_string())?;
-            let auth = basic_auth_header(&params.username, &password);
+                .map_err(|e| format!("Не удалось получить пароль из хранилища ключей (secret_ref={}): {e}. Если вы редактировали профиль и не ввели пароль — откройте профиль, введите пароль и сохраните.", params.secret_ref))?;
+            let auth_type = params.ews_auth_type.as_deref().unwrap_or("basic");
+            let auth_header = if auth_type == "ntlm" {
+                make_ntlm_negotiate_header(&params.username, &password)
+                    .map_err(|e| e.to_string())?
+            } else {
+                basic_auth_header(&params.username, &password)
+            };
             let client = reqwest::Client::builder()
                 .use_rustls_tls()
                 .build()
@@ -730,15 +737,29 @@ pub async fn test_exchange_connection(
     </GetFolder>
   </soap:Body>
 </soap:Envelope>"#;
-            client
+            let resp = client
                 .post(ews_url)
-                .header(AUTHORIZATION, &auth)
+                .header(AUTHORIZATION, &auth_header)
                 .header(CONTENT_TYPE, "text/xml; charset=utf-8")
                 .body(xml_body)
                 .send()
                 .await
-                .map(|r| r.status().is_success())
-                .map_err(|e| e.to_string())
+                .map_err(|e| format!("Сетевой запрос к EWS не удался: {e}. Проверьте URL и доступность сервера, а также корпоративный TLS-сертификат."))?;
+            let status = resp.status();
+            if !status.is_success() {
+                let www_auth = resp.headers().get("www-authenticate")
+                    .and_then(|h| h.to_str().ok())
+                    .map(|h| format!(" [WWW-Authenticate: {h}]"))
+                    .unwrap_or_default();
+                let body_snippet = truncate_chars(&resp.text().await.unwrap_or_default(), 300);
+                // 401/403 — почти всегда означает, что логин/пароль не подходят для Basic auth.
+                // On-prem Exchange часто требует DOMAIN\\user или sAMAccountName вместо email.
+                let hint = if status.as_u16() == 401 || status.as_u16() == 403 {
+                    " Возможная причина: для on-prem Exchange Basic-авторизация часто требует логин в формате DOMAIN\\пользователь или просто sAMAccountName (без @домена), а не email. Либо переключите авторизацию на NTLM."
+                } else { "" };
+                return Err(format!("EWS вернул HTTP {status}.{www_auth}{hint} Тело ответа: {body_snippet}"));
+            }
+            Ok(true)
         }
         _ => Err("Unknown auth_mode".to_string()),
     };
