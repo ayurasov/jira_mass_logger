@@ -110,6 +110,7 @@ export const useMyWorklogStore = defineStore('myWorklog', {
     },
     pendingConflict: null as { local: WorklogRow; remote: WorklogDto } | null,
     autoSyncTimer: null as ReturnType<typeof setInterval> | null,
+    fetchInfo: null as string | null, // сообщение о последней синхронизации (0 записей / ошибка)
   }),
   getters: {
     filteredRows(state): WorklogRow[] {
@@ -158,7 +159,17 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         const cachedKeys = new Set(this.rows.map((r) => r.issueKey).filter(Boolean));
         if (this.filters.issueKey) cachedKeys.add(this.filters.issueKey);
         const issueKeysForFallback = Array.from(cachedKeys);
-        const dtos = await tauriApi.getWorklogsSince(params, since, issueKeysForFallback);
+        // Передаём период из фильтров для JQL-fallback: если bulk worklog/updated
+        // вернёт 0 записей (частый случай на Jira Server 8.x), бэкенд поищет задачи
+        // через worklogAuthor=currentUser() AND worklogDate >= ... AND <= ...
+        const dateRange = this.filters.fromDate || this.filters.toDate
+          ? {
+              dateFrom: this.filters.fromDate || '1970-01-01',
+              dateTo: this.filters.toDate || new Date().toISOString().slice(0, 10),
+              issueFilter: this.filters.issueKey || undefined,
+            }
+          : undefined;
+        const dtos = await tauriApi.getWorklogsSince(params, since, issueKeysForFallback, dateRange);
         for (const dto of dtos) {
           const row = dtoToRow(dto);
           await tauriApi.upsertCachedWorklog(rowToCached(row));
@@ -167,6 +178,11 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         localStorage.setItem('jiratime-worklog-last-sync', new Date().toISOString());
         this.lastSyncedAt = new Date().toISOString();
         await this.loadFromCache();
+        this.fetchInfo = dtos.length === 0
+          ? 'Jira вернула 0 worklog за выбранный период. Проверьте период, фильтр и что записи существуют.'
+          : `Загружено ${dtos.length} записей из Jira.`;
+      } catch (e: any) {
+        this.fetchInfo = String(e?.message ?? e);
       } finally {
         this.loading = false;
       }

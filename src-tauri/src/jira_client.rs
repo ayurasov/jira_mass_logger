@@ -450,6 +450,18 @@ pub struct NewWorklogEntry {
     pub comment: Option<String>,
 }
 
+/// Диапазон дат для JQL-fallback (когда bulk worklog/updated возвращает пусто).
+/// Позволяет искать задачи через `worklogAuthor = currentUser() AND worklogDate >= ... AND <= ...`
+/// и потом забирать worklog по каждой задаче отдельно. Фронтенд передаёт
+/// выбранный пользователем период из фильтров таблицы.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorklogDateRange {
+    pub date_from: String, // YYYY-MM-DD
+    pub date_to: String,   // YYYY-MM-DD
+    pub issue_filter: Option<String>, // проект-ключ или ключ задачи (SRM, SRM-123)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BulkResultItem {
     pub issue_key: String,
@@ -715,6 +727,7 @@ pub async fn get_worklogs_since(
     params: JiraConnectionParams,
     since_epoch_millis: i64,
     issue_keys_for_fallback: Option<Vec<String>>,
+    date_range: Option<WorklogDateRange>,
 ) -> Result<Vec<WorklogDto>, String> {
     let ctx = init(&params).map_err(String::from)?;
 
@@ -775,6 +788,27 @@ pub async fn get_worklogs_since(
         }
     };
 
+    // Шаг 1.5. JQL-fallback: bulk worklog/updated часто возвращает пусто на Jira
+    // Server 8.x, даже когда записи существуют. Если bulk пуст и указан период —
+    // ищем задачи через JQL по worklogAuthor=currentUser() и забираем worklog по
+    // каждой задаче. Важно: это ДО раннего return Ok(empty) ниже.
+    if raw_worklogs.is_empty() && date_range.is_some() {
+        match fetch_worklogs_by_jql(&ctx, &params, &myself, date_range.as_ref().unwrap()).await {
+            Ok(jql_worklogs) if !jql_worklogs.is_empty() => return Ok(jql_worklogs),
+            Ok(_) => {
+                let dr = date_range.as_ref().unwrap();
+                return Err(format!(
+                    "Jira вернула 0 worklog за период {}..{}. Bulk worklog/updated пуст, JQL-fallback тоже ничего не нашёл. Проверьте: есть ли записи в этом периоде, правильный ли пользователь ({}), есть ли права на чтение worklog.",
+                    dr.date_from, dr.date_to, params.email
+                ));
+            }
+            Err(e) => {
+                // JQL-запрос завершился ошибкой (нет прав, 500, таймаут) — не прячем.
+                return Err(format!("Bulk worklog/updated пуст, JQL-fallback не удался: {e}"));
+            }
+        }
+    }
+
     if raw_worklogs.is_empty() {
         return Ok(Vec::new());
     }
@@ -819,6 +853,24 @@ pub async fn get_worklogs_since(
 
     // Шаг 4. Сборка DTO.
     let all = parse_worklogs_with_map(my_worklogs, &issue_map);
+
+    if !all.is_empty() {
+        return Ok(all);
+    }
+
+    // Шаг 5. JQL-fallback (старый путь — если bulk вернул записи, но ни одна не
+    // совпала с автором). На практике сейчас срабатывает шаг 1.5 выше.
+    if let Some(dr) = date_range.as_ref() {
+        let jql_worklogs = fetch_worklogs_by_jql(&ctx, &params, &myself, dr).await
+            .unwrap_or_else(|e| {
+                eprintln!("[jira_client] JQL-fallback не удался: {e}");
+                Vec::new()
+            });
+        if !jql_worklogs.is_empty() {
+            return Ok(jql_worklogs);
+        }
+    }
+
     Ok(all)
 }
 
@@ -903,6 +955,139 @@ async fn fetch_worklogs_by_issue_keys(
     }
     Ok(out)
 }
+
+/// JQL-fallback для Jira Server 8.x, где bulk worklog/updated может вернуть пусто
+/// даже при существующих записях. Ищем задачи через JQL:
+///   worklogAuthor = currentUser() AND worklogDate >= "date_from" AND worklogDate <= "date_to"
+/// (плюс project/issuekey-фильтр, если задан), затем забираем worklog по каждой
+/// задаче через issue/{key}/worklog и фильтруем по автору + датам локально.
+async fn fetch_worklogs_by_jql(
+    ctx: &AuthedClient,
+    params: &JiraConnectionParams,
+    myself: &MyselfInfo,
+    dr: &WorklogDateRange,
+) -> Result<Vec<WorklogDto>, String> {
+    let is_cloud = matches!(params.instance_type, JiraInstanceType::Cloud);
+    let candidates = if is_cloud {
+        Vec::new()
+    } else {
+        server_author_candidates(myself, &params.email)
+    };
+
+    // JQL-запрос: ищем задачи, где текущий пользователь логировал время в периоде.
+    // Пагинация по startAt (Jira Server возвращает по ~100 задач за раз).
+    let issue_clause = dr.issue_filter.as_deref().map(|f| {
+        // SRM-123 → issuekey = SRM-123; SRM → project = SRM (если есть дефис — задача).
+        if f.contains('-') {
+            format!("AND issuekey = \"{}\"", f.to_uppercase())
+        } else {
+            format!("AND project = {}", f.to_uppercase())
+        }
+    }).unwrap_or_default();
+    let jql = format!(
+        "worklogAuthor = currentUser() AND worklogDate >= \"{}\" AND worklogDate <= \"{}\" {}",
+        dr.date_from, dr.date_to, issue_clause
+    );
+    eprintln!("[jira_client] JQL-fallback: {}", jql);
+
+    let endpoint = url(params, "search");
+    let mut all_issues: Vec<Value> = Vec::new();
+    let mut start_at: i64 = 0;
+    loop {
+        let body = json!({
+            "jql": jql,
+            "fields": ["summary"],
+            "startAt": start_at,
+            "maxResults": 100,
+        });
+        let resp = send_with_retry(&ctx.client, || {
+            apply_auth(ctx.client.post(&endpoint), params, &ctx.token).json(&body)
+        }).await.map_err(String::from)?;
+        let search_result: Value = ensure_json_success(resp).await?;
+        let issues = search_result.get("issues").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let total = search_result.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+        all_issues.extend(issues);
+        start_at += 100;
+        if start_at >= total || all_issues.len() >= 1000 { break; }
+    }
+    eprintln!("[jira_client] JQL-fallback: найдено {} задач", all_issues.len());
+
+    let mut out: Vec<WorklogDto> = Vec::new();
+    for issue in &all_issues {
+        let issue_key = issue.get("key").and_then(|k| k.as_str()).unwrap_or("");
+        let summary = issue.get("fields").and_then(|f| f.get("summary")).and_then(|s| s.as_str()).unwrap_or("").to_string();
+        if issue_key.is_empty() { continue; }
+        let _ = summary; // summary зарезервирован для будущего UI
+
+        // Берём worklog по найденной задаче. Jira Server 8.x поддерживает
+        // пагинацию через startAt/maxResults (по умолчанию ~20–5000 в зависимости
+        // от версии). Перебираем все страницы.
+        let wl_endpoint = url(params, &format!("issue/{}/worklog", issue_key));
+        let mut wl_start_at: i64 = 0;
+        let mut all_worklogs: Vec<Value> = Vec::new();
+        loop {
+            let resp = match send_with_retry(&ctx.client, || {
+                apply_auth(ctx.client.get(&wl_endpoint), params, &ctx.token)
+                    .query(&[("startAt", wl_start_at.to_string()), ("maxResults", "5000".to_string())])
+            }).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[jira_client] JQL-fallback: не удалось получить worklog для {}: {}", issue_key, e);
+                    break;
+                }
+            };
+            let wl_body: Value = match ensure_json_success(resp).await {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("[jira_client] JQL-fallback: {} worklog error: {}", issue_key, e);
+                    break;
+                }
+            };
+            let worklogs = wl_body.get("worklogs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let wl_total = wl_body.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+            all_worklogs.extend(worklogs);
+            wl_start_at += 5000;
+            // Если сервер не поддерживает пагинацию (total=0 или нет), выходим после первой страницы.
+            if wl_total == 0 || wl_start_at >= wl_total || all_worklogs.len() as i64 >= wl_total { break; }
+        }
+        for v in &all_worklogs {
+            // Фильтр по автору (как в основном пути).
+            let author_matches = if is_cloud {
+                let aid = myself.account_id.as_deref().unwrap_or("");
+                cloud_author_matches(v, aid)
+            } else {
+                server_author_matches(v, &candidates)
+            };
+            if !author_matches { continue; }
+
+            // Фильтр по дате: started должен попадать в период.
+            let started = v.get("started").and_then(|x| x.as_str()).unwrap_or("");
+            if !is_started_in_range(started, &dr.date_from, &dr.date_to) { continue; }
+
+            let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("0").to_string();
+            let time_spent_seconds = v.get("timeSpentSeconds").and_then(|x| x.as_i64()).unwrap_or(0);
+            let comment = v.get("comment").map(|c| adf_to_plain_text(c));
+            let author = v.get("author").and_then(|a| a.get("displayName")).and_then(|d| d.as_str()).map(|s| s.to_string());
+            let updated = v.get("updated").and_then(|x| x.as_str()).map(|s| s.to_string());
+            out.push(WorklogDto {
+                id, issue_key: Some(issue_key.to_string()),
+                started: started.to_string(), time_spent_seconds, comment, author, updated,
+            });
+        }
+    }
+    eprintln!("[jira_client] JQL-fallback: собрано {} worklog", out.len());
+    Ok(out)
+}
+
+/// Проверяет, попадает ли Jira-дата started (формат 2024-01-15T10:00:00.000+0000)
+/// в диапазон date_from..date_to (формат YYYY-MM-DD).
+fn is_started_in_range(started: &str, date_from: &str, date_to: &str) -> bool {
+    // Берём первые 10 символов (YYYY-MM-DD) из started.
+    let started_date = started.get(..10).unwrap_or("");
+    if started_date.is_empty() { return true; } // если не смогли распарсить — пропускаем фильтр
+    started_date >= date_from && started_date <= date_to
+}
+
 /// Парсит worklog-объекты из Cloud-ответа `worklog/list`, заменяя numeric issueId
 /// на человекочитаемый issueKey через переданный HashMap.
 fn parse_worklogs_with_map(
@@ -1465,7 +1650,7 @@ mod tests {
 
         let params = test_params(server.uri(), JiraInstanceType::ServerBasic);
         // Главный момент: issue_keys_for_fallback = пустой список.
-        let out = get_worklogs_since(params, 0, Some(Vec::new())).await.expect("должен вернуть результат");
+        let out = get_worklogs_since(params, 0, Some(Vec::new()), None).await.expect("должен вернуть результат");
         // Только моя запись survived фильтр по автору.
         assert_eq!(out.len(), 1, "должна остаться только моя запись (чужая отфильтрована)");
         assert_eq!(out[0].issue_key.as_deref(), Some("PROJ-99"), "numeric issueId должен быть резольвнут в PROJ-99");
@@ -1499,10 +1684,75 @@ mod tests {
             .mount(&server).await;
 
         let params = test_params(server.uri(), JiraInstanceType::ServerBasic);
-        let result = get_worklogs_since(params, 0, Some(Vec::new())).await;
+        let result = get_worklogs_since(params, 0, Some(Vec::new()), None).await;
         assert!(result.is_err(), "403 не должен давать пустой Ok — должна быть ошибка");
         let err = result.unwrap_err();
         assert!(err.contains("403"), "сообщение должно содержать HTTP-код: {err}");
         assert!(!err.contains("fallback"), "403 не должен уходить в fallback (это не 404): {err}");
+    }
+
+    /// JQL-fallback: bulk worklog/updated вернул 200 + пусто → должен сработать
+    /// JQL-запрос /search → /issue/{key}/worklog и вернуть мои записи.
+    /// Воспроизводит главный сценарий Jira Server 8.x «соединение есть, часов нет».
+    #[tokio::test]
+    async fn get_worklogs_since_jql_fallback_when_bulk_empty() {
+        use wiremock::matchers::query_param;
+        if std::env::var("JIRATIME_TEST_SECRET_TEST_SECRET_REF").is_err() {
+            std::env::set_var("JIRATIME_TEST_SECRET_TEST_SECRET_REF", "dummy-pass");
+        }
+        let server = MockServer::start().await;
+
+        // /myself
+        Mock::given(method("GET")).and(path("/rest/api/2/myself"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "key": "yurasov.av", "name": "yurasov.av", "displayName": "Yurasov AV",
+                "emailAddress": "yurasov.av@almi-partner.ru",
+            })))
+            .mount(&server).await;
+
+        // /worklog/updated — 200, но пусто (главный баг Jira Server 8.x).
+        Mock::given(method("GET")).and(path("/rest/api/2/worklog/updated"))
+            .and(query_param("since", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "values": [], "lastPage": true,
+            })))
+            .mount(&server).await;
+
+        // /search — JQL нашёл 1 задачу с моим worklog.
+        Mock::given(method("POST")).and(path("/rest/api/2/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "issues": [
+                    { "key": "SRM-42", "fields": { "summary": "Интеграция" } },
+                ],
+            })))
+            .mount(&server).await;
+
+        // /issue/SRM-42/worklog — 1 моя запись в периоде + 1 чужая (отфильтруется).
+        Mock::given(method("GET")).and(path("/rest/api/2/issue/SRM-42/worklog"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "worklogs": [
+                    { "id": "9001", "started": "2026-06-15T10:00:00.000+0000",
+                      "timeSpentSeconds": 5400,
+                      "author": { "key": "yurasov.av", "name": "yurasov.av",
+                                  "displayName": "Yurasov AV",
+                                  "emailAddress": "yurasov.av@almi-partner.ru" } },
+                    { "id": "9002", "started": "2026-06-15T12:00:00.000+0000",
+                      "timeSpentSeconds": 3600,
+                      "author": { "key": "other.user", "displayName": "Other User" } },
+                ],
+            })))
+            .mount(&server).await;
+
+        let params = test_params(server.uri(), JiraInstanceType::ServerBasic);
+        let dr = WorklogDateRange {
+            date_from: "2026-06-01".to_string(),
+            date_to: "2026-06-30".to_string(),
+            issue_filter: Some("SRM".to_string()),
+        };
+        let out = get_worklogs_since(params, 0, Some(Vec::new()), Some(dr)).await
+            .expect("JQL-fallback должен вернуть записи");
+        assert_eq!(out.len(), 1, "только моя запись (чужая отфильтрована по автору)");
+        assert_eq!(out[0].issue_key.as_deref(), Some("SRM-42"));
+        assert_eq!(out[0].time_spent_seconds, 5400);
     }
 }

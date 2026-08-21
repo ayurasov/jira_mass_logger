@@ -217,8 +217,15 @@ export const tauriApi = {
   getWorklogById(params: JiraConnectionParams, issueKey: string, worklogId: string) {
     return invoke<WorklogDto>('get_worklog_by_id', { params, issueKey, worklogId });
   },
-  getWorklogsSince(params: JiraConnectionParams, sinceEpochMillis: number, issueKeysForFallback?: string[]) {
-    return invoke<WorklogDto[]>('get_worklogs_since', { params, sinceEpochMillis, issueKeysForFallback });
+  getWorklogsSince(
+    params: JiraConnectionParams,
+    sinceEpochMillis: number,
+    issueKeysForFallback?: string[],
+    dateRange?: { dateFrom: string; dateTo: string; issueFilter?: string },
+  ) {
+    return invoke<WorklogDto[]>('get_worklogs_since', {
+      params, sinceEpochMillis, issueKeysForFallback, dateRange,
+    });
   },
   addWorklog(params: JiraConnectionParams, issueKey: string, startedAt: string, timeSpentSeconds: number, comment?: string | null) {
     return invoke<string>('add_worklog', { params, issueKey, startedAt, timeSpentSeconds, comment });

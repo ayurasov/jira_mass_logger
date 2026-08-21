@@ -5,6 +5,8 @@
         <h1>Мой worklog</h1>
         <span v-if="!store.isOnline" class="badge badge--offline">Оффлайн</span>
         <span v-else-if="store.hasPendingSync" class="badge badge--pending">Синхронизация…</span>
+        <span v-else-if="store.fetchInfo && (store.fetchInfo.startsWith('Jira вернула 0') || store.fetchInfo.includes('не удался'))" class="badge badge--pending">Jira: 0 записей</span>
+        <span v-else-if="store.fetchInfo" class="badge badge--offline">Ошибка Jira</span>
         <span v-else class="badge badge--ok">Синхронизировано</span>
       </div>
       <div class="worklog-header__actions">
@@ -16,6 +18,9 @@
       </div>
     </header>
 
+    <div v-if="store.fetchInfo" class="fetch-info" :class="{ 'fetch-info--error': store.fetchInfo.startsWith('Jira вернула 0') || store.fetchInfo.includes('ошибк') }">
+      {{ store.fetchInfo }}
+    </div>
     <div v-if="openAutoSyncSettings" class="autosync-panel">
       <label class="toggle">
         <input type="checkbox" :checked="settings.autoSyncEnabled" @change="onToggleAutoSync" />

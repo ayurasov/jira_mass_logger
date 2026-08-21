@@ -482,25 +482,27 @@ fn parse_ews_finditem_response(xml: &str) -> Vec<EwsRawEvent> {
 
 async fn fetch_ews_events(
     ews_url: &str,
-    auth_header: &str,
+    auth_type: &str,
+    username: &str,
+    password: &str,
     date_from: &str,
     date_to: &str,
 ) -> Result<Vec<CalendarEventDto>> {
     let body = ews_find_item_body(date_from, date_to);
     let client = reqwest::Client::builder().use_rustls_tls().build()?;
-    let xml = client
-        .post(ews_url)
-        .header(AUTHORIZATION, auth_header)
-        .header(CONTENT_TYPE, "text/xml; charset=utf-8")
-        .body(body)
-        .send()
+    let resp = post_ews_request(&client, ews_url, &body, auth_type, username, password)
         .await
-        .context("EWS FindItem request")?
-        .error_for_status()
-        .context("EWS FindItem HTTP error")?
-        .text()
-        .await
-        .context("EWS response text")?;
+        .context("EWS FindItem request")?;
+    let status = resp.status();
+    if !status.is_success() {
+        let www_auth = resp.headers().get_all("www-authenticate").iter()
+            .filter_map(|h| h.to_str().ok())
+            .collect::<Vec<_>>().join(", ");
+        let body_snippet = truncate_chars(&resp.text().await.unwrap_or_default(), 300);
+        let body_part = if body_snippet.is_empty() { "(пустое)".to_string() } else { body_snippet };
+        bail!("EWS FindItem вернул HTTP {status} [WWW-Authenticate: {www_auth}]. Тело: {body_part}");
+    }
+    let xml = resp.text().await.context("EWS response text")?;
 
     let raw_events = parse_ews_finditem_response(&xml);
     let mut out = Vec::new();
@@ -717,47 +719,25 @@ pub async fn test_exchange_connection(
                 .and_then(|e| e.get_password())
                 .map_err(|e| format!("Не удалось получить пароль из хранилища ключей (secret_ref={}): {e}. Если вы редактировали профиль и не ввели пароль — откройте профиль, введите пароль и сохраните.", params.secret_ref))?;
             let auth_type = params.ews_auth_type.as_deref().unwrap_or("basic");
-            let auth_header = if auth_type == "ntlm" {
-                make_ntlm_negotiate_header(&params.username, &password)
-                    .map_err(|e| e.to_string())?
-            } else {
-                basic_auth_header(&params.username, &password)
-            };
             let client = reqwest::Client::builder()
                 .use_rustls_tls()
                 .build()
                 .map_err(|e| e.to_string())?;
-            let xml_body = r#"<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
-  <soap:Body>
-    <GetFolder xmlns="http://schemas.microsoft.com/exchange/services/2006/messages">
-      <FolderShape><t:BaseShape>Default</t:BaseShape></FolderShape>
-      <FolderIds><t:DistinguishedFolderId Id="calendar"/></FolderIds>
-    </GetFolder>
-  </soap:Body>
-</soap:Envelope>"#;
-            let resp = client
-                .post(ews_url)
-                .header(AUTHORIZATION, &auth_header)
-                .header(CONTENT_TYPE, "text/xml; charset=utf-8")
-                .body(xml_body)
-                .send()
+            let resp = post_ews_request(&client, ews_url, EWS_TEST_BODY, auth_type, &params.username, &password)
                 .await
-                .map_err(|e| format!("Сетевой запрос к EWS не удался: {e}. Проверьте URL и доступность сервера, а также корпоративный TLS-сертификат."))?;
+                .map_err(|e| format!("{e}. Проверьте URL, доступность сервера, логин/пароль и корпоративный TLS-сертификат."))?;
             let status = resp.status();
             if !status.is_success() {
-                let www_auth = resp.headers().get("www-authenticate")
-                    .and_then(|h| h.to_str().ok())
-                    .map(|h| format!(" [WWW-Authenticate: {h}]"))
-                    .unwrap_or_default();
+                let www_auth = resp.headers().get_all("www-authenticate").iter()
+                    .filter_map(|h| h.to_str().ok())
+                    .collect::<Vec<_>>().join(", ");
+                let www_auth = if www_auth.is_empty() { String::new() } else { format!(" [WWW-Authenticate: {www_auth}]") };
                 let body_snippet = truncate_chars(&resp.text().await.unwrap_or_default(), 300);
-                // 401/403 — почти всегда означает, что логин/пароль не подходят для Basic auth.
-                // On-prem Exchange часто требует DOMAIN\\user или sAMAccountName вместо email.
+                let body_part = if body_snippet.is_empty() { "(пустое)".to_string() } else { body_snippet };
                 let hint = if status.as_u16() == 401 || status.as_u16() == 403 {
-                    " Возможная причина: для on-prem Exchange Basic-авторизация часто требует логин в формате DOMAIN\\пользователь или просто sAMAccountName (без @домена), а не email. Либо переключите авторизацию на NTLM."
+                    " Проверьте логин/пароль. Для on-prem Exchange Basic требует DOMAIN\\пользователь или sAMAccountName; если сервер отвечает Negotiate — переключите авторизацию на NTLM."
                 } else { "" };
-                return Err(format!("EWS вернул HTTP {status}.{www_auth}{hint} Тело ответа: {body_snippet}"));
+                return Err(format!("EWS вернул HTTP {status}.{www_auth}{hint} Тело ответа: {body_part}"));
             }
             Ok(true)
         }
@@ -815,13 +795,7 @@ pub async fn get_calendar_events(
                 .and_then(|e| e.get_password())
                 .map_err(|e| e.to_string())?;
             let auth_type = params.ews_auth_type.as_deref().unwrap_or("basic");
-            let auth_header = if auth_type == "ntlm" {
-                make_ntlm_negotiate_header(&params.username, &password)
-                    .map_err(|e| e.to_string())?
-            } else {
-                basic_auth_header(&params.username, &password)
-            };
-            fetch_ews_events(ews_url, &auth_header, &date_from, &date_to)
+            fetch_ews_events(ews_url, auth_type, &params.username, &password, &date_from, &date_to)
                 .await
                 .map_err(|e| e.to_string())?
         }
@@ -997,18 +971,61 @@ pub async fn complete_graph_oauth_loopback(
 }
 
 // ─────────────────────────────────────────────────────────────────
-// NTLM negotiate (первый шаг Handshake)
+// EWS HTTP-запрос с поддержкой Basic и NTLM (полное рукопожатие)
 // ─────────────────────────────────────────────────────────────────
 
-#[cfg(target_os = "windows")]
-fn make_ntlm_negotiate_header(username: &str, password: &str) -> Result<String> {
+/// Тело EWS-запроса для проверки подключения (GetFolder calendar).
+const EWS_TEST_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <GetFolder xmlns="http://schemas.microsoft.com/exchange/services/2006/messages">
+      <FolderShape><t:BaseShape>Default</t:BaseShape></FolderShape>
+      <FolderIds><t:DistinguishedFolderId Id="calendar"/></FolderIds>
+    </GetFolder>
+  </soap:Body>
+</soap:Envelope>"#;
+
+/// Извлекает NTLM Type2 challenge из всех заголовков WWW-Authenticate.
+/// IIS может вернуть несколько заголовков (Negotiate, NTLM) — ищем тот, где есть токен.
+fn extract_ntlm_challenge(resp: &reqwest::Response) -> Result<Vec<u8>> {
+    let headers = resp.headers().get_all("www-authenticate");
+    for h in headers.iter() {
+        let Ok(s) = h.to_str() else { continue };
+        let s = s.trim();
+        // Поддерживаем оба префикса: "NTLM <b64>" и "Negotiate <b64>".
+        let b64 = s
+            .strip_prefix("NTLM ")
+            .or_else(|| s.strip_prefix("Negotiate "))
+            .unwrap_or("")
+            .trim();
+        if b64.is_empty() { continue }
+        if let Ok(bytes) = BASE64.decode(b64) {
+            return Ok(bytes);
+        }
+    }
+    bail!("Сервер вернул 401, но без NTLM-challenge в WWW-Authenticate — NTLM не поддерживается или требует Kerberos")
+}
+
+/// Полный NTLM-рукопожатие (Type1 → 401/Type2 → Type3 → 200) через sspi.
+/// sspi — чистый Rust, работает на любой платформе (не только Windows).
+async fn post_ews_ntlm(
+    client: &reqwest::Client,
+    ews_url: &str,
+    body: &str,
+    username: &str,
+    password: &str,
+) -> Result<reqwest::Response> {
     use sspi::{
         AuthIdentity, BufferType, ClientRequestFlags, CredentialUse,
         DataRepresentation, Ntlm, SecurityBuffer, Sspi, SspiImpl, Username,
     };
+
+    // Шаг 1. sspi: получаем credentials handle и генерируем Type1 (Negotiate).
     let mut ntlm = Ntlm::new();
     let identity = AuthIdentity {
-        username: Username::parse(username).map_err(|e| anyhow!("username: {e}"))?,
+        username: Username::parse(username)
+            .map_err(|e| anyhow!("NTLM: не удалось разобрать логин «{}»: {e}. Используйте DOMAIN\\пользователь", username))?,
         password: password.to_string().into(),
     };
     let mut acq = ntlm
@@ -1016,29 +1033,132 @@ fn make_ntlm_negotiate_header(username: &str, password: &str) -> Result<String> 
         .with_credential_use(CredentialUse::Outbound)
         .with_auth_data(&identity)
         .execute(&mut ntlm)
-        .map_err(|e| anyhow!("acq_cred: {e}"))?;
-    let mut output = vec![SecurityBuffer::new(Vec::new(), BufferType::Token)];
-    let mut builder = ntlm
-        .initialize_security_context()
-        .with_credentials_handle(&mut acq.credentials_handle)
-        .with_context_requirements(
-            ClientRequestFlags::CONFIDENTIALITY | ClientRequestFlags::ALLOCATE_MEMORY,
-        )
-        .with_target_data_representation(DataRepresentation::Native)
-        .with_output(&mut output);
-    ntlm.initialize_security_context_impl(&mut builder)
-        .map_err(|e| anyhow!("isc: {e}"))?
-        .resolve_to_result()
-        .map_err(|e| anyhow!("resolve: {e}"))?;
-    let token = output
-        .into_iter()
-        .next()
-        .map(|b| b.buffer)
-        .unwrap_or_default();
-    Ok(format!("NTLM {}", BASE64.encode(&token)))
+        .map_err(|e| anyhow!("NTLM: acquire_credentials_handle: {e}"))?;
+
+    let type1 = {
+        let mut output = vec![SecurityBuffer::new(Vec::new(), BufferType::Token)];
+        let mut builder = ntlm
+            .initialize_security_context()
+            .with_credentials_handle(&mut acq.credentials_handle)
+            .with_context_requirements(ClientRequestFlags::ALLOCATE_MEMORY)
+            .with_target_data_representation(DataRepresentation::Native)
+            .with_output(&mut output);
+        ntlm.initialize_security_context_impl(&mut builder)
+            .map_err(|e| anyhow!("NTLM: Type1: {e}"))?
+            .resolve_to_result()
+            .map_err(|e| anyhow!("NTLM: Type1 resolve: {e}"))?;
+        output.into_iter().next().map(|b| b.buffer).unwrap_or_default()
+    };
+
+    // Шаг 2. HTTP: отправляем Type1, ожидаем 401 с Type2 challenge.
+    // Полностью вычитываем тело первого ответа, чтобы соединение освободилось.
+    let resp1 = client
+        .post(ews_url)
+        .header(AUTHORIZATION, format!("NTLM {}", BASE64.encode(&type1)))
+        .header(CONTENT_TYPE, "text/xml; charset=utf-8")
+        .body(body.to_string())
+        .send()
+        .await
+        .context("NTLM: сетевой запрос Type1")?;
+    let status1 = resp1.status();
+    if status1.is_success() {
+        // Сервер принял Type1 без challenge (редко, но возможно).
+        return Ok(resp1);
+    }
+    if status1.as_u16() != 401 {
+        let body_text = truncate_chars(&resp1.text().await.unwrap_or_default(), 300);
+        bail!("NTLM: после Type1 сервер вернул HTTP {status1}, а не 401. Тело: {body_text}");
+    }
+    let type2 = extract_ntlm_challenge(&resp1)?;
+    // Вычитываем тело 401, чтобы освободить соединение для второго запроса.
+    let _ = resp1.text().await;
+
+    // Шаг 3. sspi: из Type2 challenge генерируем Type3 (Authenticate).
+    let type3 = {
+        let mut input = vec![SecurityBuffer::new(type2, BufferType::Token)];
+        let mut output = vec![SecurityBuffer::new(Vec::new(), BufferType::Token)];
+        let mut builder = ntlm
+            .initialize_security_context()
+            .with_credentials_handle(&mut acq.credentials_handle)
+            .with_context_requirements(ClientRequestFlags::ALLOCATE_MEMORY)
+            .with_target_data_representation(DataRepresentation::Native)
+            .with_input(&mut input)
+            .with_output(&mut output);
+        ntlm.initialize_security_context_impl(&mut builder)
+            .map_err(|e| anyhow!("NTLM: Type3: {e}"))?
+            .resolve_to_result()
+            .map_err(|e| anyhow!("NTLM: Type3 resolve: {e}"))?;
+        output.into_iter().next().map(|b| b.buffer).unwrap_or_default()
+    };
+
+    // Шаг 4. HTTP: отправляем Type3, ожидаем 200.
+    let resp2 = client
+        .post(ews_url)
+        .header(AUTHORIZATION, format!("NTLM {}", BASE64.encode(&type3)))
+        .header(CONTENT_TYPE, "text/xml; charset=utf-8")
+        .body(body.to_string())
+        .send()
+        .await
+        .context("NTLM: сетевой запрос Type3")?;
+
+    let status2 = resp2.status();
+    if status2.as_u16() == 401 {
+        // После корректного Type3 снова 401 — значит логин/пароль неверны,
+        // либо NTLM-реализация несовместима (reqwest не гарантирует connection pinning).
+        let www_auth = resp2
+            .headers()
+            .get_all("www-authenticate")
+            .iter()
+            .filter_map(|h| h.to_str().ok())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let msg = format!(
+            "NTLM-рукопожатие прошло (Type1→Type2→Type3), но сервер снова вернул 401. Скорее всего неверен логин/пароль. Проверьте DOMAIN\\пользователь и пароль. WWW-Authenticate: {www_auth}"
+        );
+        bail!("{msg}");
+    }
+    Ok(resp2)
 }
 
-#[cfg(not(target_os = "windows"))]
-fn make_ntlm_negotiate_header(_username: &str, _password: &str) -> Result<String> {
-    bail!("NTLM auth is only supported on Windows")
+/// Универсальный POST к EWS: Basic (один запрос) или NTLM (полное рукопожатие).
+/// Если auth_type = basic и сервер отвечает 401 с Negotiate/NTLM в WWW-Authenticate,
+/// автоматически пробуем NTLM один раз (пользователь мог не переключить тип).
+async fn post_ews_request(
+    client: &reqwest::Client,
+    ews_url: &str,
+    body: &str,
+    auth_type: &str,
+    username: &str,
+    password: &str,
+) -> Result<reqwest::Response> {
+    if auth_type == "ntlm" {
+        return post_ews_ntlm(client, ews_url, body, username, password).await;
+    }
+    // Basic auth.
+    let auth = basic_auth_header(username, password);
+    let resp = client
+        .post(ews_url)
+        .header(AUTHORIZATION, &auth)
+        .header(CONTENT_TYPE, "text/xml; charset=utf-8")
+        .body(body.to_string())
+        .send()
+        .await
+        .context("EWS: сетевой запрос")?;
+    let status = resp.status();
+    if status.as_u16() == 401 {
+        // Проверяем, не предложит ли сервер NTLM/Negotiate — если да, пробуем NTLM.
+        let offers_ntlm = resp
+            .headers()
+            .get_all("www-authenticate")
+            .iter()
+            .filter_map(|h| h.to_str().ok())
+            .any(|h| h.to_lowercase().contains("ntlm") || h.to_lowercase().contains("negotiate"));
+        if offers_ntlm {
+            // Вычитываем тело 401, чтобы освободить соединение.
+            let _ = resp.text().await;
+            eprintln!("[exchange] Basic → 401, сервер предлагает NTLM/Negotiate — пробую NTLM-рукопожатие");
+            return post_ews_ntlm(client, ews_url, body, username, password).await;
+        }
+    }
+    Ok(resp)
 }

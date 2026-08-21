@@ -69,7 +69,7 @@
               </button>
             </td>
             <td class="name-cell">{{ p.name }}</td>
-            <td><span class="badge" :class="p.authMode">{{ p.authMode === 'graph' ? 'Graph OAuth2' : 'EWS' }}</span></td>
+            <td><span class="badge" :class="p.authMode">{{ p.authMode === 'graph' ? 'Graph OAuth2' : ('EWS · ' + (p.ewsAuthType === 'ntlm' ? 'NTLM' : 'Basic')) }}</span></td>
             <td class="url-cell">{{ p.authMode === 'graph' ? (p.tenantId || '—') : (p.ewsUrl || '—') }}</td>
             <td>{{ p.username }}</td>
             <td>

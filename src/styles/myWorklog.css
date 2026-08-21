@@ -104,6 +104,14 @@
 
 .empty-state { text-align: center; padding: 2rem; color: var(--color-text-muted, #6b7280); }
 
+.fetch-info {
+  padding: 0.5rem 0.875rem; border-radius: 0.375rem; font-size: 0.85rem;
+  background: #f0f9ff; color: #075985; border: 1px solid #bae6fd;
+}
+.fetch-info--error {
+  background: #fef3f2; color: #b91c1c; border-color: #fecaca;
+}
+
 .btn { border: none; border-radius: 0.375rem; padding: 0.5rem 0.875rem; font-size: 0.875rem; cursor: pointer; font-weight: 600; }
 .btn--primary { background: var(--color-primary, #3366ff); color: #fff; }
 .btn--secondary { background: var(--color-surface-alt, #eef1f6); color: var(--color-text, #1f2430); }
