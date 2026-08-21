@@ -30,6 +30,16 @@ const router = createRouter({
           component: () => import('../views/BulkLogWizard.vue'),
         },
         {
+          path: 'calendar',
+          name: 'calendar',
+          component: () => import('../views/DayFromCalendar.vue'),
+        },
+        {
+          path: 'calendar/preview',
+          name: 'calendar-preview',
+          component: () => import('../views/DayBulkPreview.vue'),
+        },
+        {
           path: 'templates',
           name: 'templates',
           component: () => import('../views/Templates.vue'),

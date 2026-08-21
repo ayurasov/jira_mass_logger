@@ -49,6 +49,7 @@ pub struct ProxyConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JiraConnectionParams {
     pub base_url: String,
     pub email: String,

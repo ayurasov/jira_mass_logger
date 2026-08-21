@@ -75,7 +75,7 @@ async function logSingle(idx: number) {
 
 function goToBulkPreview() {
   store.buildBulkPreview();
-  router.push('/day-bulk-preview');
+  router.push('/calendar/preview');
 }
 
 const uncoveredHours = computed(() => (store.uncoveredSeconds / 3600).toFixed(1));

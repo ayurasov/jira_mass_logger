@@ -19,6 +19,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: 'dashboard', label: 'Дашборд', icon: '📊' },
   { name: 'worklog', label: 'Мой worklog', icon: '🗒️', hotkey: 'Ctrl+L' },
   { name: 'bulk', label: 'Массовое логирование', icon: '⚡', hotkey: 'Ctrl+N' },
+  { name: 'calendar', label: 'Календарь → Jira', icon: '📅', hotkey: 'Ctrl+K' },
   { name: 'templates', label: 'Шаблоны', icon: '📐' },
   { name: 'profiles', label: 'Профили', icon: '🔗' },
   { name: 'logs', label: 'Логи', icon: '🧾', hotkey: 'F1' },

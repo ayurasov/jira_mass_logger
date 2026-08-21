@@ -94,6 +94,102 @@ pub fn get_recent_issues(db: State<'_, WizardDb>) -> Result<Vec<RecentIssue>, St
 }
 
 // ────────────────────────────────────────────────────────────────
+// Шаблоны описаний worklog (Templates.vue: {date}, {week}, {issue}...)
+// ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TextTemplate {
+    #[serde(default)]
+    pub id: Option<i64>,
+    pub name: String,
+    pub text: String,
+    #[serde(default)]
+    pub is_pinned: bool,
+    #[serde(default)]
+    pub use_count: i64,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+#[tauri::command]
+pub fn save_template(db: State<'_, WizardDb>, template: TextTemplate) -> Result<i64, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS text_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            text TEXT NOT NULL,
+            is_pinned INTEGER NOT NULL DEFAULT 0,
+            use_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+    let pinned = if template.is_pinned { 1 } else { 0 };
+    match template.id {
+        Some(id) if id > 0 => {
+            conn.execute(
+                "UPDATE text_templates SET name=?1, text=?2, is_pinned=?3 WHERE id=?4",
+                params![template.name, template.text, pinned, id],
+            ).map_err(|e| e.to_string())?;
+            Ok(id)
+        }
+        _ => {
+            conn.execute(
+                "INSERT INTO text_templates (name, text, is_pinned) VALUES (?1, ?2, ?3)",
+                params![template.name, template.text, pinned],
+            ).map_err(|e| e.to_string())?;
+            Ok(conn.last_insert_rowid())
+        }
+    }
+}
+
+#[tauri::command]
+pub fn list_templates(db: State<'_, WizardDb>) -> Result<Vec<TextTemplate>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS text_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            text TEXT NOT NULL,
+            is_pinned INTEGER NOT NULL DEFAULT 0,
+            use_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, text, is_pinned, use_count, created_at FROM text_templates ORDER BY is_pinned DESC, use_count DESC, created_at DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| Ok(TextTemplate {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        text: row.get(2)?,
+        is_pinned: row.get::<_, i64>(3)? != 0,
+        use_count: row.get(4)?,
+        created_at: row.get(5)?,
+    })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_template(db: State<'_, WizardDb>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM text_templates WHERE id = ?1", params![id])
+        .map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn increment_template_usage(db: State<'_, WizardDb>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE text_templates SET use_count = use_count + 1 WHERE id = ?1",
+        params![id],
+    ).map(|_| ()).map_err(|e| e.to_string())
+}
+
+// ────────────────────────────────────────────────────────────────
 // Экспорт лога (JSON) на диск
 // ────────────────────────────────────────────────────────────────
 

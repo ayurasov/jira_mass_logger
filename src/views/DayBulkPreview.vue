@@ -10,7 +10,7 @@ const results = ref<{ issueKey: string; success: boolean; error?: string | null 
 const done = ref(false);
 
 onMounted(() => {
-  if (store.bulkPreview.length === 0) router.replace('/day-from-calendar');
+  if (store.bulkPreview.length === 0) router.replace('/calendar');
 });
 
 function fmtDuration(sec: number) {
@@ -86,7 +86,7 @@ async function submit() {
         <strong>{{ r.issueKey }}</strong>
         <span v-if="!r.success" class="err-msg">{{ r.error }}</span>
       </div>
-      <button @click="router.push('/day-from-calendar')" class="btn-back btn-done">
+      <button @click="router.push('/calendar')" class="btn-back btn-done">
         ← Вернуться к дню
       </button>
     </div>
