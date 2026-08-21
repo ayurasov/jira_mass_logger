@@ -31,6 +31,7 @@ pub enum NetStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncIndicator {
     pub net_status:    NetStatus,
     /// Количество элементов в pending-очереди

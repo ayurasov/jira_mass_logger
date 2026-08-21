@@ -54,6 +54,7 @@ impl<'a> TryFrom<&'a str> for SyncStatus {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncQueueItem {
     pub id: i64,
     pub row_key: String,
@@ -67,6 +68,7 @@ pub struct SyncQueueItem {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct CachedWorklogRow {
     pub row_key: String,
     pub worklog_id: Option<String>,

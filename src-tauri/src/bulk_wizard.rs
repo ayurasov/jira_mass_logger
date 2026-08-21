@@ -12,6 +12,7 @@ use tauri::{AppHandle, Manager, State};
 pub struct WizardDb(pub Arc<Mutex<Connection>>);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct WizardTemplate {
     pub id: Option<i64>,
     pub name: String,
@@ -76,6 +77,7 @@ pub fn set_issue_favorite(db: State<'_, WizardDb>, issue_key: String, is_favorit
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct RecentIssue { pub issue_key: String, pub summary: Option<String>, pub is_favorite: bool, pub last_used_at: String }
 
 #[tauri::command]

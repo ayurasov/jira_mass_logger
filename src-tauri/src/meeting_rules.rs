@@ -17,6 +17,7 @@ use tauri::State;
 use crate::bulk_wizard::WizardDb;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct MeetingMatchRule {
     pub id: Option<i64>,
     pub name: String,
@@ -29,6 +30,7 @@ pub struct MeetingMatchRule {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct MeetingIssueHistoryEntry {
     pub series_key: String,
     pub issue_key: String,
@@ -38,6 +40,7 @@ pub struct MeetingIssueHistoryEntry {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct MatchSuggestion {
     pub issue_key: Option<String>,
     pub issue_summary: Option<String>,

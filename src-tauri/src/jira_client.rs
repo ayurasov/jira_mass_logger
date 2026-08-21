@@ -419,6 +419,7 @@ pub fn format_started(instant_utc: DateTime<Utc>, timezone: &str) -> Result<Stri
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectDto {
     pub id: String,
     pub key: String,
@@ -426,6 +427,7 @@ pub struct ProjectDto {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct IssueDto {
     pub id: String,
     pub key: String,
@@ -433,6 +435,7 @@ pub struct IssueDto {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct WorklogDto {
     pub id: String,
     pub issue_key: Option<String>,
@@ -444,6 +447,7 @@ pub struct WorklogDto {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct NewWorklogEntry {
     pub issue_key: String,
     pub started_at: DateTime<Utc>,
@@ -464,6 +468,7 @@ pub struct WorklogDateRange {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct BulkResultItem {
     pub issue_key: String,
     pub success: bool,
@@ -1308,6 +1313,45 @@ mod tests {
     use super::*;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Smoke-test: ключевые DTO должны (де)сериализоваться в camelCase,
+    /// чтобы фронтенд получал issueKey / timeSpentSeconds, а не snake_case.
+    /// Ловит регрессии вида «забыли #[serde(rename_all = "camelCase")]».
+    #[test]
+    fn dto_serializes_camel_case() {
+        let wl = WorklogDto {
+            id: "1".to_string(),
+            issue_key: Some("SRM-42".to_string()),
+            started: "2026-08-21T10:00:00.000+0000".to_string(),
+            time_spent_seconds: 5400,
+            comment: Some("Разработка".to_string()),
+            author: Some("Yurasov AV".to_string()),
+            updated: None,
+        };
+        let json = serde_json::to_value(&wl).unwrap();
+        assert!(json.get("issueKey").is_some(), "WorklogDto должен сериализоваться в issueKey, не issue_key: {json}");
+        assert!(json.get("timeSpentSeconds").is_some(), "WorklogDto должен сериализоваться в timeSpentSeconds: {json}");
+        assert!(json.get("issue_key").is_none(), "snake_case не должен присутствовать: {json}");
+
+        // Обратная десериализация из camelCase.
+        let back: WorklogDto = serde_json::from_value(json).unwrap();
+        assert_eq!(back.issue_key.as_deref(), Some("SRM-42"));
+        assert_eq!(back.time_spent_seconds, 5400);
+    }
+
+    #[test]
+    fn cached_worklog_row_camel_case_roundtrip() {
+        let row_json = serde_json::json!({
+            "rowKey": "SRM-42|2026-08-21|1",
+            "issueKey": "SRM-42",
+            "started": "2026-08-21T10:00:00",
+            "timeSpentSeconds": 7200,
+        });
+        let row: crate::sync_queue::CachedWorklogRow = serde_json::from_value(row_json).unwrap();
+        assert_eq!(row.row_key, "SRM-42|2026-08-21|1");
+        assert_eq!(row.issue_key, "SRM-42");
+        assert_eq!(row.time_spent_seconds, 7200);
+    }
 
     #[test]
     fn text_to_adf_wraps_single_line_as_paragraph() {

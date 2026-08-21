@@ -363,6 +363,9 @@ fn ews_find_item_body(date_from: &str, date_to: &str) -> String {
   xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
   xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
   xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">
+  <soap:Header>
+    <t:RequestServerVersion Version="Exchange2010_SP2"/>
+  </soap:Header>
   <soap:Body>
     <m:FindItem Traversal="Shallow">
       <m:ItemShape>
@@ -372,12 +375,10 @@ fn ews_find_item_body(date_from: &str, date_to: &str) -> String {
           <t:FieldURI FieldURI="calendar:Start"/>
           <t:FieldURI FieldURI="calendar:End"/>
           <t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus"/>
-          <t:FieldURI FieldURI="calendar:MyResponseType"/>
           <t:FieldURI FieldURI="calendar:CalendarItemType"/>
-          <t:FieldURI FieldURI="calendar:RecurringMasterId"/>
         </t:AdditionalProperties>
       </m:ItemShape>
-      <m:CalendarView StartDate="{date_from}" EndDate="{date_to}" MaxEntriesReturned="500"/>
+      <m:CalendarView StartDate="{date_from}" EndDate="{date_to}" MaxEntriesReturned="1000"/>
       <m:ParentFolderIds>
         <t:DistinguishedFolderId Id="calendar"/>
       </m:ParentFolderIds>
@@ -490,7 +491,7 @@ async fn fetch_ews_events(
 ) -> Result<Vec<CalendarEventDto>> {
     let body = ews_find_item_body(date_from, date_to);
     let client = reqwest::Client::builder().use_rustls_tls().build()?;
-    let resp = post_ews_request(&client, ews_url, &body, auth_type, username, password)
+    let resp = post_ews_request(&client, ews_url, &body, "http://schemas.microsoft.com/exchange/services/2006/messages/FindItem", auth_type, username, password)
         .await
         .context("EWS FindItem request")?;
     let status = resp.status();
@@ -723,7 +724,7 @@ pub async fn test_exchange_connection(
                 .use_rustls_tls()
                 .build()
                 .map_err(|e| e.to_string())?;
-            let resp = post_ews_request(&client, ews_url, EWS_TEST_BODY, auth_type, &params.username, &password)
+            let resp = post_ews_request(&client, ews_url, EWS_TEST_BODY, "http://schemas.microsoft.com/exchange/services/2006/messages/GetFolder", auth_type, &params.username, &password)
                 .await
                 .map_err(|e| format!("{e}. Проверьте URL, доступность сервера, логин/пароль и корпоративный TLS-сертификат."))?;
             let status = resp.status();
@@ -1013,6 +1014,7 @@ async fn post_ews_ntlm(
     client: &reqwest::Client,
     ews_url: &str,
     body: &str,
+    soap_action: &str,
     username: &str,
     password: &str,
 ) -> Result<reqwest::Response> {
@@ -1056,6 +1058,7 @@ async fn post_ews_ntlm(
         .post(ews_url)
         .header(AUTHORIZATION, format!("NTLM {}", BASE64.encode(&type1)))
         .header(CONTENT_TYPE, "text/xml; charset=utf-8")
+        .header("SOAPAction", soap_action)
         .body(body.to_string())
         .send()
         .await
@@ -1096,6 +1099,7 @@ async fn post_ews_ntlm(
         .post(ews_url)
         .header(AUTHORIZATION, format!("NTLM {}", BASE64.encode(&type3)))
         .header(CONTENT_TYPE, "text/xml; charset=utf-8")
+        .header("SOAPAction", soap_action)
         .body(body.to_string())
         .send()
         .await
@@ -1127,12 +1131,13 @@ async fn post_ews_request(
     client: &reqwest::Client,
     ews_url: &str,
     body: &str,
+    soap_action: &str,
     auth_type: &str,
     username: &str,
     password: &str,
 ) -> Result<reqwest::Response> {
     if auth_type == "ntlm" {
-        return post_ews_ntlm(client, ews_url, body, username, password).await;
+        return post_ews_ntlm(client, ews_url, body, soap_action, username, password).await;
     }
     // Basic auth.
     let auth = basic_auth_header(username, password);
@@ -1140,6 +1145,7 @@ async fn post_ews_request(
         .post(ews_url)
         .header(AUTHORIZATION, &auth)
         .header(CONTENT_TYPE, "text/xml; charset=utf-8")
+        .header("SOAPAction", soap_action)
         .body(body.to_string())
         .send()
         .await
@@ -1157,7 +1163,7 @@ async fn post_ews_request(
             // Вычитываем тело 401, чтобы освободить соединение.
             let _ = resp.text().await;
             eprintln!("[exchange] Basic → 401, сервер предлагает NTLM/Negotiate — пробую NTLM-рукопожатие");
-            return post_ews_ntlm(client, ews_url, body, username, password).await;
+            return post_ews_ntlm(client, ews_url, body, soap_action, username, password).await;
         }
     }
     Ok(resp)
