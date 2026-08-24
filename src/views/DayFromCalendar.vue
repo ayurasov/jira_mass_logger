@@ -14,6 +14,16 @@ const jiraStore = useJiraProfilesStore();
 const selectedDate = ref(new Date().toISOString().slice(0, 10));
 const issueSearchMap = ref<Record<number, string>>({});
 const issueOptionsMap = ref<Record<number, { key: string; summary: string }[]>>({});
+let searchTimer: number | null = null;
+
+function fmtDateRu(iso: string): string {
+  const d = new Date(iso + 'T12:00:00');
+  return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'short' }).format(d);
+}
+
+function fmtHours(sec: number): string {
+  return (sec / 3600).toFixed(2);
+}
 
 onMounted(async () => {
   await jiraStore.ensureLoaded();
@@ -53,14 +63,22 @@ function timelineHeight(sec: number): number {
 
 async function searchIssues(idx: number, q: string) {
   issueSearchMap.value[idx] = q;
+  if (searchTimer) window.clearTimeout(searchTimer);
   if (q.length < 2) { issueOptionsMap.value[idx] = []; return; }
-  const params = jiraStore.activeConnectionParams;
-  if (!params) return;
-  const res = await tauriApi.getIssuesByJql(
-    params,
-    `text ~ "${q}" ORDER BY updated DESC`,
-  );
-  issueOptionsMap.value[idx] = res.map((i) => ({ key: i.key, summary: i.summary ?? '' }));
+  // Дебаунс 350мс — не перегружаем Jira на каждый символ
+  searchTimer = window.setTimeout(async () => {
+    const params = jiraStore.activeConnectionParams;
+    if (!params) return;
+    try {
+      const res = await tauriApi.getIssuesByJql(
+        params,
+        `text ~ "${q}" ORDER BY updated DESC`,
+      );
+      issueOptionsMap.value[idx] = res.map((i) => ({ key: i.key, summary: i.summary ?? '' }));
+    } catch {
+      issueOptionsMap.value[idx] = [];
+    }
+  }, 350);
 }
 
 function selectIssue(idx: number, key: string, summary: string) {
@@ -71,6 +89,26 @@ function selectIssue(idx: number, key: string, summary: string) {
 
 async function logSingle(idx: number) {
   await store.logSingleRow(idx);
+}
+
+function navigateDay(delta: number) {
+  const next = new Date(selectedDate.value + 'T12:00:00Z');
+  next.setUTCDate(next.getUTCDate() + delta);
+  const y = next.getUTCFullYear();
+  const m = String(next.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(next.getUTCDate()).padStart(2, '0');
+  selectedDate.value = `${y}-${m}-${d}`;
+  store.loadDay(selectedDate.value);
+}
+
+function goToday() {
+  selectedDate.value = new Date().toISOString().slice(0, 10);
+  store.loadDay(selectedDate.value);
+}
+
+function selectWeekDay(date: string) {
+  selectedDate.value = date;
+  store.loadDay(date);
 }
 
 function goToBulkPreview() {
@@ -87,6 +125,11 @@ const uncoveredHours = computed(() => (store.uncoveredSeconds / 3600).toFixed(1)
     <div class="day-header">
       <h2>📅 День из календаря</h2>
       <div class="day-controls">
+        <div class="day-nav">
+          <button @click="navigateDay(-1)" class="nav-btn" title="Предыдущий день">◀</button>
+          <button @click="goToday" class="nav-today" title="Сегодня">Сегодня</button>
+          <button @click="navigateDay(1)" class="nav-btn" title="Следующий день">▶</button>
+        </div>
         <input type="date" v-model="selectedDate"
           @change="store.loadDay(selectedDate)" class="date-picker" />
         <button @click="store.loadDay(selectedDate, true)" :disabled="store.loading" class="btn-refresh">
@@ -103,7 +146,40 @@ const uncoveredHours = computed(() => (store.uncoveredSeconds / 3600).toFixed(1)
       </div>
     </div>
 
-    <!-- Coverage indicator -->
+    <!-- Week summary panel -->
+    <div class="week-panel" v-if="store.weekSummary.length > 0">
+      <div class="week-panel__head">
+        <span class="week-panel__title">Неделя {{ store.weekStart }} — {{ store.weekEnd }}</span>
+        <span class="week-panel__total">Итого: {{ fmtHours(store.weekTotalSeconds) }} ч</span>
+      </div>
+      <div class="week-grid">
+        <button
+          v-for="day in store.weekSummary"
+          :key="day.date"
+          class="week-day"
+          :class="{ 'week-day--active': day.date === selectedDate, 'week-day--empty': day.items.length === 0 }"
+          @click="selectWeekDay(day.date)">
+          <span class="week-day__dow">{{ day.weekday.slice(0, 3) }}</span>
+          <span class="week-day__date">{{ fmtDateRu(day.date) }}</span>
+          <span class="week-day__hours" :class="{ zero: day.totalSeconds === 0 }">{{ fmtHours(day.totalSeconds) }} ч</span>
+          <span class="week-day__tasks" v-if="day.items.length > 0">
+            {{ day.items.length }} задач{{ day.items.length > 1 ? 'и' : 'а' }}
+          </span>
+          <span class="week-day__tasks week-day__tasks--empty" v-else>нет записей</span>
+        </button>
+      </div>
+      <!-- Detailed task list for selected day -->
+      <div class="week-tasks" v-if="store.weekSummary.find(d => d.date === selectedDate)?.items.length">
+        <h4>Залогировано за {{ fmtDateRu(selectedDate) }}:</h4>
+        <ul class="task-list">
+          <li v-for="(it, i) in store.weekSummary.find(d => d.date === selectedDate)?.items" :key="i" class="task-list__item">
+            <span class="task-list__key">{{ it.issueKey }}</span>
+            <span class="task-list__hours">{{ fmtHours(it.seconds) }} ч</span>
+            <span class="task-list__comment" v-if="it.comment">{{ it.comment }}</span>
+          </li>
+        </ul>
+      </div>
+    </div>
     <div class="coverage-bar"
       :class="{ ok: store.uncoveredSeconds === 0, warn: store.uncoveredSeconds > 0 }">
       <span>
@@ -226,7 +302,35 @@ const uncoveredHours = computed(() => (store.uncoveredSeconds / 3600).toFixed(1)
 <style scoped>
 .day-calendar { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .day-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-.day-controls { display: flex; gap: 8px; align-items: center; }
+.day-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.day-nav { display: flex; gap: 4px; align-items: center; }
+.nav-btn { width: 30px; height: 28px; border: 1px solid var(--border, #ddd); background: var(--bg-elev, #fff); border-radius: 4px; cursor: pointer; font-size: 12px; }
+.nav-btn:hover { background: var(--bg-hover, #f0f0f0); }
+.nav-today { height: 28px; padding: 0 10px; border: 1px solid var(--border, #ddd); background: var(--bg-elev, #fff); border-radius: 4px; cursor: pointer; font-size: 12px; }
+.nav-today:hover { background: var(--bg-hover, #f0f0f0); }
+
+.week-panel { background: var(--bg-elev, #fff); border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 12px; }
+.week-panel__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.week-panel__title { font-weight: 600; font-size: 13px; color: var(--text, #333); }
+.week-panel__total { font-size: 13px; color: var(--accent, #0891b2); font-weight: 600; }
+.week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.week-day { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; border: 1px solid var(--border, #e5e5e5); border-radius: 6px; background: var(--bg, #fafafa); cursor: pointer; transition: all 0.15s; }
+.week-day:hover { border-color: var(--accent, #0891b2); background: var(--bg-hover, #f0f7fa); }
+.week-day--active { border-color: var(--accent, #0891b2); background: var(--bg-hover, #e0f2fe); }
+.week-day--empty { opacity: 0.6; }
+.week-day__dow { font-size: 10px; color: var(--text-muted, #888); text-transform: uppercase; }
+.week-day__date { font-size: 13px; font-weight: 600; color: var(--text, #333); }
+.week-day__hours { font-size: 12px; font-weight: 600; color: var(--accent, #0891b2); }
+.week-day__hours.zero { color: var(--text-muted, #aaa); }
+.week-day__tasks { font-size: 10px; color: var(--text-muted, #888); }
+.week-day__tasks--empty { color: var(--text-faint, #ccc); }
+.week-tasks { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border, #eee); }
+.week-tasks h4 { margin: 0 0 6px; font-size: 12px; color: var(--text, #333); }
+.task-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.task-list__item { display: flex; gap: 8px; align-items: center; font-size: 12px; padding: 4px 6px; background: var(--bg, #f9f9f9); border-radius: 4px; }
+.task-list__key { font-weight: 700; color: var(--accent, #0891b2); min-width: 90px; }
+.task-list__hours { font-weight: 600; color: var(--text, #333); min-width: 60px; }
+.task-list__comment { color: var(--text-muted, #666); }
 .date-picker, .rounding-select { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border, #ddd); }
 .btn-refresh, .btn-bulk, .btn-log {
   padding: 4px 12px; border-radius: 4px; cursor: pointer;

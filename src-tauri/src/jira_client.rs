@@ -160,7 +160,8 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
 
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
-        .timeout(Duration::from_secs(30));
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(90));
 
     if params.accept_invalid_certs {
         eprintln!("[jira_client] TLS verification DISABLED (accept_invalid_certs=true)");

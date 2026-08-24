@@ -62,8 +62,7 @@
             <th>Дата</th>
             <th>дн</th>
             <th>Задача</th>
-            <th>Суть задачи</th>
-            <th class="col-hours">Со</th>
+            <th class="col-hours">Часы</th>
             <th>Описание</th>
             <th>Время старта</th>
             <th>Статус</th>
@@ -73,13 +72,13 @@
         <tbody>
           <template v-for="group in groupedByWeek" :key="group.week">
             <tr class="week-row">
-              <td colspan="4">Неделя {{ group.week }}</td>
+              <td colspan="3">Неделя {{ group.week }}</td>
               <td class="col-hours" :class="weekHoursClass(group.totalHours)">{{ group.totalHours.toFixed(2) }} ч</td>
               <td colspan="4"></td>
             </tr>
             <template v-for="dayGroup in group.days" :key="dayGroup.date">
               <tr class="day-row">
-                <td colspan="4">{{ formatDate(dayGroup.date) }}</td>
+                <td colspan="3">{{ formatDate(dayGroup.date) }}</td>
                 <td class="col-hours" :class="dayHoursClass(dayGroup.totalHours)">{{ dayGroup.totalHours.toFixed(2) }} ч</td>
                 <td colspan="4"></td>
               </tr>
@@ -143,7 +142,7 @@
             </template>
           </template>
           <tr v-if="groupedByWeek.length === 0">
-            <td colspan="9" class="empty-state">Нет записей за выбранный период</td>
+            <td colspan="8" class="empty-state">Нет записей за выбранный период</td>
           </tr>
         </tbody>
       </table>

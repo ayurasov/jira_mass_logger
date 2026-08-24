@@ -13,24 +13,24 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { Window as TauriWindow } from '@tauri-apps/api/window'
 
 interface SyncIndicatorData {
-  net_status: 'online' | 'offline' | 'syncing' | 'error'
-  pending_count: number
-  failed_count: number
-  last_error: string | null
+  netStatus: 'online' | 'offline' | 'syncing' | 'error'
+  pendingCount: number
+  failedCount: number
+  lastError: string | null
 }
 
 const data = ref<SyncIndicatorData>({
-  net_status: 'offline',
-  pending_count: 0,
-  failed_count: 0,
-  last_error: null,
+  netStatus: 'offline',
+  pendingCount: 0,
+  failedCount: 0,
+  lastError: null,
 })
 
 const showPopup = ref(false)
 let unlisten: UnlistenFn | null = null
 
 const icon = computed(() => {
-  switch (data.value.net_status) {
+  switch (data.value.netStatus) {
     case 'online':   return '\u2705'  // ✅
     case 'syncing':  return '\uD83D\uDD04'  // 🔄
     case 'offline':  return '\uD83D\uDFE5'  // 🟥
@@ -40,7 +40,7 @@ const icon = computed(() => {
 })
 
 const label = computed(() => {
-  switch (data.value.net_status) {
+  switch (data.value.netStatus) {
     case 'online':   return 'Онлайн'
     case 'syncing':  return 'Синхронизация…'
     case 'offline':  return 'Оффлайн'
@@ -83,17 +83,17 @@ onUnmounted(() => {
   <div class="sync-indicator" @click="showPopup = !showPopup">
     <span class="sync-icon" :title="label">{{ icon }}</span>
     <span class="sync-label">{{ label }}</span>
-    <span v-if="data.pending_count > 0" class="sync-badge">{{ data.pending_count }}</span>
+    <span v-if="data.pendingCount > 0" class="sync-badge">{{ data.pendingCount }}</span>
 
     <Teleport to="body">
       <div v-if="showPopup" class="sync-popup" @click.stop>
         <h4>Статус синхронизации</h4>
         <p>Сеть: <strong>{{ label }}</strong></p>
-        <p>Очередь: <strong>{{ data.pending_count }}</strong> ожидают</p>
-        <p v-if="data.failed_count > 0" class="sync-popup-error">
-          Ошибок: <strong>{{ data.failed_count }}</strong>
+        <p>Очередь: <strong>{{ data.pendingCount }}</strong> ожидают</p>
+        <p v-if="data.failedCount > 0" class="sync-popup-error">
+          Ошибок: <strong>{{ data.failedCount }}</strong>
         </p>
-        <p v-if="data.last_error" class="sync-popup-error-text">{{ data.last_error }}</p>
+        <p v-if="data.lastError" class="sync-popup-error-text">{{ data.lastError }}</p>
         <button class="sync-popup-close" @click="showPopup = false">×</button>
       </div>
     </Teleport>

@@ -107,11 +107,31 @@ pub struct TextTemplate {
     pub name: String,
     pub text: String,
     #[serde(default)]
+    pub issue_key: Option<String>,
+    #[serde(default)]
     pub is_pinned: bool,
     #[serde(default)]
     pub use_count: i64,
     #[serde(default)]
     pub created_at: Option<String>,
+}
+
+/// Добавляет колонку issue_key в text_templates, если её ещё нет.
+fn ensure_issue_key_column(conn: &rusqlite::Connection) -> Result<(), String> {
+    let has_col: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('text_templates') WHERE name='issue_key'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if has_col == 0 {
+        conn.execute(
+            "ALTER TABLE text_templates ADD COLUMN issue_key TEXT",
+            [],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -128,19 +148,20 @@ pub fn save_template(db: State<'_, WizardDb>, template: TextTemplate) -> Result<
         )",
         [],
     ).map_err(|e| e.to_string())?;
+    ensure_issue_key_column(&conn)?;
     let pinned = if template.is_pinned { 1 } else { 0 };
     match template.id {
         Some(id) if id > 0 => {
             conn.execute(
-                "UPDATE text_templates SET name=?1, text=?2, is_pinned=?3 WHERE id=?4",
-                params![template.name, template.text, pinned, id],
+                "UPDATE text_templates SET name=?1, text=?2, is_pinned=?3, issue_key=?4 WHERE id=?5",
+                params![template.name, template.text, pinned, template.issue_key, id],
             ).map_err(|e| e.to_string())?;
             Ok(id)
         }
         _ => {
             conn.execute(
-                "INSERT INTO text_templates (name, text, is_pinned) VALUES (?1, ?2, ?3)",
-                params![template.name, template.text, pinned],
+                "INSERT INTO text_templates (name, text, is_pinned, issue_key) VALUES (?1, ?2, ?3, ?4)",
+                params![template.name, template.text, pinned, template.issue_key],
             ).map_err(|e| e.to_string())?;
             Ok(conn.last_insert_rowid())
         }
@@ -161,16 +182,18 @@ pub fn list_templates(db: State<'_, WizardDb>) -> Result<Vec<TextTemplate>, Stri
         )",
         [],
     ).map_err(|e| e.to_string())?;
+    ensure_issue_key_column(&conn)?;
     let mut stmt = conn.prepare(
-        "SELECT id, name, text, is_pinned, use_count, created_at FROM text_templates ORDER BY is_pinned DESC, use_count DESC, created_at DESC"
+        "SELECT id, name, text, issue_key, is_pinned, use_count, created_at FROM text_templates ORDER BY is_pinned DESC, use_count DESC, created_at DESC"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |row| Ok(TextTemplate {
         id: row.get(0)?,
         name: row.get(1)?,
         text: row.get(2)?,
-        is_pinned: row.get::<_, i64>(3)? != 0,
-        use_count: row.get(4)?,
-        created_at: row.get(5)?,
+        issue_key: row.get(3)?,
+        is_pinned: row.get::<_, i64>(4)? != 0,
+        use_count: row.get(5)?,
+        created_at: row.get(6)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }

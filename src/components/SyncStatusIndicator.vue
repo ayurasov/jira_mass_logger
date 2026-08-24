@@ -15,17 +15,17 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 interface SyncIndicator {
-  net_status:    'online' | 'offline' | 'syncing' | 'error'
-  pending_count: number
-  failed_count:  number
-  last_error:    string | null
+  netStatus:    'online' | 'offline' | 'syncing' | 'error'
+  pendingCount: number
+  failedCount:  number
+  lastError:    string | null
 }
 
 const indicator = ref<SyncIndicator>({
-  net_status:    'offline',
-  pending_count: 0,
-  failed_count:  0,
-  last_error:    null,
+  netStatus:    'offline',
+  pendingCount: 0,
+  failedCount:  0,
+  lastError:    null,
 })
 
 const popupOpen = ref(false)
@@ -34,7 +34,7 @@ const syncing   = ref(false)
 let unlisten: UnlistenFn | null = null
 
 const statusIcon = computed(() => {
-  switch (indicator.value.net_status) {
+  switch (indicator.value.netStatus) {
     case 'online':  return '\u25CF'   // ●
     case 'offline': return '\u25CF'   // ●
     case 'syncing': return '\u21BB'   // ↻
@@ -44,21 +44,21 @@ const statusIcon = computed(() => {
 })
 
 const statusClass = computed(() => ({
-  'si-online':  indicator.value.net_status === 'online',
-  'si-offline': indicator.value.net_status === 'offline',
-  'si-syncing': indicator.value.net_status === 'syncing',
-  'si-error':   indicator.value.net_status === 'error',
+  'si-online':  indicator.value.netStatus === 'online',
+  'si-offline': indicator.value.netStatus === 'offline',
+  'si-syncing': indicator.value.netStatus === 'syncing',
+  'si-error':   indicator.value.netStatus === 'error',
 }))
 
 const tooltip = computed(() => {
-  const { net_status, pending_count, failed_count } = indicator.value
+  const { netStatus, pendingCount, failedCount } = indicator.value
   const lines: string[] = []
-  if (net_status === 'online')  lines.push('Сеть: Jira доступна')
-  if (net_status === 'offline') lines.push('Сеть: оффлайн')
-  if (net_status === 'syncing') lines.push('Синхронизация...')
-  if (net_status === 'error')   lines.push('Ошибка синхронизации')
-  if (pending_count > 0)        lines.push(`Очередь: ${pending_count} записей`)
-  if (failed_count > 0)         lines.push(`Ошибок: ${failed_count}`)
+  if (netStatus === 'online')  lines.push('Сеть: Jira доступна')
+  if (netStatus === 'offline') lines.push('Сеть: оффлайн')
+  if (netStatus === 'syncing') lines.push('Синхронизация...')
+  if (netStatus === 'error')   lines.push('Ошибка синхронизации')
+  if (pendingCount > 0)        lines.push(`Очередь: ${pendingCount} записей`)
+  if (failedCount > 0)         lines.push(`Ошибок: ${failedCount}`)
   return lines.join('\n')
 })
 
@@ -113,11 +113,11 @@ async function handleWindowFocus() {
       :aria-label="tooltip"
       @click="popupOpen = !popupOpen"
     >
-      <span class="si-icon" :class="{ 'si-spin': indicator.net_status === 'syncing' }">
+      <span class="si-icon" :class="{ 'si-spin': indicator.netStatus === 'syncing' }">
         {{ statusIcon }}
       </span>
-      <span v-if="indicator.pending_count > 0" class="si-badge">
-        {{ indicator.pending_count }}
+      <span v-if="indicator.pendingCount > 0" class="si-badge">
+        {{ indicator.pendingCount }}
       </span>
     </button>
 
@@ -133,29 +133,29 @@ async function handleWindowFocus() {
           <div class="si-row">
             <span class="si-label">Сеть:</span>
             <span :class="statusClass">
-              {{ indicator.net_status === 'online'  ? 'Онлайн'      :
-                 indicator.net_status === 'offline' ? 'Оффлайн'     :
-                 indicator.net_status === 'syncing' ? 'Синхронизация' :
+              {{ indicator.netStatus === 'online'  ? 'Онлайн'      :
+                 indicator.netStatus === 'offline' ? 'Оффлайн'     :
+                 indicator.netStatus === 'syncing' ? 'Синхронизация' :
                  'Ошибка' }}
             </span>
           </div>
           <div class="si-row">
             <span class="si-label">Очередь:</span>
-            <span>{{ indicator.pending_count }} записей</span>
+            <span>{{ indicator.pendingCount }} записей</span>
           </div>
-          <div v-if="indicator.failed_count > 0" class="si-row si-row--error">
+          <div v-if="indicator.failedCount > 0" class="si-row si-row--error">
             <span class="si-label">Ошибок:</span>
-            <span>{{ indicator.failed_count }}</span>
+            <span>{{ indicator.failedCount }}</span>
           </div>
-          <div v-if="indicator.last_error" class="si-error-text">
-            {{ indicator.last_error }}
+          <div v-if="indicator.lastError" class="si-error-text">
+            {{ indicator.lastError }}
           </div>
         </div>
 
         <div class="si-popup-footer">
           <button
             class="si-sync-btn"
-            :disabled="syncing || indicator.net_status === 'offline'"
+            :disabled="syncing || indicator.netStatus === 'offline'"
             @click="triggerSyncNow"
           >
             <span v-if="syncing">↻ Синхронизация...</span>

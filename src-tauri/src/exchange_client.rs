@@ -17,6 +17,18 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use rusqlite::{params, Connection};
+use std::time::Duration;
+
+/// Единый HTTP-клиент для EWS/OWA/Graph с щедрыми таймаутами
+/// (on-prem Exchange + корпоративная сеть могут быть медленными).
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .use_rustls_tls()
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(90))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
@@ -222,9 +234,7 @@ async fn fetch_graph_events(
     date_from: &str,
     date_to: &str,
 ) -> Result<Vec<CalendarEventDto>> {
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .build()?;
+    let client = build_http_client();
 
     let mut url = format!(
         "https://graph.microsoft.com/v1.0/me/calendarview\
@@ -490,7 +500,7 @@ async fn fetch_ews_events(
     date_to: &str,
 ) -> Result<Vec<CalendarEventDto>> {
     let body = ews_find_item_body(date_from, date_to);
-    let client = reqwest::Client::builder().use_rustls_tls().build()?;
+    let client = build_http_client();
     let resp = post_ews_request(&client, ews_url, &body, "http://schemas.microsoft.com/exchange/services/2006/messages/FindItem", auth_type, username, password)
         .await
         .context("EWS FindItem request")?;
@@ -720,10 +730,7 @@ pub async fn test_exchange_connection(
                 .and_then(|e| e.get_password())
                 .map_err(|e| format!("Не удалось получить пароль из хранилища ключей (secret_ref={}): {e}. Если вы редактировали профиль и не ввели пароль — откройте профиль, введите пароль и сохраните.", params.secret_ref))?;
             let auth_type = params.ews_auth_type.as_deref().unwrap_or("basic");
-            let client = reqwest::Client::builder()
-                .use_rustls_tls()
-                .build()
-                .map_err(|e| e.to_string())?;
+            let client = build_http_client();
             let resp = post_ews_request(&client, ews_url, EWS_TEST_BODY, "http://schemas.microsoft.com/exchange/services/2006/messages/GetFolder", auth_type, &params.username, &password)
                 .await
                 .map_err(|e| format!("{e}. Проверьте URL, доступность сервера, логин/пароль и корпоративный TLS-сертификат."))?;
@@ -929,7 +936,7 @@ pub async fn complete_graph_oauth_loopback(
         .map(|(_, v)| v.into_owned())
         .ok_or("OAuth redirect missing 'code' parameter")?;
 
-    let http_client = reqwest::Client::builder().use_rustls_tls().build().map_err(|e| e.to_string())?;
+    let http_client = build_http_client();
     let form = [
         ("client_id", ctx.client_id.as_str()),
         ("grant_type", "authorization_code"),

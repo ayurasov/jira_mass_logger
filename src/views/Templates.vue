@@ -29,6 +29,7 @@
       >
         <div class="tc-header">
           <span class="tc-name">{{ t.name }}</span>
+          <span v-if="t.issueKey" class="tc-issue">{{ t.issueKey }}</span>
           <span class="tc-uses">исп. {{ t.useCount ?? 0 }} раз</span>
           <div class="tc-actions">
             <button class="icon-btn" :title="t.isPinned ? 'Открепить' : 'Закрепить'" @click="togglePin(t)">
@@ -56,6 +57,10 @@
         <label>
           Название
           <input v-model="form.name" placeholder="Например: Разработка" />
+        </label>
+        <label>
+          Задача Jira (необязательно)
+          <input v-model="form.issueKey" placeholder="Например: SRM-123" />
         </label>
         <label>
           Текст шаблона
@@ -111,6 +116,7 @@ interface TemplateItem {
   id: number;
   name: string;
   text: string;
+  issueKey?: string | null;
   isPinned: boolean;
   useCount: number;
 }
@@ -133,6 +139,7 @@ const form = reactive({
   id: null as number | null,
   name: '',
   text: '',
+  issueKey: '' as string,
   isPinned: false,
 });
 
@@ -177,9 +184,9 @@ onMounted(loadTemplates);
 function openForm(t: TemplateItem | null) {
   formError.value = '';
   if (t) {
-    Object.assign(form, { id: t.id, name: t.name, text: t.text, isPinned: t.isPinned });
+    Object.assign(form, { id: t.id, name: t.name, text: t.text, issueKey: t.issueKey ?? '', isPinned: t.isPinned });
   } else {
-    Object.assign(form, { id: null, name: '', text: '', isPinned: false });
+    Object.assign(form, { id: null, name: '', text: '', issueKey: '', isPinned: false });
   }
   formOpen.value = true;
 }
@@ -197,6 +204,7 @@ async function saveTemplate() {
         id: form.id,
         name: form.name,
         text: form.text,
+        issueKey: form.issueKey.trim() || null,
         isPinned: form.isPinned,
       },
     });
@@ -266,6 +274,7 @@ function insertVar(token: string) {
 .template-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); }
 .tc-header { display: flex; align-items: center; gap: .5rem; }
 .tc-name { font-weight: 600; flex: 1; font-size: .95rem; }
+.tc-issue { font-size: .75rem; font-weight: 700; color: var(--accent, #0891b2); background: #e0f2fe; padding: 1px 6px; border-radius: 4px; }
 .tc-uses { font-size: .75rem; color: #aaa; white-space: nowrap; }
 .tc-actions { display: flex; gap: .1rem; }
 .tc-body { font-size: .87rem; }
