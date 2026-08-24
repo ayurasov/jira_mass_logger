@@ -91,7 +91,7 @@ onMounted(() => {
 .app-sidebar {
   display: flex;
   flex-direction: column;
-  width: 15rem;
+  width: 19rem;
   flex-shrink: 0;
   background: var(--card);
   border-right: 1px solid var(--border);
@@ -129,10 +129,11 @@ onMounted(() => {
 }
 
 .nav-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.6rem 0.65rem;
+  gap: 0.4rem;
+  padding: 0.55rem 0.55rem;
   border-radius: 0.75rem;
   color: var(--fg);
   white-space: nowrap;
@@ -148,29 +149,31 @@ onMounted(() => {
 
 .nav-icon {
   font-size: 1.1rem;
-  width: 1.5rem;
+  width: 1.25rem;
   text-align: center;
   flex-shrink: 0;
 }
 
 .nav-label {
-  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .nav-hotkey {
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   color: var(--muted);
   border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  padding: 0.1rem 0.35rem;
+  border-radius: 0.3rem;
+  padding: 0.08rem 0.25rem;
   font-family: 'Consolas', monospace;
   flex-shrink: 0;
+  justify-self: end;
 }
 
 .app-sidebar.collapsed .nav-item {
-  justify-content: center;
+  grid-template-columns: 1fr;
+  justify-items: center;
   padding: 0.6rem;
 }
 

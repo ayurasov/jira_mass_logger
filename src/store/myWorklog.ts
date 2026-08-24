@@ -170,6 +170,9 @@ export const useMyWorklogStore = defineStore('myWorklog', {
             }
           : undefined;
         const dtos = await tauriApi.getWorklogsSince(params, since, issueKeysForFallback, dateRange);
+        if (!Array.isArray(dtos)) {
+          throw new Error('Jira вернула некорректный ответ при загрузке worklog.');
+        }
         for (const dto of dtos) {
           const row = dtoToRow(dto);
           await tauriApi.upsertCachedWorklog(rowToCached(row));

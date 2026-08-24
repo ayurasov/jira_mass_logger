@@ -116,7 +116,7 @@ function goToBulkPreview() {
   router.push('/calendar/preview');
 }
 
-const uncoveredHours = computed(() => (store.uncoveredSeconds / 3600).toFixed(1));
+const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
 </script>
 
 <template>
@@ -346,15 +346,15 @@ const uncoveredHours = computed(() => (store.uncoveredSeconds / 3600).toFixed(1)
 .coverage-bar.ok   { background: #d4edda; }
 
 .calendar-layout { display: grid; grid-template-columns: 80px 1fr; gap: 12px; }
-.timeline-col { position: relative; height: 600px; border-right: 1px solid var(--border, #ddd); }
+.timeline-col { position: relative; height: 600px; border-right: 1px solid var(--border, #ddd); width: 80px; }
 .timeline-axis { position: relative; height: 100%; }
 .timeline-hour {
-  position: absolute; font-size: 10px; color: #888; right: 4px;
+  position: absolute; font-size: 10px; color: #888; left: 4px;
   transform: translateY(-50%); white-space: nowrap;
 }
 .timeline-events { position: absolute; inset: 0; }
 .timeline-block {
-  position: absolute; left: 2px; right: 2px;
+  position: absolute; left: 34px; right: 4px;
   background: #4c9aff33; border-left: 3px solid #4c9aff;
   padding: 2px 4px; font-size: 10px; overflow: hidden;
   border-radius: 2px; cursor: default;
@@ -399,7 +399,7 @@ const uncoveredHours = computed(() => (store.uncoveredSeconds / 3600).toFixed(1)
   font-size: 12px; flex: 1; min-width: 180px;
 }
 
-.row-actions { display: flex; align-items: center; gap: 8px; }
+.row-actions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 .row-error { color: #dc2626; font-size: 11px; }
 .loading, .empty { color: #888; padding: 24px; text-align: center; }
 .error { color: #dc2626; padding: 8px 12px; background: #fee2e2; border-radius: 4px; }

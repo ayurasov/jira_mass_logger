@@ -57,14 +57,24 @@
       @wheel="onWheel"
     >
       <table class="worklog-table">
+        <colgroup>
+          <col style="width: 7rem" />
+          <col style="width: 3rem" />
+          <col style="min-width: 12rem" />
+          <col style="width: 5rem" />
+          <col style="min-width: 10rem" />
+          <col style="width: 6rem" />
+          <col style="width: 5rem" />
+          <col style="width: 4rem" />
+        </colgroup>
         <thead>
           <tr>
             <th>Дата</th>
-            <th>дн</th>
+            <th>Дн.</th>
             <th>Задача</th>
             <th class="col-hours">Часы</th>
             <th>Описание</th>
-            <th>Время старта</th>
+            <th class="col-start">Старт</th>
             <th>Статус</th>
             <th></th>
           </tr>
@@ -72,15 +82,19 @@
         <tbody>
           <template v-for="group in groupedByWeek" :key="group.week">
             <tr class="week-row">
-              <td colspan="3">Неделя {{ group.week }}</td>
-              <td class="col-hours" :class="weekHoursClass(group.totalHours)">{{ group.totalHours.toFixed(2) }} ч</td>
-              <td colspan="4"></td>
+              <td colspan="7" class="group-label">
+                <span>Неделя {{ group.week }}</span>
+                <span class="group-total" :class="weekHoursClass(group.totalHours)">{{ group.totalHours.toFixed(2) }} ч</span>
+              </td>
+              <td></td>
             </tr>
             <template v-for="dayGroup in group.days" :key="dayGroup.date">
               <tr class="day-row">
-                <td colspan="3">{{ formatDate(dayGroup.date) }}</td>
-                <td class="col-hours" :class="dayHoursClass(dayGroup.totalHours)">{{ dayGroup.totalHours.toFixed(2) }} ч</td>
-                <td colspan="4"></td>
+                <td colspan="7" class="group-label">
+                  <span>{{ formatDate(dayGroup.date) }}</span>
+                  <span class="group-total" :class="dayHoursClass(dayGroup.totalHours)">{{ dayGroup.totalHours.toFixed(2) }} ч</span>
+                </td>
+                <td></td>
               </tr>
               <tr v-for="row in dayGroup.rows" :key="row.rowKey" class="worklog-row">
                 <td>{{ formatDate(row.date) }}</td>
