@@ -9,23 +9,27 @@ export interface PreviewRow { id: string; date: string; weekday: string; hours: 
 export interface BulkWizardConfigSnapshot { issueKey: string; issueSummary?: string | null; periodFrom: string; periodTo: string; presetId: string; weekdayFilter: WeekdayFilter; excludeHolidays: boolean; hoursPerDay: number; descriptionTemplate: string; startTime: string; }
 let searchTimer: number | null = null;
 
-/** Возвращает Jira-строку started в локальной таймзоне (24-часовой формат + смещение),
- *  а не UTC — иначе, например, 16:00 по Москве уезжает в Jira как 19:00. */
+/** Собирает Jira-строку started из даты+времени, как они буквально введены пользователем
+ *  (локальное время в таймзоне из настроек), без двойного сдвига:
+ *  часы/минуты из timeHHMM подставляются в итоовую строку как есть (09:00 → "09:00"),
+ *  а сама таймзона только поставляется рядом как offset (+HH:MM), без пересчёта самого времени.
+ *  Раньше тут была ошибка: введённое время сначала трактовалось как UTC, а потом к нему
+ *  ещё раз добавлялся сдвиг таймзоны, из-за чего 09:00 в параметрах становилось 12:00 в предпросмотре (при MSK, UTC+3). */
 function toJiraStartedLocal(dateIso: string, timeHHMM: string, timezone: string): string {
   const [year, month, day] = dateIso.split('-').map(Number);
   const [hours, minutes] = timeHHMM.split(':').map(Number);
-  const dtUtc = new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1, hours ?? 0, minutes ?? 0, 0));
-  const offsetMs = getTimezoneOffsetMs(dtUtc, timezone);
-  const localMs = dtUtc.getTime() + offsetMs;
-  const local = new Date(localMs);
+  // Приблизительная метка для расчёта смещения таймзоны на эту дату (DST учитывается корректно,
+  // т.к. offset считается для конкретного календарного дня, а не "сейчас").
+  const approxUtcForOffset = new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1, hours ?? 0, minutes ?? 0, 0));
+  const offsetMs = getTimezoneOffsetMs(approxUtcForOffset, timezone);
   const pad = (n: number, w = 2) => String(n).padStart(w, '0');
   const sign = offsetMs >= 0 ? '+' : '-';
   const absMin = Math.abs(offsetMs) / 60000;
   const hh = pad(Math.floor(absMin / 60));
   const mm = pad(absMin % 60);
   return (
-    `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}` +
-    `T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}.000` +
+    `${pad(year, 4)}-${pad(month ?? 1)}-${pad(day ?? 1)}` +
+    `T${pad(hours ?? 0)}:${pad(minutes ?? 0)}:00.000` +
     `${sign}${hh}${mm}`
   );
 }
@@ -142,7 +146,8 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
     },
     updatePreviewRow(id: string, patch: Partial<PreviewRow>) { const row = this.previewRows.find((item) => item.id === id); if (row) Object.assign(row, patch); },
     /** Правка времени старта строки предпросмотра из <input type="datetime-local">:
-     *  собирает Jira-строку в локальной таймзоне (24ч + оффсет), а не в UTC. */
+     *  собирает Jira-строку из введённого локального времени как есть (без пересчёта в UTC),
+     *  добавляя только смещение таймзоны как offset. */
     setPreviewRowStartedAtLocal(id: string, datetimeLocalValue: string) {
       const row = this.previewRows.find((item) => item.id === id);
       if (!row || !datetimeLocalValue) return;
