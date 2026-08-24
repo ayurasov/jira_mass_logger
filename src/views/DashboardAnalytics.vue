@@ -6,6 +6,7 @@ import BreakdownChart from '../components/dashboard/BreakdownChart.vue';
 import WorklogHeatmap from '../components/dashboard/WorklogHeatmap.vue';
 import MissingDaysList from '../components/dashboard/MissingDaysList.vue';
 import BulkSavingMetric from '../components/dashboard/BulkSavingMetric.vue';
+import TopTasksList from '../components/dashboard/TopTasksList.vue';
 
 const store = useAnalyticsStore();
 
@@ -61,11 +62,12 @@ onMounted(async () => {
         <!-- 3. Calendar heatmap — последние 3 месяца -->
         <WorklogHeatmap class="span-full" />
 
-        <!-- 4. Дни с недозаполненным worklog -->
-        <MissingDaysList />
-
-        <!-- 5. Метрика экономии времени -->
-        <BulkSavingMetric />
+        <!-- Ряд из трёх виджетов на всю ширину -->
+        <div class="widgets-row">
+          <MissingDaysList />
+          <TopTasksList />
+          <BulkSavingMetric />
+        </div>
       </div>
     </template>
 

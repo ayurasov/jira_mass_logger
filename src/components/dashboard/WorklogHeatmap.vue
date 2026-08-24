@@ -3,9 +3,9 @@
     <div class="dash-card-header">
       <span class="dash-card-title">Заполненность worklog &mdash; 3 месяца</span>
       <div class="heatmap-legend">
-        <span class="legend-label">меньше</span>
+        <span class="legend-label">проблема</span>
         <span v-for="l in [0,1,2,3,4]" :key="l" class="legend-cell" :data-level="l"></span>
-        <span class="legend-label">больше</span>
+        <span class="legend-label">норма</span>
       </div>
     </div>
     <div class="heatmap-scroll-wrap">
@@ -15,25 +15,38 @@
           <span class="weekday-spacer"></span>
           <span v-for="d in weekdayLabels" :key="d">{{ d }}</span>
         </div>
-        <!-- колонки по неделям + шапка с номером недели -->
-        <div class="heatmap-weeks">
-          <div v-for="(week, wi) in weeks" :key="wi" class="heatmap-week">
+        <!-- колонки по неделям + шапка с номером недели и месяцами сверху -->
+        <div class="heatmap-weeks-wrap">
+          <div class="heatmap-months">
             <button
-              v-if="weekMeta[wi]"
-              class="heatmap-week-num"
-              :class="'heatmap-week-num--' + weekMeta[wi].level"
-              :title="`Неделя ${weekMeta[wi].label}: ${weekMeta[wi].hours.toFixed(1)} ч — открыть в worklog`"
-              @click="goToWeek(weekMeta[wi].from, weekMeta[wi].to)"
-            >{{ weekMeta[wi].short }}</button>
-            <div
-              v-for="(cell, ci) in week"
-              :key="cell ? cell.date : wi + '-' + ci"
-              class="heatmap-cell"
-              :class="{ 'heatmap-cell--clickable': !!cell, 'heatmap-cell--weekend': cell && isWeekend(cell.date) }"
-              :data-level="cell ? cell.level : -1"
-              :title="cell ? `${cell.date}: ${cell.hours} ч — открыть в worklog` : ''"
-              @click="cell ? goToWorklog(cell.date) : null"
-            >{{ cell && cell.hours > 0 ? cell.hours.toFixed(1) : '' }}</div>
+              v-for="(m, mi) in months"
+              :key="mi"
+              class="heatmap-month"
+              :class="'heatmap-month--' + m.level"
+              :style="{ '--mw': m.weeks }"
+              :title="`${m.label}: ${m.hours.toFixed(1)} ч из ${m.target} ч — открыть в worklog`"
+              @click="goToWeek(m.from, m.to)"
+            >{{ m.label }}</button>
+          </div>
+          <div class="heatmap-weeks">
+            <div v-for="(week, wi) in weeks" :key="wi" class="heatmap-week">
+              <button
+                v-if="weekMeta[wi]"
+                class="heatmap-week-num"
+                :class="'heatmap-week-num--' + weekMeta[wi].level"
+                :title="`Неделя ${weekMeta[wi].label} (${weekMeta[wi].from} … ${weekMeta[wi].to}): ${weekMeta[wi].hours.toFixed(1)} ч — открыть в worklog`"
+                @click="goToWeek(weekMeta[wi].from, weekMeta[wi].to)"
+              >{{ weekMeta[wi].short }}</button>
+              <div
+                v-for="(cell, ci) in week"
+                :key="cell ? cell.date : wi + '-' + ci"
+                class="heatmap-cell"
+                :class="{ 'heatmap-cell--clickable': !!cell, 'heatmap-cell--weekend': cell && isWeekend(cell.date) }"
+                :data-level="cell ? cell.level : -1"
+                :title="cell ? `${cell.date}: ${cell.hours} ч — открыть в worklog` : ''"
+                @click="cell ? goToWorklog(cell.date) : null"
+              >{{ cell && cell.hours > 0 ? cell.hours.toFixed(1) : '' }}</div>
+            </div>
           </div>
         </div>
       </div>
@@ -109,9 +122,40 @@ const weekMeta = computed(() => {
     const iso = first.date.slice(0, 4) + '-W' + isoWeekNum(first.date);
     const ratio = hours / target;
     const level: 0 | 1 | 2 | 3 | 4 = hours <= 0 ? 0 : ratio < 0.5 ? 1 : ratio < 0.8 ? 2 : ratio < 1.0 ? 3 : 4;
-    return { label: iso, short: iso.split('-W')[1], from, to, hours, level };
+    return { label: iso, short: 'w' + iso.split('-W')[1], from, to, hours, level };
   });
 });
+
+// Месяцы над неделями: группируем последовательные колонки-недели по месяцу.
+// Каждый месяц — кнопка шириной во все свои недели, окрашенная по качеству
+// заполнения (проблема → норма), кликабельная → переход в worklog на диапазон.
+const months = computed(() => {
+  const out: { label: string; weeks: number; from: string; to: string; hours: number; target: number; level: 0 | 1 | 2 | 3 | 4 }[] = [];
+  const meta = weekMeta.value;
+  let cur: { label: string; weeks: number; from: string; to: string; hours: number; target: number } | null = null;
+  const fmt = new Intl.DateTimeFormat('ru-RU', { month: 'short' });
+  for (let i = 0; i < meta.length; i++) {
+    const w = meta[i];
+    if (!w) continue;
+    const monthKey = new Date(w.from).getMonth();
+    if (!cur || new Date(cur.from).getMonth() !== monthKey) {
+      if (cur) out.push(finalizeMonth(cur));
+      cur = { label: fmt.format(new Date(w.from)).replace('.', ''), weeks: 0, from: w.from, to: w.to, hours: 0, target: 0 };
+    }
+    cur.weeks++;
+    cur.to = w.to;
+    cur.hours += w.hours;
+    cur.target += 40; // 5 раб.дн × 8ч
+  }
+  if (cur) out.push(finalizeMonth(cur));
+  return out;
+});
+
+function finalizeMonth(m: { label: string; weeks: number; from: string; to: string; hours: number; target: number }) {
+  const ratio = m.target > 0 ? m.hours / m.target : 0;
+  const level: 0 | 1 | 2 | 3 | 4 = m.hours <= 0 ? 0 : ratio < 0.5 ? 1 : ratio < 0.8 ? 2 : ratio < 1.0 ? 3 : 4;
+  return { ...m, level };
+}
 
 function isoWeekNum(dateIso: string): string {
   const date = new Date(dateIso);
@@ -133,11 +177,39 @@ function isoWeekNum(dateIso: string): string {
   gap: 0.375rem;
   min-width: max-content;
 }
+.heatmap-weeks-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.heatmap-months {
+  display: flex;
+  gap: 3px;
+}
+.heatmap-month {
+  width: calc(var(--mw) * (2.5rem + 3px) - 3px);
+  height: 18px;
+  border: none;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  text-transform: capitalize;
+  line-height: 18px;
+  padding: 0;
+}
+.heatmap-month:hover { opacity: 0.85; }
+.heatmap-month--0 { background: var(--heatmap-0); }
+.heatmap-month--1 { background: var(--heatmap-1); }
+.heatmap-month--2 { background: var(--heatmap-2); color: #4a3d00; }
+.heatmap-month--3 { background: var(--heatmap-3); color: #234015; }
+.heatmap-month--4 { background: var(--heatmap-4); }
 .heatmap-weekdays {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding-top: 2px;
+  padding-top: calc(18px + 3px + 2px);
 }
 .weekday-spacer { height: 22px; }
 .heatmap-weekdays span {
@@ -171,7 +243,7 @@ function isoWeekNum(dateIso: string): string {
   padding: 0;
 }
 .heatmap-week-num:hover { opacity: 0.8; }
-.heatmap-week-num--0 { background: var(--heatmap-0); color: var(--muted); }
+.heatmap-week-num--0 { background: var(--heatmap-0); color: #fff; }
 .heatmap-week-num--1 { background: var(--heatmap-1); }
 .heatmap-week-num--2 { background: var(--heatmap-2); }
 .heatmap-week-num--3 { background: var(--heatmap-3); }
@@ -190,8 +262,14 @@ function isoWeekNum(dateIso: string): string {
   font-variant-numeric: tabular-nums;
   overflow: hidden;
 }
-.heatmap-cell--weekend { opacity: 0.5; }
+.heatmap-cell--weekend { opacity: 0.65; }
 .heatmap-cell[data-level="-1"] { background: transparent; }
+/* Пустой выходной — нейтральный, не «проблема». Выходной с часами — приглушённый факт. */
+.heatmap-cell--weekend[data-level="0"] { background: var(--heatmap-neutral); opacity: 1; }
+.heatmap-cell--weekend[data-level="1"],
+.heatmap-cell--weekend[data-level="2"],
+.heatmap-cell--weekend[data-level="3"],
+.heatmap-cell--weekend[data-level="4"] { background: var(--heatmap-weekend-fill); opacity: 1; }
 .heatmap-cell[data-level="0"]  { background: var(--heatmap-0); }
 .heatmap-cell[data-level="1"]  { background: var(--heatmap-1); }
 .heatmap-cell[data-level="2"]  { background: var(--heatmap-2); }

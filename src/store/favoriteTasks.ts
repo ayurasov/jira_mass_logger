@@ -50,5 +50,52 @@ export const useFavoriteTasksStore = defineStore('favoriteTasks', {
       if (this.isFavorite(issueKey)) this.remove(issueKey);
       else this.add(issueKey, issueSummary);
     },
+    /** Обновляет «свежесть» задачи при каждом логировании: если задача уже в
+     *  списке — обновляет summary и поднимает наверх (most-recently-used);
+     *  если нет — добавляет как недавнюю. Так список любимых = последние
+     *  используемые задачи, без ручного поддержания. */
+    touch(issueKey: string, issueSummary?: string | null) {
+      const key = issueKey.trim();
+      if (!key) return;
+      const existing = this.items.find((t) => t.issueKey === key);
+      if (existing) {
+        if (issueSummary) existing.issueSummary = issueSummary;
+        existing.addedAt = new Date().toISOString();
+        // поднимаем наверх (MRU)
+        this.items = [existing, ...this.items.filter((t) => t.issueKey !== key)];
+        save(this.items);
+      } else {
+        this.add(key, issueSummary);
+      }
+    },
+    /** Bootstrap из кэша worklog за последние ~90 дней: топ задач по часам
+     *  добавляется в список (только отсутствующие — не удаляет user-pinned).
+     *  Вызывается при загрузке календаря, чтобы чипы «любимых» появились сразу. */
+    seedFromRecent(rows: { issueKey: string; issueSummary?: string | null; timeSpentSeconds: number }[]) {
+      const agg = new Map<string, { hours: number; summary?: string | null }>();
+      for (const r of rows) {
+        const k = (r.issueKey || '').trim();
+        if (!k) continue;
+        const prev = agg.get(k) ?? { hours: 0 };
+        prev.hours += (r.timeSpentSeconds ?? 0) / 3600;
+        if (r.issueSummary) prev.summary = r.issueSummary;
+        agg.set(k, prev);
+      }
+      const top = Array.from(agg.entries())
+        .sort((a, b) => b[1].hours - a[1].hours)
+        .slice(0, 8)
+        .map(([key, v]) => ({ issueKey: key, issueSummary: v.summary ?? null }));
+      let changed = false;
+      for (const t of top) {
+        if (!this.items.some((x) => x.issueKey === t.issueKey)) {
+          this.items.push({ issueKey: t.issueKey, issueSummary: t.issueSummary, addedAt: new Date().toISOString() });
+          changed = true;
+        }
+      }
+      if (changed) {
+        this.items = this.items.slice(0, MAX_FAVORITES);
+        save(this.items);
+      }
+    },
   },
 });

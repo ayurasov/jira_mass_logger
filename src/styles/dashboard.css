@@ -5,21 +5,28 @@
    ============================================================ */
 
 /* ────────────────────────────────────────────
-   Heatmap цветовые токены (GitHub-стиль)
+   Heatmap цветовые токены — дивергентная палитра:
+   недозаполнение (проблема) → красный/оранжевый, норма → зелёный.
+   level 0 = пустой рабочий день (проблема), 1 — низкое, 2 — среднее,
+   3 — почти норма, 4 — норма/переработка. Выходные с 0ч — нейтральные.
    ──────────────────────────────────────────── */
 .app.light {
-  --heatmap-0: #ebedf0;
-  --heatmap-1: #9be9a8;
-  --heatmap-2: #40c463;
-  --heatmap-3: #30a14e;
-  --heatmap-4: #216e39;
+  --heatmap-0: #f3b7bd;   /* пустой рабочий день — проблема (красный) */
+  --heatmap-1: #f6a96b;   /* <4ч — оранжевый */
+  --heatmap-2: #f4d35e;   /* <6ч — жёлтый */
+  --heatmap-3: #a7d97a;   /* <8ч — лайм */
+  --heatmap-4: #3fa45f;   /* ≥8ч — норма (зелёный) */
+  --heatmap-neutral: #e7e9ec;  /* пустой выходной */
+  --heatmap-weekend-fill: #cfd6df; /* выходной с часами — приглушённый */
 }
 .app.dark {
-  --heatmap-0: #1e2535;
-  --heatmap-1: #0e4429;
-  --heatmap-2: #006d32;
-  --heatmap-3: #26a641;
-  --heatmap-4: #39d353;
+  --heatmap-0: #8a3a44;
+  --heatmap-1: #9a5a2a;
+  --heatmap-2: #8a7a2a;
+  --heatmap-3: #4f7a3a;
+  --heatmap-4: #2f8a4a;
+  --heatmap-neutral: #262b38;
+  --heatmap-weekend-fill: #3a4252;
 }
 
 /* ────────────────────────────────────────────
@@ -61,6 +68,18 @@
 .analytics-grid .span-2   { grid-column: span 2; }
 .analytics-grid .span-3   { grid-column: span 3; }
 .analytics-grid .span-full { grid-column: 1 / -1; }
+
+/* Ряд из трёх виджетов на всю ширину страницы */
+.widgets-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+.widgets-row > .dash-card {
+  margin: 0;
+  min-width: 0;
+}
 
 /* ────────────────────────────────────────────
    dash-card — универсальная обёртка виджета
@@ -225,6 +244,9 @@
   .analytics-grid .span-2,
   .analytics-grid .span-3,
   .analytics-grid .span-full { grid-column: span 1; }
+  .widgets-row {
+    grid-template-columns: 1fr;
+  }
   .analytics-skeleton { grid-template-columns: 1fr; }
   .analytics-skeleton .skeleton-card,
   .analytics-skeleton .skeleton-card:nth-child(1),

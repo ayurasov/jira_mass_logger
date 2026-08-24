@@ -29,6 +29,10 @@ function fmtHours(sec: number): string {
 
 onMounted(async () => {
   await jiraStore.ensureLoaded();
+  try {
+    const saved = localStorage.getItem('jiratime-calendar-date');
+    if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) selectedDate.value = saved;
+  } catch { /* private mode */ }
   await store.loadDay(selectedDate.value);
 });
 
@@ -94,6 +98,17 @@ function selectIssue(idx: number, key: string, summary: string) {
 }
 function selectFavorite(idx: number, key: string, summary: string | null | undefined) {
   store.setIssueForRow(idx, key, summary ?? null);
+}
+
+// Вставить любимую задачу в первую свободную (без выбранной задачи) встречу.
+function applyFavorite(key: string, summary: string | null | undefined) {
+  const idx = store.rows.findIndex((r) => !r.selectedIssueKey);
+  if (idx >= 0) {
+    store.setIssueForRow(idx, key, summary ?? null);
+  } else {
+    // Все строки уже имеют задачу — просто запоминаем выбор для следующей.
+    favorites.touch(key, summary ?? null);
+  }
 }
 
 async function logSingle(idx: number) {
@@ -209,6 +224,26 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
     <div v-if="store.error" class="error">{{ store.error }}</div>
     <div v-if="!store.loading && store.rows.length === 0 && !store.error" class="empty">
       Встреч на выбранный день нет.
+    </div>
+
+    <!-- Любимые задачи: автоподбор из последних 90 дней -->
+    <div v-if="favorites.has" class="fav-panel">
+      <div class="fav-panel__head">
+        <span class="fav-panel__title">★ Любимые задачи</span>
+        <span class="fav-panel__hint">автоподбор из последних 3 мес. · нажмите, чтобы вставить в первую свободную встречу</span>
+      </div>
+      <div class="fav-panel__chips">
+        <button
+          v-for="f in favorites.items"
+          :key="f.issueKey"
+          class="fav-chip"
+          :title="f.issueSummary || f.issueKey"
+          @click="applyFavorite(f.issueKey, f.issueSummary)">
+          {{ f.issueKey }}
+          <span class="fav-chip__summary" v-if="f.issueSummary">{{ f.issueSummary }}</span>
+          <span class="fav-chip__remove" @click.stop="favorites.remove(f.issueKey)" title="Убрать из избранного">✕</span>
+        </button>
+      </div>
     </div>
 
     <!-- Main layout: timeline + rows -->
@@ -419,8 +454,21 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
   padding: 3px 8px; background: #fff8e1; border: 1px solid #ffe082; border-radius: 12px; font-size: 11px; cursor: pointer; line-height: 1.4;
 }
 .fav-chip:hover { background: #fff3c4; }
+.fav-chip__summary { color: #6b5d00; font-size: 10px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fav-chip__remove { color: #999; font-size: 10px; }
 .fav-chip__remove:hover { color: #c92a2a; }
+
+.fav-panel {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.75rem;
+  background: #fffdf5;
+  border: 1px solid #ffe082;
+  border-radius: 0.6rem;
+}
+.fav-panel__head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
+.fav-panel__title { font-weight: 600; font-size: 0.8125rem; color: #6b4f00; margin-right: 0.15rem; }
+.fav-panel__hint { font-size: 0.7rem; color: #8a7a3a; }
+.fav-panel__chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .issue-search-wrap { position: relative; }
 .issue-search { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border, #ddd); font-size: 12px; width: 220px; }
 .issue-dropdown {

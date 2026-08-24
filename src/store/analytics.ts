@@ -164,6 +164,25 @@ export const useAnalyticsStore = defineStore('analytics', {
         .sort((a, b) => b.hours - a.hours);
     },
 
+    // ── Виджет «Топ задач за период» (не зависит от режима разбивки) ───
+    topIssues(): { issueKey: string; summary: string | null; hours: number }[] {
+      const from = this.breakdownFrom || toIsoDate(addDays(new Date(), -30));
+      const to = this.breakdownTo || toIsoDate(new Date());
+      const m = new Map<string, { summary: string | null; hours: number }>();
+      for (const r of this._rows) {
+        const d = r.started.slice(0, 10);
+        if (d < from || d > to) continue;
+        const prev = m.get(r.issueKey) ?? { summary: r.issueSummary ?? null, hours: 0 };
+        prev.hours += (r.timeSpentSeconds ?? 0) / 3600;
+        if (!prev.summary && r.issueSummary) prev.summary = r.issueSummary;
+        m.set(r.issueKey, prev);
+      }
+      return Array.from(m.entries())
+        .map(([issueKey, v]) => ({ issueKey, summary: v.summary, hours: Math.round(v.hours * 100) / 100 }))
+        .sort((a, b) => b.hours - a.hours)
+        .slice(0, 5);
+    },
+
     // ── Виджет 3: heatmap за 3 месяца ────────────────────────
     heatmapCells(): HeatmapCell[] {
       const today = new Date();

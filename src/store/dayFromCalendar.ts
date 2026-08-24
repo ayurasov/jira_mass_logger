@@ -10,6 +10,7 @@ import {
 } from '../lib/tauriApi';
 import { useJiraProfilesStore } from './jiraProfiles';
 import { useSettingsStore } from './settings';
+import { useFavoriteTasksStore } from './favoriteTasks';
 
 export interface MeetingRow {
   event: CalendarEventDto;
@@ -180,6 +181,8 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
         );
         // Параллельно подгружаем сводку недели (без блокировки дня)
         this.loadWeek().catch(() => {});
+        this.seedFavoritesFromRecent().catch(() => {});
+        try { localStorage.setItem('jiratime-calendar-date', date); } catch { /* private mode */ }
       } catch (e: unknown) {
         this.error = String(e);
       } finally {
@@ -206,6 +209,7 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
       // 1) точное совпадение по времени
       if (this.existingKeys.has(this.dedupKey(issueKey, startedLocal))) return true;
       // 2) совпадение по теме: та же задача + тот же день + comment содержит subject
+      //    (мягче: comment содержит subject целиком, либо наоборот).
       const date = startedLocal.slice(0, 10);
       const subj = this.normSubject(subject);
       if (subj) {
@@ -213,7 +217,7 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
           if (w.issueKey !== issueKey) continue;
           if (w.started.slice(0, 10) !== date) continue;
           const c = this.normSubject(w.comment);
-          if (c && c === subj) return true;
+          if (c && (c === subj || c.includes(subj) || subj.includes(c))) return true;
         }
       }
       return false;
@@ -311,6 +315,67 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
       this.loadDay(next);
     },
 
+    /** Bootstrap «любимых задач» из кэша worklog за последние ~90 дней
+     *  (только новые — не удаляет user-pinned). Вызывается при загрузке дня. */
+    async seedFavoritesFromRecent() {
+      const to = new Date().toISOString().slice(0, 10);
+      const from = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+      const rows = await tauriApi.listCachedWorklogs(from, to);
+      useFavoriteTasksStore().seedFromRecent(rows.map((r) => ({
+        issueKey: r.issueKey,
+        issueSummary: r.issueSummary ?? null,
+        timeSpentSeconds: r.timeSpentSeconds,
+      })));
+    },
+
+    /** Пересчитывает worklogTodaySeconds/existingKeys/existingDayWorklogs из кэша
+     *  без повторной загрузки календарных событий Exchange. Вызывается после
+     *  успешного логирования, чтобы дедуп и "покрыто" были актуальны сразу,
+     *  а не только после ручного "Обновить". */
+    async reloadDayWorklogs(date: string) {
+      const wls = await tauriApi.listCachedWorklogs(date, date);
+      this.worklogTodaySeconds = wls.reduce((s, w) => s + w.timeSpentSeconds, 0);
+      this.existingKeys = new Set(wls.map((w) => this.dedupKey(w.issueKey, w.started)));
+      this.existingDayWorklogs = wls.map((w) => ({
+        issueKey: w.issueKey,
+        started: w.started,
+        comment: w.comment ?? null,
+      }));
+    },
+
+    /** Фиксирует успешно созданный в Jira worklog: обязательное обновление
+     *  in-memory состояния (дедуп/покрытие) + best-effort запись в локальный
+     *  кэш, чтобы дедуп переживал перезагрузку дня и не плодил дубли в Jira. */
+    async registerLoggedWorklog(opts: {
+      issueKey: string; issueSummary: string | null; startedLocal: string;
+      timeSpentSeconds: number; comment: string | null; worklogId: string | null; date: string;
+    }) {
+      try {
+        await tauriApi.upsertCachedWorklog({
+          rowKey: `${opts.issueKey}|${opts.date}|${opts.startedLocal.slice(11, 16)}`,
+          worklogId: opts.worklogId,
+          issueKey: opts.issueKey,
+          issueSummary: opts.issueSummary,
+          projectKey: opts.issueKey.split('-')[0] ?? null,
+          started: opts.startedLocal,
+          timeSpentSeconds: opts.timeSpentSeconds,
+          comment: opts.comment,
+          updated: null,
+          syncedAt: new Date().toISOString(),
+        });
+      } catch {
+        // Успех Jira не должен зависеть от локального кэша — не бросаем.
+      }
+      if (opts.date === this.selectedDate) {
+        try { await this.reloadDayWorklogs(opts.date); } catch {
+          // fallback: минимальное in-memory обновление, если re-read из кэша не удался
+          this.existingKeys.add(this.dedupKey(opts.issueKey, opts.startedLocal));
+          this.existingDayWorklogs.push({ issueKey: opts.issueKey, started: opts.startedLocal, comment: opts.comment });
+          this.worklogTodaySeconds += opts.timeSpentSeconds;
+        }
+      }
+    },
+
     setIssueForRow(idx: number, issueKey: string, issueSummary: string | null) {
       const row = this.rows[idx];
       if (!row) return;
@@ -352,7 +417,7 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
       const params = jp.activeConnectionParams;
       if (!params) throw new Error('Нет активного Jira профиля');
       try {
-        await tauriApi.addWorklog(
+        const worklogId = await tauriApi.addWorklog(
           params,
           row.selectedIssueKey,
           row.startedLocal,
@@ -365,8 +430,16 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
           row.selectedIssueKey,
           row.selectedIssueSummary,
         );
-        this.existingKeys.add(this.dedupKey(row.selectedIssueKey, row.startedLocal));
-        this.existingDayWorklogs.push({ issueKey: row.selectedIssueKey, started: row.startedLocal, comment: row.comment });
+        await this.registerLoggedWorklog({
+          issueKey: row.selectedIssueKey,
+          issueSummary: row.selectedIssueSummary,
+          startedLocal: row.startedLocal,
+          timeSpentSeconds: row.roundedSeconds,
+          comment: row.comment,
+          worklogId: worklogId ?? null,
+          date: row.startedLocal.slice(0, 10),
+        });
+        useFavoriteTasksStore().touch(row.selectedIssueKey, row.selectedIssueSummary);
         row.logged = true;
         row.logError = null;
         this.loadWeek().catch(() => {});
@@ -421,25 +494,34 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
         entries,
       );
       // Результаты соответствуют toSend, не исходным items.
-      results.forEach((res, i) => {
+      for (let i = 0; i < results.length; i++) {
+        const res = results[i];
         const item = toSend[i];
-        if (!item) return;
+        if (!item) continue;
         const rowIdx = this.rows.findIndex((r) => r.event.id === item.event.id);
         if (rowIdx >= 0) {
           this.rows[rowIdx].logged = res.success;
           if (!res.success) this.rows[rowIdx].logError = res.error ?? 'Ошибка';
         }
         if (res.success) {
-          this.existingKeys.add(this.dedupKey(item.issueKey, item.startedLocal));
-          this.existingDayWorklogs.push({ issueKey: item.issueKey, started: item.startedLocal, comment: item.comment });
+          await this.registerLoggedWorklog({
+            issueKey: item.issueKey,
+            issueSummary: item.issueSummary,
+            startedLocal: item.startedLocal,
+            timeSpentSeconds: item.roundedSeconds,
+            comment: item.comment,
+            worklogId: res.worklogId ?? null,
+            date: item.startedLocal.slice(0, 10),
+          });
           tauriApi.rememberMeetingIssueMatch(
             item.event.subject,
             item.event.seriesMasterId ?? null,
             item.issueKey,
             item.issueSummary,
           );
+          useFavoriteTasksStore().touch(item.issueKey, item.issueSummary);
         }
-      });
+      }
       this.loadWeek().catch(() => {});
       return results;
     },

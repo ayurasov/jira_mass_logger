@@ -84,7 +84,7 @@ function buildOption(): EChartsOption {
         right: 0,
         top: 'center',
         textStyle: { color: textColor, fontSize: 11 },
-        formatter: (name: string) => name.length > 18 ? name.slice(0, 18) + '…' : name,
+        formatter: (name: string) => name.length > 32 ? name.slice(0, 32) + '…' : name,
       },
       series: [{
         type: 'pie',
@@ -120,7 +120,7 @@ function buildOption(): EChartsOption {
         return `${p.name}: <b>${p.value} ч</b>`;
       },
     },
-    grid: { left: 110, right: 50, top: 8, bottom: 24 },
+    grid: { left: 150, right: 50, top: 8, bottom: 24 },
     xAxis: {
       type: 'value',
       axisLabel: { color: textColor, formatter: '{value} ч' },
@@ -128,7 +128,7 @@ function buildOption(): EChartsOption {
     },
     yAxis: {
       type: 'category',
-      data: data.map(s => s.label.length > 15 ? s.label.slice(0, 15) + '…' : s.label),
+      data: data.map(s => s.label.length > 26 ? s.label.slice(0, 26) + '…' : s.label),
       axisLabel: { color: textColor, fontSize: 11 },
       inverse: true,
     },
