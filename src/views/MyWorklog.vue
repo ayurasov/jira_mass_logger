@@ -237,7 +237,6 @@ const deleteTarget = ref<WorklogRow | null>(null);
 let unlistenResume: (() => void) | null = null;
 
 onMounted(async () => {
-  // Приоритет периода: route.query (?from=&to=) → сохранённые фильтры → дефолт (27 дней).
   store.restoreFilters();
   const qFrom = (route.query.from as string) || '';
   const qTo = (route.query.to as string) || '';
@@ -260,19 +259,13 @@ onMounted(async () => {
   await store.loadFromCache();
   store.setupNetworkListeners();
   store.startAutoSync();
-  // Инкрементальная синхронизация (watermark), а не force=true — иначе
-  // «Обновление…» подолгу висло на полном перечёте всего worklog.
   await store.fetchFromJira(false);
 
-  // При выходе Windows-ноутбука из спящего режима main.rs эмитит
-  // "system:possible_resume" при возврате фокуса окна — мягкая ресинх.
   unlistenResume = await listen('system:possible_resume', () => {
     store.refreshFromJira();
   });
 });
 
-// Переход из дашборда на worklog?from=&to= — обновляем период и перезагружаем
-// мягко (кэш мгновенно + инкремент из Jira).
 watch(
   () => [route.query.from as string, route.query.to as string],
   ([from, to]) => {
@@ -288,10 +281,6 @@ watch(
     }
   },
 );
-
-// Смена даты в фильтрах НЕ запускает автоматический запрос к Jira —
-// пользователь жмёт «↻ Обновить из Jira». Раньше debounce-watcher бил по Jira
-// на каждое изменение и таблица «подвисала» на полном перечёте (force=true).
 
 onBeforeUnmount(() => {
   store.stopAutoSync();
@@ -347,8 +336,8 @@ function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString('ru-RU');
 }
 function formatTime(started: string) {
-  const d = new Date(started);
-  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const m = started.match(/T(\d{2}:\d{2})/);
+  return m?.[1] ?? new Date(started).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 function isEditing(rowKey: string, field: string) {
@@ -377,9 +366,9 @@ async function commitEdit(row: WorklogRow, field: 'hours' | 'comment' | 'started
   } else if (field === 'started') {
     const [hh, mm] = String(editBuffer.value).split(':').map(Number);
     if (Number.isNaN(hh) || Number.isNaN(mm)) return;
-    const d = new Date(row.started);
-    d.setHours(hh, mm, 0, 0);
-    await store.editRow(row.rowKey, { started: d.toISOString() });
+    const started = row.started.replace(/T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{4}/, `T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00.000${row.started.slice(-5)}`);
+    if (started === row.started) return;
+    await store.editRow(row.rowKey, { started });
   }
 }
 
@@ -403,9 +392,6 @@ async function doDelete() {
 }
 
 async function refreshFromJira() {
-  // Кнопка «↻ Обновить из Jira»: полная ресинхронизация периода (replace-range),
-  // чтобы паразитные записи, удалённые в Jira напрямую, и старые дубли по
-  // row_key исчезали из таблицы, а не накапливались.
   await store.fetchFromJiraFull();
 }
 
@@ -425,13 +411,7 @@ function onChangeAutoSyncInterval(e: Event) {
   store.startAutoSync();
 }
 
-// Инерционный скролл колеса/precision touchpad не должен прерывать inline-редактирование:
-// когда ячейка в редактировании, событие wheel не должно выталкивать фокус
-// с <input>, но сам скролл контейнера должен оставаться работать свободно (native), поэтому
-// здесь ничего не превентируется — блокировка только визуальная (см. CSS class --editing)
-// и не мешает native scroll на Windows precision touchpad.
 function onWheel(_e: WheelEvent) {
-  // no-op: скролл остаётся естественный; редактируемая ячейка теряет focus через @blur.
 }
 
 async function exportCsv() {

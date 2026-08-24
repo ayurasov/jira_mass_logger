@@ -2,11 +2,50 @@ import { defineStore } from 'pinia';
 import { tauriApi, type BulkResultItem, type IssueDto, type JiraConnectionParams, type RecentIssue, type WizardTemplate } from '../lib/tauriApi';
 import { DATE_RANGE_PRESETS, DEFAULT_WEEKDAY_FILTER, RU_HOLIDAYS_FALLBACK_2026, WEEKDAY_RU_SHORT, buildWorkingDates, toIsoDate, type WeekdayFilter } from '../utils/dateRange';
 import { getIsoWeek, renderWorklogText } from '../utils/worklogText';
+import { useSettingsStore } from './settings';
 
 export interface IssueOption { key: string; summary?: string | null; source: 'recent' | 'search'; isFavorite?: boolean; }
 export interface PreviewRow { id: string; date: string; weekday: string; hours: number; description: string; startedAt: string; issueKey: string; conflict: boolean; skipped?: boolean; status?: 'pending' | 'success' | 'error' | 'retry'; error?: string | null; }
 export interface BulkWizardConfigSnapshot { issueKey: string; issueSummary?: string | null; periodFrom: string; periodTo: string; presetId: string; weekdayFilter: WeekdayFilter; excludeHolidays: boolean; hoursPerDay: number; descriptionTemplate: string; startTime: string; }
 let searchTimer: number | null = null;
+
+function toJiraStartedLocal(dateIso: string, timeHHMM: string, timezone: string): string {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  const [hours, minutes] = timeHHMM.split(':').map(Number);
+  const dtUtc = new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1, hours ?? 0, minutes ?? 0, 0));
+  const offsetMs = getTimezoneOffsetMs(dtUtc, timezone);
+  const localMs = dtUtc.getTime() + offsetMs;
+  const local = new Date(localMs);
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  const sign = offsetMs >= 0 ? '+' : '-';
+  const absMin = Math.abs(offsetMs) / 60000;
+  const hh = pad(Math.floor(absMin / 60));
+  const mm = pad(absMin % 60);
+  return (
+    `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}` +
+    `T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}.000` +
+    `${sign}${hh}${mm}`
+  );
+}
+
+function getTimezoneOffsetMs(dt: Date, tz: string): number {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    });
+    const parts = Object.fromEntries(fmt.formatToParts(dt).map((p) => [p.type, p.value]));
+    const localMs = Date.UTC(
+      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+      Number(parts.hour) % 24, Number(parts.minute), Number(parts.second),
+    );
+    return localMs - dt.getTime();
+  } catch {
+    return -dt.getTimezoneOffset() * 60000;
+  }
+}
 
 export const useBulkWizardStore = defineStore('bulkWizard', {
   state: () => ({
@@ -47,12 +86,13 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
     async generatePreview(params: JiraConnectionParams) {
       if (!this.issueKey || !this.periodFrom || !this.periodTo) return; this.loading = true;
       try {
+        const settings = useSettingsStore();
         const workingDates = buildWorkingDates(this.periodFrom, this.periodTo, this.weekdayFilter, this.excludeHolidays, this.holidays);
         const existing = await tauriApi.getWorklog(params, this.issueKey).catch(() => []);
         this.existingWorklogs = existing.map((item) => ({ startedDate: item.started.slice(0, 10), issueKey: this.issueKey }));
         const existingSet = new Set(this.existingWorklogs.map((item) => `${item.issueKey}|${item.startedDate}`));
         this.previewRows = workingDates.map((date) => {
-          const dateIso = toIsoDate(date); const week = getIsoWeek(dateIso); const description = renderWorklogText(this.descriptionTemplate, { date: dateIso, week, issue: this.issueKey }); const startedAt = `${dateIso}T${this.startTime}:00.000Z`;
+          const dateIso = toIsoDate(date); const week = getIsoWeek(dateIso); const description = renderWorklogText(this.descriptionTemplate, { date: dateIso, week, issue: this.issueKey }); const startedAt = toJiraStartedLocal(dateIso, this.startTime, settings.timezone);
           return { id: `${this.issueKey}-${dateIso}`, date: dateIso, weekday: WEEKDAY_RU_SHORT[date.getDay()], hours: this.hoursPerDay, description, startedAt, issueKey: this.issueKey, conflict: existingSet.has(`${this.issueKey}|${dateIso}`), status: 'pending' as const, skipped: false };
         });
       } finally { this.loading = false; }
@@ -72,7 +112,6 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
           if (result.success) successCount++;
           this.statusLogLines.push(`${row.date} | ${row.issueKey} | ${result.success ? 'Успех' : 'Ошибка'} | попыток: ${result.attempts}${result.error ? ` | ${result.error}` : ''}`);
         }
-        // ─── Трекинг bulk-метрики (виджет 5 дашборда) ───
         if (successCount > 0) {
           const prev = Number(localStorage.getItem('jiratime-bulk-entries-created') ?? '0');
           localStorage.setItem('jiratime-bulk-entries-created', String(prev + successCount));
