@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { tauriApi, type BulkResultItem, type IssueDto, type JiraConnectionParams, type RecentIssue, type WizardTemplate } from '../lib/tauriApi';
+import { tauriApi, type BulkResultItem, type IssueDto, type JiraConnectionParams, type RecentIssue, type TextTemplate, type WizardTemplate } from '../lib/tauriApi';
 import { DATE_RANGE_PRESETS, DEFAULT_WEEKDAY_FILTER, RU_HOLIDAYS_FALLBACK_2026, WEEKDAY_RU_SHORT, buildWorkingDates, toIsoDate, type WeekdayFilter } from '../utils/dateRange';
 import { getIsoWeek, renderWorklogText } from '../utils/worklogText';
 import { useSettingsStore } from './settings';
@@ -9,6 +9,8 @@ export interface PreviewRow { id: string; date: string; weekday: string; hours: 
 export interface BulkWizardConfigSnapshot { issueKey: string; issueSummary?: string | null; periodFrom: string; periodTo: string; presetId: string; weekdayFilter: WeekdayFilter; excludeHolidays: boolean; hoursPerDay: number; descriptionTemplate: string; startTime: string; }
 let searchTimer: number | null = null;
 
+/** Возвращает Jira-строку started в локальной таймзоне (24-часовой формат + смещение),
+ *  а не UTC — иначе, например, 16:00 по Москве уезжает в Jira как 19:00. */
 function toJiraStartedLocal(dateIso: string, timeHHMM: string, timezone: string): string {
   const [year, month, day] = dateIso.split('-').map(Number);
   const [hours, minutes] = timeHHMM.split(':').map(Number);
@@ -26,6 +28,13 @@ function toJiraStartedLocal(dateIso: string, timeHHMM: string, timezone: string)
     `T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}.000` +
     `${sign}${hh}${mm}`
   );
+}
+
+/** То же самое, но принимает значение поля <input type="datetime-local"> ("YYYY-MM-DDTHH:mm") —
+ *  используется при ручной правке времени старта строки в предпросмотре (Шаг 4). */
+function datetimeLocalToJiraStarted(value: string, timezone: string): string {
+  const [datePart, timePart] = value.split('T');
+  return toJiraStartedLocal(datePart, (timePart ?? '00:00').slice(0, 5), timezone);
 }
 
 function getTimezoneOffsetMs(dt: Date, tz: string): number {
@@ -47,12 +56,22 @@ function getTimezoneOffsetMs(dt: Date, tz: string): number {
   }
 }
 
+/** Похоже ли на ключ задачи Jira (ABC-123) — тогда ищем точным JQL key=, иначе полнотекстовый text ~. */
+function isIssueKeyLike(query: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9]+-\d+$/.test(query.trim());
+}
+
 export const useBulkWizardStore = defineStore('bulkWizard', {
   state: () => ({
     step: 1, totalSteps: 4, loading: false, query: '', issueKey: '', issueSummary: '', recentIssues: [] as RecentIssue[], issueOptions: [] as IssueOption[],
     selectedPresetId: 'this_week', periodFrom: DATE_RANGE_PRESETS[0].range().from, periodTo: DATE_RANGE_PRESETS[0].range().to,
     weekdayFilter: { ...DEFAULT_WEEKDAY_FILTER } as WeekdayFilter, excludeHolidays: true, holidays: [...RU_HOLIDAYS_FALLBACK_2026] as string[],
-    hoursPerDay: 8, descriptionTemplate: 'Работа по задаче {issue} за {date}', savedTextTemplates: ['Работа по задаче {issue} за {date}','Плановые работы по {issue}, неделя {week}','Разработка/поддержка {issue} ({date})'] as string[], startTime: '09:00',
+    hoursPerDay: 8, descriptionTemplate: 'Работа по задаче {issue} за {date}',
+    // Реальные шаблоны описаний (страница "Шаблоны", text_templates в БД) — раньше здесь был
+    // статичный захардкоженный список, никак не связанный с тем, что пользователь сохраняет
+    // на странице "Шаблоны", из-за чего шаблоны выглядели «неиспользуемыми».
+    textTemplates: [] as TextTemplate[],
+    startTime: '09:00',
     previewRows: [] as PreviewRow[], existingWorklogs: [] as { startedDate: string; issueKey: string }[], sending: false, results: [] as BulkResultItem[], templates: [] as WizardTemplate[], statusLogLines: [] as string[],
   }),
   getters: {
@@ -62,15 +81,39 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
   },
   actions: {
     applyPreset(presetId: string) { const preset = DATE_RANGE_PRESETS.find((p) => p.id === presetId); if (!preset) return; const range = preset.range(); this.selectedPresetId = presetId; this.periodFrom = range.from; this.periodTo = range.to; },
-    async bootstrap() { this.templates = await tauriApi.listWizardTemplates().catch(() => []); this.recentIssues = await tauriApi.getRecentIssues().catch(() => []); const custom = await tauriApi.getCustomHolidays().catch(() => []); if (custom.length > 0) this.holidays = custom; this.issueOptions = this.recentIssues.map((item) => ({ key: item.issueKey, summary: item.summary, source: 'recent', isFavorite: item.isFavorite })); },
+    async bootstrap() {
+      this.templates = await tauriApi.listWizardTemplates().catch(() => []);
+      this.recentIssues = await tauriApi.getRecentIssues().catch(() => []);
+      this.textTemplates = await tauriApi.listTemplates().catch(() => []);
+      const custom = await tauriApi.getCustomHolidays().catch(() => []);
+      if (custom.length > 0) this.holidays = custom;
+      this.issueOptions = this.recentIssues.map((item) => ({ key: item.issueKey, summary: item.summary, source: 'recent', isFavorite: item.isFavorite }));
+    },
+    /** Применяет сохранённый шаблон описания (страница "Шаблоны") к текущему мастеру:
+     *  подставляет текст и, если в шаблоне указана задача, выбирает её тоже. */
+    async applyTextTemplate(tpl: TextTemplate) {
+      this.descriptionTemplate = tpl.text;
+      if (tpl.issueKey && !this.issueKey) {
+        this.selectIssue({ key: tpl.issueKey, summary: null, source: 'recent' });
+      }
+      if (tpl.id) {
+        await tauriApi.incrementTemplateUsage(tpl.id).catch(() => undefined);
+        this.textTemplates = await tauriApi.listTemplates().catch(() => this.textTemplates);
+      }
+    },
     async searchIssues(params: JiraConnectionParams, query: string) {
       this.query = query; if (searchTimer) window.clearTimeout(searchTimer); if (!query.trim()) { this.issueOptions = this.recentIssues.map((item) => ({ key: item.issueKey, summary: item.summary, source: 'recent', isFavorite: item.isFavorite })); return; }
       this.loading = true;
       await new Promise<void>((resolve) => {
         searchTimer = window.setTimeout(async () => {
           try {
-            const safeQuery = query.replaceAll('"', '\\"');
-            const jql = `text ~ "${safeQuery}*" ORDER BY updated DESC`;
+            const trimmed = query.trim();
+            const safeQuery = trimmed.replaceAll('"', '\\"');
+            // Если запрос похож на ключ задачи (ABC-123) — точный поиск по key=,
+            // иначе обычный полнотекстовый поиск по text (как в календарном логгере).
+            const jql = isIssueKeyLike(trimmed)
+              ? `key = "${trimmed.toUpperCase()}" ORDER BY updated DESC`
+              : `text ~ "${safeQuery}*" ORDER BY updated DESC`;
             const found = await tauriApi.getIssuesByJql(params, jql);
             const mergedRecent = this.recentIssues.filter((item) => item.issueKey.toLowerCase().includes(query.toLowerCase()) || item.summary?.toLowerCase().includes(query.toLowerCase())).map((item) => ({ key: item.issueKey, summary: item.summary, source: 'recent' as const, isFavorite: item.isFavorite }));
             const seen = new Set<string>(); const searchOptions: IssueOption[] = [];
@@ -98,6 +141,14 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
       } finally { this.loading = false; }
     },
     updatePreviewRow(id: string, patch: Partial<PreviewRow>) { const row = this.previewRows.find((item) => item.id === id); if (row) Object.assign(row, patch); },
+    /** Правка времени старта строки предпросмотра из <input type="datetime-local">:
+     *  собирает Jira-строку в локальной таймзоне (24ч + оффсет), а не в UTC. */
+    setPreviewRowStartedAtLocal(id: string, datetimeLocalValue: string) {
+      const row = this.previewRows.find((item) => item.id === id);
+      if (!row || !datetimeLocalValue) return;
+      const settings = useSettingsStore();
+      row.startedAt = datetimeLocalToJiraStarted(datetimeLocalValue, settings.timezone);
+    },
     removePreviewRow(id: string) { const row = this.previewRows.find((item) => item.id === id); if (row) row.skipped = true; },
     restorePreviewRow(id: string) { const row = this.previewRows.find((item) => item.id === id); if (row) row.skipped = false; },
     async submit(params: JiraConnectionParams) {
@@ -123,5 +174,28 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
     applyTemplate(template: WizardTemplate) { const parsed = JSON.parse(template.configJson) as BulkWizardConfigSnapshot; this.issueKey = parsed.issueKey; this.issueSummary = parsed.issueSummary ?? ''; this.periodFrom = parsed.periodFrom; this.periodTo = parsed.periodTo; this.selectedPresetId = parsed.presetId; this.weekdayFilter = parsed.weekdayFilter; this.excludeHolidays = parsed.excludeHolidays; this.hoursPerDay = parsed.hoursPerDay; this.descriptionTemplate = parsed.descriptionTemplate; this.startTime = parsed.startTime; },
     buildExportLog(): string { const header = ['JiraTime — экспорт лога операции Bulk Log Wizard', `Задача: ${this.issueKey}${this.issueSummary ? ` — ${this.issueSummary}` : ''}`, `Период: ${this.periodFrom} .. ${this.periodTo}`, `Всего часов: ${this.totalHours}`, `Конфликтов: ${this.conflictsCount}`, '', 'Построчный статус:']; return [...header, ...this.statusLogLines].join('\n'); },
     nextStep() { if (this.step < this.totalSteps) this.step += 1; }, prevStep() { if (this.step > 1) this.step -= 1; }, goToStep(step: number) { this.step = Math.max(1, Math.min(this.totalSteps, step)); },
+    /** "Новая сессия": полный сброс мастера к начальным значениям для заполнения с нуля,
+     *  не трогая справочники (recentIssues/templates/textTemplates/holidays уже загружены). */
+    resetWizard() {
+      this.step = 1;
+      this.query = '';
+      this.issueKey = '';
+      this.issueSummary = '';
+      this.issueOptions = this.recentIssues.map((item) => ({ key: item.issueKey, summary: item.summary, source: 'recent', isFavorite: item.isFavorite }));
+      this.selectedPresetId = 'this_week';
+      const range = DATE_RANGE_PRESETS[0].range();
+      this.periodFrom = range.from;
+      this.periodTo = range.to;
+      this.weekdayFilter = { ...DEFAULT_WEEKDAY_FILTER };
+      this.excludeHolidays = true;
+      this.hoursPerDay = 8;
+      this.descriptionTemplate = 'Работа по задаче {issue} за {date}';
+      this.startTime = '09:00';
+      this.previewRows = [];
+      this.existingWorklogs = [];
+      this.sending = false;
+      this.results = [];
+      this.statusLogLines = [];
+    },
   },
 });

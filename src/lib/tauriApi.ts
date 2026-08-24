@@ -120,6 +120,17 @@ export interface BulkResultItem { issueKey: string; success: boolean; worklogId?
 export interface RecentIssue { issueKey: string; summary?: string | null; isFavorite: boolean; lastUsedAt: string; }
 export interface WizardTemplate { id?: number; name: string; configJson: string; createdAt?: string | null; }
 
+/** Шаблон описания worklog (страница "Шаблоны"), хранится в text_templates. */
+export interface TextTemplate {
+  id?: number | null;
+  name: string;
+  text: string;
+  issueKey?: string | null;
+  isPinned: boolean;
+  useCount?: number;
+  createdAt?: string | null;
+}
+
 export interface SyncQueueItem {
   id: number;
   rowKey: string;
@@ -264,6 +275,12 @@ export const tauriApi = {
   importHolidays(json: string) { return invoke<number>('import_holidays', { json }); },
   writeExportFile(path: string, content: string) { return invoke<void>('write_export_file', { path, content }); },
   writeExportFileUtf8Bom(path: string, content: string) { return invoke<void>('write_export_file_utf8_bom', { path, content }); },
+
+  // --- Шаблоны описаний worklog (страница "Шаблоны", text_templates) ---
+  listTemplates() { return invoke<TextTemplate[]>('list_templates'); },
+  saveTemplate(template: TextTemplate) { return invoke<number>('save_template', { template }); },
+  deleteTemplate(id: number) { return invoke<void>('delete_template', { id }); },
+  incrementTemplateUsage(id: number) { return invoke<void>('increment_template_usage', { id }); },
 
   // --- Локальный кэш и очередь несинхронизированных изменений ---
   listCachedWorklogs(fromDate: string, toDate: string) { return invoke<CachedWorklogRow[]>('list_cached_worklogs', { fromDate, toDate }); },
