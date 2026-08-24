@@ -7,6 +7,7 @@ import {
   type MeetingIssueHistoryEntry,
   type NewWorklogEntry,
   type BulkResultItem,
+  type CachedWorklogRow,
 } from '../lib/tauriApi';
 import { useJiraProfilesStore } from './jiraProfiles';
 import { useSettingsStore } from './settings';
@@ -278,36 +279,65 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
     /**
      * Один range-refresh worklog из Jira за выбранный день в локальный кэш.
      * Использует getWorklogsSince с since=0 + dateRange — один запрос к Jira,
-     * не перегружая канал. После этого listCachedWorklogs возвращает свежие данные.
+     * не перегружая канал. Полный полученный набор заменяет кэш этого дня
+     * целиком (replace-range), поэтому удалённые в Jira записи и старые дубли
+     * (из-за прежнего рассогласования row_key) пропадают, а не накапливаются.
      */
     async refreshDayFromJira(date: string) {
+      return this.refreshRangeFromJira(date, date);
+    },
+
+    /** Ресинхронизирует диапазон дат [from,to] целиком: полный fetch из Jira
+     *  (since=0 + dateRange) + replace-range в кэше. В отличие от watermark-
+     *  синхронизации в myWorklog, здесь получаем ПОЛНЫЙ набор worklog за
+     *  период, поэтому safe удалять из кэша всё, чего нет в свежем ответе. */
+    async refreshRangeFromJira(from: string, to: string) {
       const jp = useJiraProfilesStore();
       await jp.ensureLoaded();
       const params = jp.activeConnectionParams;
       if (!params) return;
       try {
         const dtos = await tauriApi.getWorklogsSince(params, 0, [], {
-          dateFrom: date,
-          dateTo: date,
+          dateFrom: from,
+          dateTo: to,
+        }, true);
+        // allowEmptyRange=true: «0 worklog в Jira за диапазон» — это валидный
+        // результат (записи были удалены в Jira напрямую), кэш диапазона нужно
+        // очистить, а не молча пропустить.
+        // Подстраховка: bulk/JQL fallback внутри бэкенда иногда возвращает более
+        // широкий диапазон, чем запрошенный — жёстко фильтруем перед replace,
+        // чтобы не задеть кэш соседних дней/недель.
+        const inRange = dtos.filter((d) => {
+          const day = d.started.slice(0, 10);
+          return day >= from && day <= to;
         });
-        for (const dto of dtos) {
-          // Минимальная CachedWorklogRow для upsert
-          await tauriApi.upsertCachedWorklog({
-            rowKey: `${dto.issueKey ?? 'unknown'}|${date}|${dto.started.slice(11, 16)}`,
-            worklogId: dto.id,
-            issueKey: dto.issueKey ?? 'unknown',
-            issueSummary: null,
-            projectKey: null,
-            started: dto.started,
-            timeSpentSeconds: dto.timeSpentSeconds,
-            comment: dto.comment ?? null,
-            updated: null,
-            syncedAt: new Date().toISOString(),
-          });
-        }
+        const rows: CachedWorklogRow[] = inRange.map((dto) => ({
+          rowKey: dto.id ? `wl:${dto.id}` : `local:${dto.issueKey ?? 'unknown'}:${dto.started}:${Math.random().toString(36).slice(2, 8)}`,
+          worklogId: dto.id ?? null,
+          issueKey: dto.issueKey ?? 'unknown',
+          issueSummary: dto.issueSummary ?? null,
+          projectKey: (dto.issueKey ?? 'unknown').split('-')[0] ?? null,
+          started: dto.started,
+          timeSpentSeconds: dto.timeSpentSeconds,
+          comment: dto.comment ?? null,
+          updated: dto.updated ?? null,
+          syncedAt: new Date().toISOString(),
+        }));
+        await tauriApi.replaceCachedWorklogsRange(from, to, rows);
       } catch {
         // Не блокируем загрузку дня, если Jira недоступен
       }
+    },
+
+    /** Ресинхронизирует всю ISO-неделю (Пн-Вс), содержащую selectedDate, из Jira
+     *  и перезагружает состояние дня, чтобы дедуп сбросился для записей,
+     *  удалённых в Jira напрямую (без этого приложения). */
+    async refreshWeekFromJira() {
+      const weekStart = isoWeekStart(this.selectedDate);
+      const weekEnd = addDays(weekStart, 6);
+      await this.refreshRangeFromJira(weekStart, weekEnd);
+      await this.reloadDayWorklogs(this.selectedDate);
+      await this.loadWeek();
     },
 
     navigateDay(delta: number) {
@@ -352,7 +382,7 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
     }) {
       try {
         await tauriApi.upsertCachedWorklog({
-          rowKey: `${opts.issueKey}|${opts.date}|${opts.startedLocal.slice(11, 16)}`,
+          rowKey: opts.worklogId ? `wl:${opts.worklogId}` : `local:${opts.issueKey}:${opts.startedLocal}:${Math.random().toString(36).slice(2, 8)}`,
           worklogId: opts.worklogId,
           issueKey: opts.issueKey,
           issueSummary: opts.issueSummary,

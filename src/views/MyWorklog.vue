@@ -403,10 +403,10 @@ async function doDelete() {
 }
 
 async function refreshFromJira() {
-  // Кнопка «↻ Обновить из Jira»: мгновенно показываем кэш по текущему периоду,
-  // затем тянем только изменения (watermark). Без force=true, чтобы таблица
-  // не «подвисала» на полном перечёте всего worklog.
-  await store.refreshFromJira();
+  // Кнопка «↻ Обновить из Jira»: полная ресинхронизация периода (replace-range),
+  // чтобы паразитные записи, удалённые в Jira напрямую, и старые дубли по
+  // row_key исчезали из таблицы, а не накапливались.
+  await store.fetchFromJiraFull();
 }
 
 function sortIndicator(key: 'date' | 'issue' | 'hours' | 'status'): string {

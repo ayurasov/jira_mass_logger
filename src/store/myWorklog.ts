@@ -199,6 +199,11 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         if (!Array.isArray(dtos)) {
           throw new Error('Jira вернула некорректный ответ при загрузке worklog.');
         }
+        // Инкрементальный sync (watermark) — только upsert, без replace-range:
+        // bulk-путь возвращает только изменённые записи, а не полный набор за период,
+        // поэтому replace по min/max дат удалил бы валидные кеш-записи других дней.
+        // Удаление паразитных/удалённых-в-Jira записей — задача явного range-refresh
+        // (refreshJiraRange ниже), а не этой инкрементальной синхронизации.
         for (const dto of dtos) {
           const row = dtoToRow(dto);
           await tauriApi.upsertCachedWorklog(rowToCached(row));
@@ -316,9 +321,14 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       if (!this.isOnline) { await this.queueOffline(newRow, 'create'); return; }
       try {
         const id = await tauriApi.addWorklog(params, newRow.issueKey, new Date(newStarted).toISOString(), Math.round(newRow.hours * 3600), newRow.comment);
+        const oldRowKey = newRow.rowKey;
         newRow.worklogId = id;
+        newRow.rowKey = rowKeyOf(id, newRow.issueKey, newStarted);
         newRow.syncStatus = 'synced';
         await tauriApi.upsertCachedWorklog(rowToCached(newRow));
+        // Переименовали row_key с local:... на wl:{id} — убираем старую строку кэша,
+        // иначе один worklog остался бы под двумя row_key до следующего Jira-refresh.
+        if (oldRowKey !== newRow.rowKey) await tauriApi.deleteCachedWorklog(oldRowKey);
       } catch (err) {
         newRow.syncStatus = 'error';
         newRow.syncError = String(err);
@@ -373,8 +383,13 @@ export const useMyWorklogStore = defineStore('myWorklog', {
             await tauriApi.deleteWorklog(params, payload.issueKey, payload.worklogId, payload.updated);
           } else if (item.operation === 'create' || item.operation === 'duplicate') {
             const id = await tauriApi.addWorklog(params, payload.issueKey, payload.started, payload.timeSpentSeconds, payload.comment);
+            const oldRowKey = payload.rowKey;
             payload.worklogId = id;
+            payload.rowKey = rowKeyOf(id, payload.issueKey, payload.started);
             await tauriApi.upsertCachedWorklog(payload);
+            // Переименовали row_key с local:... на wl:{id} после успешной отсылки
+            // в Jira — убираем старую строку кэша, иначе останется паразитный дубль.
+            if (oldRowKey !== payload.rowKey) await tauriApi.deleteCachedWorklog(oldRowKey);
           }
           await tauriApi.removeSyncQueueItem(item.id);
         } catch (err) {
@@ -430,6 +445,55 @@ export const useMyWorklogStore = defineStore('myWorklog', {
     async refreshFromJira() {
       await this.loadFromCache();
       await this.fetchFromJira(false);
+    },
+
+    /** Полная ресинхронизация текущего периода с Jira (replace-range): в отличие
+     *  от refreshFromJira (инкремент по watermark), здесь получаем ПОЛНЫЙ набор
+     *  worklog за filters.fromDate..toDate и заменяем кэш периода целиком.
+     *  Это устраняет паразитные записи, удалённые в Jira напрямую, и старые
+     *  дубли от прежнего формата row_key — именно то, что нужно по кнопке
+     *  «↻ Обновить из Jira», когда таблица показывает больше записей, чем
+     *  реально есть в Jira. */
+    async fetchFromJiraFull() {
+      if (this.loading) return;
+      const params = this.activeConnectionParams();
+      if (!params) return;
+      this.loading = true;
+      try {
+        const from = this.filters.fromDate || '1970-01-01';
+        const to = this.filters.toDate || new Date().toISOString().slice(0, 10);
+        const dtos = await tauriApi.getWorklogsSince(params, 0, [], {
+          dateFrom: from,
+          dateTo: to,
+        }, true);
+        const inRange = dtos.filter((d) => {
+          const day = d.started.slice(0, 10);
+          return day >= from && day <= to;
+        });
+        const rows: CachedWorklogRow[] = inRange.map((dto) => ({
+          rowKey: rowKeyOf(dto.id, dto.issueKey ?? '', dto.started),
+          worklogId: dto.id ?? null,
+          issueKey: dto.issueKey ?? 'unknown',
+          issueSummary: dto.issueSummary ?? null,
+          projectKey: (dto.issueKey ?? 'unknown').split('-')[0] ?? null,
+          started: dto.started,
+          timeSpentSeconds: dto.timeSpentSeconds,
+          comment: dto.comment ?? null,
+          updated: dto.updated ?? null,
+          syncedAt: new Date().toISOString(),
+        }));
+        await tauriApi.replaceCachedWorklogsRange(from, to, rows);
+        localStorage.setItem('jiratime-worklog-last-sync', new Date().toISOString());
+        this.lastSyncedAt = new Date().toISOString();
+        await this.loadFromCache();
+        this.fetchInfo = `Загружено ${rows.length} записей из Jira (полная ресинхронизация периода).`;
+        this.fetchError = null;
+      } catch (e) {
+        this.fetchError = e instanceof Error ? e.message : String(e);
+        this.fetchInfo = `Ошибка Jira: ${this.fetchError}`;
+      } finally {
+        this.loading = false;
+      }
     },
 
     setupNetworkListeners() {

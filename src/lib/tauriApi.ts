@@ -223,9 +223,10 @@ export const tauriApi = {
     sinceEpochMillis: number,
     issueKeysForFallback?: string[],
     dateRange?: { dateFrom: string; dateTo: string; issueFilter?: string },
+    allowEmptyRange = false,
   ) {
     return invoke<WorklogDto[]>('get_worklogs_since', {
-      params, sinceEpochMillis, issueKeysForFallback, dateRange,
+      params, sinceEpochMillis, issueKeysForFallback, dateRange, allowEmptyRange,
     });
   },
   addWorklog(params: JiraConnectionParams, issueKey: string, startedAt: string, timeSpentSeconds: number, comment?: string | null) {
@@ -267,6 +268,9 @@ export const tauriApi = {
   // --- Локальный кэш и очередь несинхронизированных изменений ---
   listCachedWorklogs(fromDate: string, toDate: string) { return invoke<CachedWorklogRow[]>('list_cached_worklogs', { fromDate, toDate }); },
   upsertCachedWorklog(row: CachedWorklogRow) { return invoke<void>('upsert_cached_worklog', { row }); },
+  replaceCachedWorklogsRange(fromDate: string, toDate: string, rows: CachedWorklogRow[]) {
+    return invoke<void>('replace_cached_worklogs_range', { fromDate, toDate, rows });
+  },
   deleteCachedWorklog(rowKey: string) { return invoke<void>('delete_cached_worklog', { rowKey }); },
   enqueueSyncOperation(rowKey: string, operation: SyncQueueItem['operation'], payloadJson: string) {
     return invoke<number>('enqueue_sync_operation', { rowKey, operation, payloadJson });

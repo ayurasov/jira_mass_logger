@@ -448,6 +448,17 @@ pub fn upsert_cached_worklog(
     row: CachedWorklogRow,
 ) -> Result<(), String> {
     let conn = lock(&db)?;
+    // Дедупликация по worklog_id: если для этого же worklog_id уже есть строка
+    // с ДРУГИМ row_key (остаток старого формата «issueKey|date|HH:MM» или
+    // случайный local-ключ), удаляем её — иначе один worklog кэшировался бы под
+    // двумя ключами и отображался как дубликат строки в таблице.
+    if let Some(wid) = row.worklog_id.as_ref() {
+        conn.execute(
+            "DELETE FROM cached_worklogs WHERE worklog_id = ?1 AND row_key <> ?2",
+            params![wid, row.row_key],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     conn.execute(
         "INSERT INTO cached_worklogs
              (row_key, worklog_id, issue_key, issue_summary, project_key, started, time_spent_seconds, comment, updated, synced_at)
@@ -470,8 +481,77 @@ pub fn upsert_cached_worklog(
 #[tauri::command]
 pub fn delete_cached_worklog(db: State<'_, WizardDb>, row_key: String) -> Result<(), String> {
     let conn = lock(&db)?;
-    conn.execute("DELETE FROM cached_worklogs WHERE row_key = ?1", params![row_key])
+    // Сначала находим worklog_id удаляемой строки: если в кэше есть дублирующие
+    // строки с тем же worklog_id, но другим row_key (остаток старого формата
+    // «issueKey|date|HH:MM»), удаляем их все — иначе один worklog «размножался»
+    // бы на несколько строк кэша при разных код-путях логирования.
+    let worklog_id: Option<String> = conn
+        .query_row(
+            "SELECT worklog_id FROM cached_worklogs WHERE row_key = ?1",
+            params![row_key],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten();
+    if let Some(wid) = worklog_id.as_ref() {
+        conn.execute(
+            "DELETE FROM cached_worklogs WHERE worklog_id = ?1 OR row_key = ?2",
+            params![wid, row_key],
+        )
         .map_err(|e| e.to_string())?;
+    } else {
+        conn.execute("DELETE FROM cached_worklogs WHERE row_key = ?1", params![row_key])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Полная ресинхронизация диапазона с Jira: в одной транзакции удаляет все
+/// строки cached_worklogs в [from_date, to_date] и вставляет свежие из Jira.
+/// Это гарантирует, что кэш точно соответствует Jira для этого диапазона —
+/// удалённые в Jira записи и старые дубли-кеши исчезают, а не накапливались.
+/// Локальные несинхронизированные записи (worklog_id IS NULL) сохраняются только
+/// если они реально ещё в очереди синхронизации sync_queue (ждут отправки в Jira);
+/// иначе «висячие» local-паразиты без очереди тоже вычищаются — они навсегда
+/// блокировали бы дедуп.
+#[tauri::command]
+pub fn replace_cached_worklogs_range(
+    db: State<'_, WizardDb>,
+    from_date: String,
+    to_date: String,
+    rows: Vec<CachedWorklogRow>,
+) -> Result<(), String> {
+    let mut conn = lock(&db)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM cached_worklogs
+         WHERE substr(started,1,10) BETWEEN ?1 AND ?2
+           AND (
+             worklog_id IS NOT NULL
+             OR row_key NOT IN (SELECT row_key FROM sync_queue)
+           )",
+        params![from_date, to_date],
+    )
+    .map_err(|e| e.to_string())?;
+    for row in &rows {
+        tx.execute(
+            "INSERT INTO cached_worklogs
+                 (row_key, worklog_id, issue_key, issue_summary, project_key, started, time_spent_seconds, comment, updated, synced_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,datetime('now'))
+             ON CONFLICT(row_key) DO UPDATE SET
+                 worklog_id=excluded.worklog_id, issue_key=excluded.issue_key,
+                 issue_summary=excluded.issue_summary, project_key=excluded.project_key,
+                 started=excluded.started, time_spent_seconds=excluded.time_spent_seconds,
+                 comment=excluded.comment, updated=excluded.updated, synced_at=datetime('now')",
+            params![
+                row.row_key, row.worklog_id, row.issue_key, row.issue_summary,
+                row.project_key, row.started, row.time_spent_seconds,
+                row.comment, row.updated,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 

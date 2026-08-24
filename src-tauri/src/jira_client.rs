@@ -736,6 +736,7 @@ pub async fn get_worklogs_since(
     since_epoch_millis: i64,
     issue_keys_for_fallback: Option<Vec<String>>,
     date_range: Option<WorklogDateRange>,
+    allow_empty_range: bool,
 ) -> Result<Vec<WorklogDto>, String> {
     let ctx = init(&params).map_err(String::from)?;
 
@@ -804,6 +805,12 @@ pub async fn get_worklogs_since(
         match fetch_worklogs_by_jql(&ctx, &params, &myself, date_range.as_ref().unwrap()).await {
             Ok(jql_worklogs) if !jql_worklogs.is_empty() => return Ok(jql_worklogs),
             Ok(_) => {
+                // Явный range-refresh (allow_empty_range=true): «0 worklog в Jira» —
+                // это валидный результат, означающий, что кэш диапазона нужно очистить
+                // (записи были удалены в Jira напрямую). Не превращаем это в ошибку.
+                if allow_empty_range {
+                    return Ok(Vec::new());
+                }
                 let dr = date_range.as_ref().unwrap();
                 return Err(format!(
                     "Jira вернула 0 worklog за период {}..{}. Bulk worklog/updated пуст, JQL-fallback тоже ничего не нашёл. Проверьте: есть ли записи в этом периоде, правильный ли пользователь ({}), есть ли права на чтение worklog.",
@@ -1701,7 +1708,7 @@ mod tests {
 
         let params = test_params(server.uri(), JiraInstanceType::ServerBasic);
         // Главный момент: issue_keys_for_fallback = пустой список.
-        let out = get_worklogs_since(params, 0, Some(Vec::new()), None).await.expect("должен вернуть результат");
+        let out = get_worklogs_since(params, 0, Some(Vec::new()), None, false).await.expect("должен вернуть результат");
         // Только моя запись survived фильтр по автору.
         assert_eq!(out.len(), 1, "должна остаться только моя запись (чужая отфильтрована)");
         assert_eq!(out[0].issue_key.as_deref(), Some("PROJ-99"), "numeric issueId должен быть резольвнут в PROJ-99");
@@ -1735,7 +1742,7 @@ mod tests {
             .mount(&server).await;
 
         let params = test_params(server.uri(), JiraInstanceType::ServerBasic);
-        let result = get_worklogs_since(params, 0, Some(Vec::new()), None).await;
+        let result = get_worklogs_since(params, 0, Some(Vec::new()), None, false).await;
         assert!(result.is_err(), "403 не должен давать пустой Ok — должна быть ошибка");
         let err = result.unwrap_err();
         assert!(err.contains("403"), "сообщение должно содержать HTTP-код: {err}");
@@ -1800,10 +1807,48 @@ mod tests {
             date_to: "2026-06-30".to_string(),
             issue_filter: Some("SRM".to_string()),
         };
-        let out = get_worklogs_since(params, 0, Some(Vec::new()), Some(dr)).await
+        let out = get_worklogs_since(params, 0, Some(Vec::new()), Some(dr), false).await
             .expect("JQL-fallback должен вернуть записи");
         assert_eq!(out.len(), 1, "только моя запись (чужая отфильтрована по автору)");
         assert_eq!(out[0].issue_key.as_deref(), Some("SRM-42"));
         assert_eq!(out[0].time_spent_seconds, 5400);
+    }
+
+    /// allow_empty_range=true (явный range-refresh для replace-range синхронизации): если
+    /// и bulk, и JQL-fallback вернули 0 записей, должен вернуться Ok([]), а не
+    /// Err — иначе replace-range не сможет вычистить кэш после удаления
+    /// единственной записи в Jira напрямую.
+    #[tokio::test]
+    async fn get_worklogs_since_empty_range_returns_ok_empty_when_allowed() {
+        use wiremock::matchers::query_param;
+        if std::env::var("JIRATIME_TEST_SECRET_TEST_SECRET_REF").is_err() {
+            std::env::set_var("JIRATIME_TEST_SECRET_TEST_SECRET_REF", "dummy-pass");
+        }
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/rest/api/2/myself"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "key": "yurasov.av", "name": "yurasov.av", "displayName": "Yurasov AV",
+                "emailAddress": "yurasov.av@almi-partner.ru",
+            })))
+            .mount(&server).await;
+        Mock::given(method("GET")).and(path("/rest/api/2/worklog/updated"))
+            .and(query_param("since", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "values": [], "lastPage": true,
+            })))
+            .mount(&server).await;
+        Mock::given(method("POST")).and(path("/rest/api/2/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "issues": [] })))
+            .mount(&server).await;
+
+        let params = test_params(server.uri(), JiraInstanceType::ServerBasic);
+        let dr = WorklogDateRange {
+            date_from: "2026-08-24".to_string(),
+            date_to: "2026-08-24".to_string(),
+            issue_filter: None,
+        };
+        let out = get_worklogs_since(params, 0, Some(Vec::new()), Some(dr), true).await
+            .expect("allow_empty_range=true должен вернуть Ok, а не Err");
+        assert!(out.is_empty(), "ожидаем пустой список — в Jira действительно 0 worklog за этот день");
     }
 }

@@ -150,6 +150,7 @@ fn main() {
             sync_queue::upsert_cached_worklog,
             sync_queue::delete_cached_worklog,
             sync_queue::list_cached_worklogs,
+            sync_queue::replace_cached_worklogs_range,
             // Network / sync status indicator (Промпт 9)
             network::get_sync_indicator,
             network::notify_system_resume,

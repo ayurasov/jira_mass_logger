@@ -125,6 +125,20 @@ function navigateDay(delta: number) {
   store.loadDay(selectedDate.value);
 }
 
+const weekRefreshing = ref(false);
+async function refreshWeek() {
+  weekRefreshing.value = true;
+  try {
+    // Полная ресинхронизация недели с Jira, затем перезагрузка дня, чтобы
+  // дедуп (existingKeys/existingDayWorklogs) сбросился: записи, удалённые в
+  // Jira напрямую, больше не блокируют повторное логирование этого события.
+    await store.refreshWeekFromJira();
+    await store.loadDay(selectedDate.value);
+  } finally {
+    weekRefreshing.value = false;
+  }
+}
+
 function goToday() {
   selectedDate.value = new Date().toISOString().slice(0, 10);
   store.loadDay(selectedDate.value);
@@ -158,6 +172,10 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
           @change="store.loadDay(selectedDate)" class="date-picker" />
         <button @click="store.loadDay(selectedDate, true)" :disabled="store.loading" class="btn-refresh">
           🔄 Обновить
+        </button>
+        <button @click="refreshWeek" :disabled="weekRefreshing || store.loading" class="btn-refresh"
+          title="Полностью ресинхронизировать worklog всей недели с Jira: удалённые в Jira записи и дубли в кэше пропадут">
+          {{ weekRefreshing ? '⏳ Обновление недели…' : '🔄 Обновить неделю из Jira' }}
         </button>
         <select
           :value="store.roundingStepMinutes"
