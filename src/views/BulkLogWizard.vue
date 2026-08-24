@@ -112,9 +112,26 @@ function toDatetimeLocalValue(iso: string): string {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
+// Нативный <input type="time"> рисует свой попап (12ч AM/PM) по локали ОС браузера,
+// а не по locale/hour12 в JS-форматировании — это неуправляемо из кода на большинстве
+// систем Windows. Поэтому вместо type="time" используем обычный текстовый ввод
+// с валидацией и маской ЧЧ:ММ — гарантированно 24-часовой формат везде.
+const startTimeError = ref('');
+function onStartTimeInput(raw: string) {
+  let digits = raw.replace(/\D/g, '').slice(0, 4);
+  let formatted = digits;
+  if (digits.length > 2) formatted = `${digits.slice(0, 2)}:${digits.slice(2)}`;
+  wizard.startTime = formatted;
+  validateStartTime();
+}
+function validateStartTime() {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(wizard.startTime);
+  startTimeError.value = m ? '' : 'Формат: ЧЧ:ММ, 24ч (например 09:00 или 18:30)';
+}
+
 const canProceedFromStep1 = computed(() => wizard.issueKey.trim().length > 0);
 const canProceedFromStep2 = computed(() => !!wizard.periodFrom && !!wizard.periodTo && wizard.periodFrom <= wizard.periodTo);
-const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.startTime.length >= 4);
+const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2[0-3]):([0-5]\d)$/.test(wizard.startTime));
 </script>
 
 <template>
@@ -301,8 +318,18 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
             </div>
 
             <label class="field-block">
-              <span>Время начала (24ч)</span>
-              <input v-model="wizard.startTime" class="text-input" type="time" step="60" />
+              <span>Время начала (24ч, ЧЧ:ММ)</span>
+              <input
+                :value="wizard.startTime"
+                class="text-input"
+                type="text"
+                inputmode="numeric"
+                placeholder="09:00"
+                maxlength="5"
+                @input="onStartTimeInput(($event.target as HTMLInputElement).value)"
+                @blur="validateStartTime"
+              />
+              <small v-if="startTimeError" class="field-error">{{ startTimeError }}</small>
             </label>
             <div class="field-block span-2 save-template-card">
               <span>Сохранить набор параметров как шаблон</span>
@@ -460,5 +487,9 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
   color: var(--text-muted, #888);
   font-size: 0.75rem;
   margin-top: 2px;
+}
+.field-error {
+  color: var(--color-error, #dc2626);
+  font-size: 0.75rem;
 }
 </style>
