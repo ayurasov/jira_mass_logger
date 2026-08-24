@@ -1,19 +1,5 @@
 // Pinia-стор экрана "Мой worklog": редактируемая таблица с оптимистичным UI,
 // очередью несинхронизированных изменений и обработкой конфликтов версий.
-//
-// Стратегия синхронизации:
-//  - локальный кэш (worklog_cache) — источник данных для UI, чтобы экран открывался
-//    мгновенно даже без сети;
-//  - `fetchFromJira` тянет `getWorklogsSince` с watermark в localStorage (не "since = now",
-//    а с небольшим отступом назад, т.к. Jira `worklog/updated` может не включать
-//    изменения за последнюю минуту);
-//  - любая правка ячейки сначала меняет локальный кэш (optimistic), затем либо
-//    сразу ушлёт в Jira (online), либо встаёт в sync_queue (offline/ошибка сети);
-//  - при ошибке сети локальное изменение НЕ отменяется — оно остаётся в sync_queue
-//    и повторяется автоматически; только реальная ошибка валидации/прав даёт rollback;
-//  - конфликт версий (409-подобный случай через сравнение `updated`) не отменяет
-//    правку автоматически, а кладёт зайчу (актуальная версия из Jira + локальная)
-//    в `pendingConflict`, который показывает diff-диалог в UI.
 import { defineStore } from 'pinia';
 import { tauriApi, parseConflictError, type WorklogDto, type JiraConnectionParams, type CachedWorklogRow } from '../lib/tauriApi';
 import { useJiraProfilesStore } from './jiraProfiles';
@@ -26,10 +12,10 @@ export interface WorklogRow {
   issueKey: string;
   issueSummary?: string | null;
   projectKey?: string | null;
-  date: string; // YYYY-MM-DD, производное от started
-  weekday: number; // 0..6, Date.getDay()
+  date: string;
+  weekday: number;
   isoWeek: string;
-  started: string; // полная отметка времени старта, как пришла из Jira
+  started: string;
   hours: number;
   comment: string;
   updated?: string | null;
@@ -39,6 +25,41 @@ export interface WorklogRow {
 
 function rowKeyOf(worklogId: string | null | undefined, issueKey: string, started: string): string {
   return worklogId ? `wl:${worklogId}` : `local:${issueKey}:${started}:${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatJiraStartedInTimezone(date: Date, timezone: string): string {
+  const offsetMs = getTimezoneOffsetMs(date, timezone);
+  const localMs = date.getTime() + offsetMs;
+  const local = new Date(localMs);
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  const sign = offsetMs >= 0 ? '+' : '-';
+  const absMin = Math.abs(offsetMs) / 60000;
+  const hh = pad(Math.floor(absMin / 60));
+  const mm = pad(absMin % 60);
+  return (
+    `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}` +
+    `T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}.000` +
+    `${sign}${hh}${mm}`
+  );
+}
+
+function getTimezoneOffsetMs(dt: Date, tz: string): number {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    });
+    const parts = Object.fromEntries(fmt.formatToParts(dt).map((p) => [p.type, p.value]));
+    const localMs = Date.UTC(
+      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+      Number(parts.hour) % 24, Number(parts.minute), Number(parts.second),
+    );
+    return localMs - dt.getTime();
+  } catch {
+    return -dt.getTimezoneOffset() * 60000;
+  }
 }
 
 function dtoToRow(dto: WorklogDto, projectKey?: string | null, issueSummary?: string | null): WorklogRow {
@@ -114,8 +135,8 @@ export const useMyWorklogStore = defineStore('myWorklog', {
     },
     pendingConflict: null as { local: WorklogRow; remote: WorklogDto } | null,
     autoSyncTimer: null as ReturnType<typeof setInterval> | null,
-    fetchInfo: null as string | null, // сообщение о последней синхронизации (0 записей / успешно)
-    fetchError: null as string | null, // текст ошибки Jira (отдельно от успешного fetchInfo)
+    fetchInfo: null as string | null,
+    fetchError: null as string | null,
   }),
   getters: {
     filteredRows(state): WorklogRow[] {
@@ -152,10 +173,6 @@ export const useMyWorklogStore = defineStore('myWorklog', {
   },
   actions: {
     activeConnectionParams(): JiraConnectionParams | null {
-      // Переиспользуем геттер из jiraProfiles-стора — он правильно учитывает
-      // isActive-флаг и authType==='server_basic'. Раньше тут было profiles[0],
-      // что брало вообще первый профиль (игнорируя активный) и всегда отправляло
-      // server_basic-профиль как Bearer PAT → 401/не вижу свои часы.
       const profiles = useJiraProfilesStore();
       return profiles.activeConnectionParams;
     },
@@ -166,28 +183,16 @@ export const useMyWorklogStore = defineStore('myWorklog', {
     },
 
     async fetchFromJira(force = false) {
-      // Защита от повторного входа: если синхронизация уже идёт (например, сработал
-      // авто-таймер во время ручного обновления), не запускаем параллельный запрос —
-      // иначе «Обновление…» висит дольше, а loading сбрасывается вrace-условии.
       if (this.loading) return;
       const params = this.activeConnectionParams();
       if (!params) return;
       this.loading = true;
       try {
-        // Watermark привязан к профилю + версиям схемы. Если раньше «успешный» пустой
-        // sync записал 0 и потом фильтр отрезал все записи — новый watermark-v2
-        // заставит пересинхронизировать с since=0 при первом запуске после обновления.
         const watermarkKey = `jiratime-worklog-watermark-v2-${params.baseUrl}-${params.email}-${params.instanceType}`;
         const since = force ? 0 : Number(localStorage.getItem(watermarkKey) ?? '0');
-        // issue_keys_for_fallback нужен только для старых Jira Server (<7.6) без bulk
-        // worklog/updated — бэкенд сам переключится на перебор по этим ключам, если
-        // bulk-эндпоинт недоступен. Для Cloud и современного Server он не используется.
         const cachedKeys = new Set(this.rows.map((r) => r.issueKey).filter(Boolean));
         if (this.filters.issueKey) cachedKeys.add(this.filters.issueKey);
         const issueKeysForFallback = Array.from(cachedKeys);
-        // Передаём период из фильтров для JQL-fallback: если bulk worklog/updated
-        // вернёт 0 записей (частый случай на Jira Server 8.x), бэкенд поищет задачи
-        // через worklogAuthor=currentUser() AND worklogDate >= ... AND <= ...
         const dateRange = this.filters.fromDate || this.filters.toDate
           ? {
               dateFrom: this.filters.fromDate || '1970-01-01',
@@ -199,11 +204,6 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         if (!Array.isArray(dtos)) {
           throw new Error('Jira вернула некорректный ответ при загрузке worklog.');
         }
-        // Инкрементальный sync (watermark) — только upsert, без replace-range:
-        // bulk-путь возвращает только изменённые записи, а не полный набор за период,
-        // поэтому replace по min/max дат удалил бы валидные кеш-записи других дней.
-        // Удаление паразитных/удалённых-в-Jira записей — задача явного range-refresh
-        // (refreshJiraRange ниже), а не этой инкрементальной синхронизации.
         for (const dto of dtos) {
           const row = dtoToRow(dto);
           await tauriApi.upsertCachedWorklog(rowToCached(row));
@@ -230,7 +230,13 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       if (!row) return;
       const previous = { ...row };
       Object.assign(row, patch);
+      if (patch.started) {
+        row.date = patch.started.slice(0, 10);
+        row.weekday = new Date(patch.started).getDay();
+        row.isoWeek = getIsoWeek(row.date);
+      }
       row.syncStatus = 'pending';
+      row.syncError = null;
       await tauriApi.upsertCachedWorklog(rowToCached(row));
 
       const params = this.activeConnectionParams();
@@ -243,15 +249,21 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         return;
       }
       try {
+        const settings = useSettingsStore();
         await tauriApi.updateWorklog(params, row.issueKey, row.worklogId, {
-          startedAt: patch.started ? new Date(patch.started).toISOString() : undefined,
+          startedAt: patch.started ? formatJiraStartedInTimezone(new Date(patch.started), settings.timezone) : undefined,
           timeSpentSeconds: patch.hours !== undefined ? Math.round(row.hours * 3600) : undefined,
           comment: patch.comment,
           expectedUpdated: previous.updated,
         });
         const fresh = await tauriApi.getWorklogById(params, row.issueKey, row.worklogId);
+        row.started = fresh.started;
+        row.date = fresh.started.slice(0, 10);
+        row.weekday = new Date(fresh.started).getDay();
+        row.isoWeek = getIsoWeek(row.date);
         row.updated = fresh.updated;
         row.syncStatus = 'synced';
+        row.syncError = null;
         await tauriApi.upsertCachedWorklog(rowToCached(row));
       } catch (err) {
         const conflict = parseConflictError(err);
@@ -261,7 +273,6 @@ export const useMyWorklogStore = defineStore('myWorklog', {
           row.syncError = 'Конфликт версий: запись изменена в Jira';
           return;
         }
-        // rollback при ошибке валидации/прав (не сетевой)
         Object.assign(row, previous);
         row.syncStatus = 'error';
         row.syncError = String(err);
@@ -291,7 +302,6 @@ export const useMyWorklogStore = defineStore('myWorklog', {
           await tauriApi.upsertCachedWorklog(rowToCached(row));
           return;
         }
-        // rollback: вернуть строку и пометить ошибку
         row.syncStatus = 'error';
         row.syncError = String(err);
         this.rows.push(row);
@@ -320,14 +330,12 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       if (!params) { newRow.syncStatus = 'local-only'; return; }
       if (!this.isOnline) { await this.queueOffline(newRow, 'create'); return; }
       try {
-        const id = await tauriApi.addWorklog(params, newRow.issueKey, new Date(newStarted).toISOString(), Math.round(newRow.hours * 3600), newRow.comment);
+        const id = await tauriApi.addWorklog(params, newRow.issueKey, formatJiraStartedInTimezone(new Date(newStarted), useSettingsStore().timezone), Math.round(newRow.hours * 3600), newRow.comment);
         const oldRowKey = newRow.rowKey;
         newRow.worklogId = id;
         newRow.rowKey = rowKeyOf(id, newRow.issueKey, newStarted);
         newRow.syncStatus = 'synced';
         await tauriApi.upsertCachedWorklog(rowToCached(newRow));
-        // Переименовали row_key с local:... на wl:{id} — убираем старую строку кэша,
-        // иначе один worklog остался бы под двумя row_key до следующего Jira-refresh.
         if (oldRowKey !== newRow.rowKey) await tauriApi.deleteCachedWorklog(oldRowKey);
       } catch (err) {
         newRow.syncStatus = 'error';
@@ -350,9 +358,14 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         await tauriApi.updateWorklog(params, row.issueKey, row.worklogId, {
           timeSpentSeconds: Math.round(row.hours * 3600),
           comment: row.comment,
+          startedAt: row.started,
           expectedUpdated: remote.updated,
         });
         const fresh = await tauriApi.getWorklogById(params, row.issueKey, row.worklogId);
+        row.started = fresh.started;
+        row.date = fresh.started.slice(0, 10);
+        row.weekday = new Date(fresh.started).getDay();
+        row.isoWeek = getIsoWeek(row.date);
         row.updated = fresh.updated;
         row.syncStatus = 'synced';
         await tauriApi.upsertCachedWorklog(rowToCached(row));
@@ -375,6 +388,7 @@ export const useMyWorklogStore = defineStore('myWorklog', {
           const payload = JSON.parse(item.payloadJson) as CachedWorklogRow;
           if (item.operation === 'update' && payload.worklogId) {
             await tauriApi.updateWorklog(params, payload.issueKey, payload.worklogId, {
+              startedAt: payload.started,
               timeSpentSeconds: payload.timeSpentSeconds,
               comment: payload.comment,
               expectedUpdated: payload.updated,
@@ -387,8 +401,6 @@ export const useMyWorklogStore = defineStore('myWorklog', {
             payload.worklogId = id;
             payload.rowKey = rowKeyOf(id, payload.issueKey, payload.started);
             await tauriApi.upsertCachedWorklog(payload);
-            // Переименовали row_key с local:... на wl:{id} после успешной отсылки
-            // в Jira — убираем старую строку кэша, иначе останется паразитный дубль.
             if (oldRowKey !== payload.rowKey) await tauriApi.deleteCachedWorklog(oldRowKey);
           }
           await tauriApi.removeSyncQueueItem(item.id);
@@ -399,7 +411,6 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       await this.loadFromCache();
     },
 
-    /** Устанавливает период и (по умолчанию) форсирует перезагрузку из Jira именно за него. */
     async setPeriod(from: string, to: string, fetch = true) {
       this.filters.fromDate = from;
       this.filters.toDate = to;
@@ -426,7 +437,7 @@ export const useMyWorklogStore = defineStore('myWorklog', {
     persistFilters() {
       try {
         localStorage.setItem('jiratime-worklog-filters', JSON.stringify({ filters: this.filters, sort: this.sort }));
-      } catch { /* квота/приватный режим — не критично */ }
+      } catch { }
     },
 
     restoreFilters() {
@@ -436,24 +447,14 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         const saved = JSON.parse(raw);
         if (saved?.filters) Object.assign(this.filters, saved.filters);
         if (saved?.sort) Object.assign(this.sort, saved.sort);
-      } catch { /* битый JSON — игнорируем */ }
+      } catch { }
     },
 
-    /** Мягкое обновление из Jira по текущему периоду: кэш показываем мгновенно,
-     *  затем тянем только изменения (watermark), без force=true (который
-     *  сбрасывал since=0 и «подвешивал» таблицу на полном перечёте). */
     async refreshFromJira() {
       await this.loadFromCache();
       await this.fetchFromJira(false);
     },
 
-    /** Полная ресинхронизация текущего периода с Jira (replace-range): в отличие
-     *  от refreshFromJira (инкремент по watermark), здесь получаем ПОЛНЫЙ набор
-     *  worklog за filters.fromDate..toDate и заменяем кэш периода целиком.
-     *  Это устраняет паразитные записи, удалённые в Jira напрямую, и старые
-     *  дубли от прежнего формата row_key — именно то, что нужно по кнопке
-     *  «↻ Обновить из Jira», когда таблица показывает больше записей, чем
-     *  реально есть в Jira. */
     async fetchFromJiraFull() {
       if (this.loading) return;
       const params = this.activeConnectionParams();
