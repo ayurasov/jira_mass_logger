@@ -4,12 +4,14 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { useBulkWizardStore } from '../store/bulkWizard';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { useAnalyticsStore } from '../store/analytics';
+import { useSettingsStore } from '../store/settings';
 import { tauriApi } from '../lib/tauriApi';
 import { DATE_RANGE_PRESETS } from '../utils/dateRange';
 
 const wizard = useBulkWizardStore();
 const jiraProfiles = useJiraProfilesStore();
 const analyticsStore = useAnalyticsStore();
+const settings = useSettingsStore();
 
 const templateName = ref('');
 const holidayJson = ref('');
@@ -78,6 +80,38 @@ async function exportLog() {
   await tauriApi.writeExportFile(logPath, wizard.buildExportLog());
 }
 
+/** "Новая сессия": полный сброс мастера к начальным значениям с подтверждением,
+ *  если пользователь уже что-то заполнил (чтобы не потерять данные случайно). */
+function startNewSession() {
+  const hasProgress = !!wizard.issueKey || wizard.previewRows.length > 0 || wizard.statusLogLines.length > 0;
+  if (hasProgress && !confirm('Начать новую сессию? Все текущие поля будут сброшены.')) return;
+  wizard.resetWizard();
+  issueInput.value = '';
+  templateName.value = '';
+}
+
+/** Отображает время в формате ЧЧ:ММ (24ч), как оно попадёт в Jira, в локальной таймзоне пользователя. */
+function fmtStartedAt24h(iso: string): string {
+  const dt = new Date(iso);
+  return new Intl.DateTimeFormat('ru-RU', {
+    timeZone: settings.timezone,
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(dt);
+}
+
+/** Значение для <input type="datetime-local"> в локальной таймзоне (24ч), без Z/оффсета. */
+function toDatetimeLocalValue(iso: string): string {
+  const dt = new Date(iso);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: settings.timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(dt).map((p) => [p.type, p.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
 const canProceedFromStep1 = computed(() => wizard.issueKey.trim().length > 0);
 const canProceedFromStep2 = computed(() => !!wizard.periodFrom && !!wizard.periodTo && wizard.periodFrom <= wizard.periodTo);
 const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.startTime.length >= 4);
@@ -91,6 +125,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
         <p>Главный мастер для пакетного создания worklog в Jira.</p>
       </div>
       <div class="header-actions">
+        <button class="secondary-btn" @click="startNewSession" title="Сбросить все поля и начать заново">+ Новая сессия</button>
         <router-link class="secondary-btn" to="/templates">Шаблоны</router-link>
         <router-link class="secondary-btn" to="/settings">Настройки</router-link>
       </div>
@@ -130,17 +165,17 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
         <section v-show="wizard.step === 1" class="wizard-step-panel">
           <div class="panel-header">
             <h2>Шаг 1. Выбор задачи Jira</h2>
-            <p>Введите ключ задачи (например ABC-123) или вставьте ссылку — мастер найдёт её в Jira.</p>
+            <p>Введите ключ задачи (например ABC-123), ссылку или часть текста — мастер найдёт её в Jira.</p>
           </div>
 
           <div class="grid two-col">
             <label class="field-block span-2">
-              <span>Поиск задачи / ссылка / ключ</span>
+              <span>Поиск задачи / ссылка / ключ / текст</span>
               <input
                 v-model="issueInput"
                 class="text-input"
                 type="text"
-                placeholder="Например: ABC-123 или https://jira.example.com/browse/ABC-123"
+                placeholder="Например: ABC-123, https://jira.example.com/browse/ABC-123 или текст задачи"
                 @input="searchIssues"
                 @blur="wizard.selectIssue(issueInput)"
               />
@@ -156,7 +191,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
                   <strong>{{ option.key }}</strong>
                   <span v-if="option.summary"> — {{ option.summary }}</span>
                 </div>
-                <small>{{ option.isFavorite ? '★ Избранное' : option.source === 'recent' ? 'Недавняя' : 'JQL' }}</small>
+                <small>{{ option.isFavorite ? '★ Избранное' : option.source === 'recent' ? 'Недавняя' : 'Найдено в Jira' }}</small>
               </button>
             </div>
 
@@ -165,7 +200,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
                 <strong>Выбрано:</strong> {{ wizard.issueKey }}
                 <span v-if="wizard.issueSummary"> — {{ wizard.issueSummary }}</span>
               </div>
-              <p>Можно вставить прямую ссылку или просто ключ — мастер распознает issue key автоматически.</p>
+              <p>Можно вставить прямую ссылку, ключ задачи или её текст — мастер распознает issue key автоматически.</p>
             </div>
           </div>
         </section>
@@ -229,7 +264,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
         <section v-show="wizard.step === 3" class="wizard-step-panel">
           <div class="panel-header">
             <h2>Шаг 3. Параметры записи</h2>
-            <p>Часы в день, шаблон комментария, переменные и конкретное время начала работы в течение дня.</p>
+            <p>Часы в день, шаблон комментария, переменные и конкретное время начала работы в течение дня (24-часовой формат).</p>
           </div>
 
           <div class="grid three-col">
@@ -251,16 +286,23 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
             </label>
             <div class="field-block">
               <span>Сохранённые шаблоны текста</span>
-              <div class="template-buttons">
-                <button v-for="tpl in wizard.savedTextTemplates" :key="tpl" class="template-chip" @click="wizard.descriptionTemplate = tpl">
-                  {{ tpl }}
+              <div v-if="wizard.textTemplates.length" class="template-buttons">
+                <button
+                  v-for="tpl in wizard.textTemplates"
+                  :key="tpl.id ?? tpl.name"
+                  class="template-chip"
+                  :title="tpl.text"
+                  @click="wizard.applyTextTemplate(tpl)"
+                >
+                  {{ tpl.name }}
                 </button>
               </div>
+              <small v-else>Шаблонов пока нет — создайте их на странице «Шаблоны».</small>
             </div>
 
             <label class="field-block">
-              <span>Время начала</span>
-              <input v-model="wizard.startTime" class="text-input" type="time" />
+              <span>Время начала (24ч)</span>
+              <input v-model="wizard.startTime" class="text-input" type="time" step="60" />
             </label>
             <div class="field-block span-2 save-template-card">
               <span>Сохранить набор параметров как шаблон</span>
@@ -271,7 +313,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
             </div>
 
             <div class="field-block span-3" v-if="wizard.templates.length">
-              <span>Повторное применение шаблона</span>
+              <span>Повторное применение шаблона мастера</span>
               <div class="template-buttons">
                 <button v-for="tpl in wizard.templates" :key="tpl.id || tpl.name" class="template-chip wide" @click="wizard.applyTemplate(tpl)">
                   {{ tpl.name }}
@@ -284,7 +326,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
         <section v-show="wizard.step === 4" class="wizard-step-panel">
           <div class="panel-header">
             <h2>Шаг 4. Предпросмотр и подтверждение</h2>
-            <p>Перед отправкой можно убрать или подправить любую строку и увидеть конфликты по дате+задаче.</p>
+            <p>Перед отправкой можно убрать или подправить любую строку и увидеть конфликты по дате+задаче. Время указано в 24-часовом формате — именно так, как оно попадёт в Jira.</p>
           </div>
 
           <div class="preview-summary">
@@ -311,7 +353,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
                   <th>День</th>
                   <th>Часы</th>
                   <th>Описание</th>
-                  <th>Старт</th>
+                  <th>Старт (24ч)</th>
                   <th>Конфликт</th>
                   <th>Статус</th>
                   <th></th>
@@ -343,9 +385,10 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
                     <input
                       class="table-input"
                       type="datetime-local"
-                      :value="row.startedAt.slice(0, 16)"
-                      @input="wizard.updatePreviewRow(row.id, { startedAt: `${($event.target as HTMLInputElement).value}:00.000Z` })"
+                      :value="toDatetimeLocalValue(row.startedAt)"
+                      @input="wizard.setPreviewRowStartedAtLocal(row.id, ($event.target as HTMLInputElement).value)"
                     />
+                    <small class="started-hint">{{ fmtStartedAt24h(row.startedAt) }}</small>
                   </td>
                   <td>
                     <span class="badge warning" v-if="row.conflict">Уже есть worklog</span>
@@ -374,6 +417,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
           <div class="inline-actions preview-actions">
             <button class="primary-btn" @click="submitWizard" :disabled="wizard.sending">{{ wizard.sending ? 'Отправка…' : 'Подтвердить и отправить' }}</button>
             <button class="secondary-btn" @click="exportLog" :disabled="wizard.statusLogLines.length === 0">Экспортировать лог</button>
+            <button class="secondary-btn" @click="startNewSession">+ Новая сессия</button>
           </div>
         </section>
 
@@ -410,5 +454,11 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
 .empty-state-error {
   color: var(--color-error, #dc2626);
   font-size: 0.85rem;
+}
+.started-hint {
+  display: block;
+  color: var(--text-muted, #888);
+  font-size: 0.75rem;
+  margin-top: 2px;
 }
 </style>
