@@ -78,7 +78,7 @@
 .week-row td { background: var(--color-surface-strong, #eef1f6); font-weight: 700; padding-top: 0.625rem; padding-bottom: 0.625rem; }
 .day-row td { background: var(--color-surface-alt, #f7f8fa); font-weight: 600; font-size: 0.8125rem; }
 
-.group-label { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.group-label { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; white-space: nowrap; }
 .group-total { font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
 
 .col-hours { text-align: right; white-space: nowrap; width: 5rem; }
@@ -87,11 +87,16 @@
 .hours--over { color: var(--color-danger, #c92a2a); }
 .hours--ok { color: var(--color-success, #1b8a3d); }
 
-.issue-cell { display: flex; flex-direction: column; }
+.issue-cell { display: flex; flex-direction: column; min-width: 12rem; }
 .issue-cell__key { font-weight: 600; }
-.issue-cell__summary { font-size: 0.75rem; color: var(--color-text-muted, #6b7280); max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.issue-cell__summary { font-size: 0.75rem; color: var(--color-text-muted, #6b7280); white-space: normal; overflow-wrap: anywhere; line-height: 1.2; }
 
-.comment-preview { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
+.comment-cell { min-width: 12rem; }
+.comment-preview { white-space: pre-wrap; overflow-wrap: anywhere; display: block; max-width: 22rem; line-height: 1.25; }
+
+.th-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.th-sortable:hover { background: var(--color-surface-alt, #f1f2f4); }
+.sort-ind { font-size: 0.7rem; color: var(--color-primary, #3366ff); margin-left: 0.2rem; }
 
 .cell-input { width: 100%; padding: 0.25rem 0.375rem; border: 1px solid var(--color-primary, #3366ff); border-radius: 0.25rem; font-size: 0.875rem; }
 .cell-input--wide { min-width: 14rem; }

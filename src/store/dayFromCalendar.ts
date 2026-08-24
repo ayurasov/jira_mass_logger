@@ -60,7 +60,11 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
   getters: {
     workHoursPerDay(): number { return useSettingsStore().workHoursPerDay; },
     meetingSeconds(): number { return this.rows.reduce((s, r) => s + r.roundedSeconds, 0); },
-    coveredSeconds(): number { return this.meetingSeconds + this.worklogTodaySeconds; },
+    /** «Покрыто» = только то, что реально залогировано в Jira за день.
+ *  Раньше сюда плюсовались длительности календарных встреч — но встреча
+     *  в календаре ещё не значит «часы списаны», поэтому подсветка заполненности
+     *  считается именно по worklog из Jira. */
+    coveredSeconds(): number { return this.worklogTodaySeconds; },
     normSeconds(): number { return this.workHoursPerDay * 3600; },
     uncoveredSeconds(): number { return Math.max(0, this.normSeconds - this.coveredSeconds); },
     /** ISO-дата понедельника текущей недели */

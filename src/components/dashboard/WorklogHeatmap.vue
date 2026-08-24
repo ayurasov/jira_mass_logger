@@ -12,20 +12,28 @@
       <div class="heatmap-grid">
         <!-- заголовки дней недели -->
         <div class="heatmap-weekdays">
+          <span class="weekday-spacer"></span>
           <span v-for="d in weekdayLabels" :key="d">{{ d }}</span>
         </div>
-        <!-- колонки по неделям -->
+        <!-- колонки по неделям + шапка с номером недели -->
         <div class="heatmap-weeks">
           <div v-for="(week, wi) in weeks" :key="wi" class="heatmap-week">
+            <button
+              v-if="weekMeta[wi]"
+              class="heatmap-week-num"
+              :class="'heatmap-week-num--' + weekMeta[wi].level"
+              :title="`Неделя ${weekMeta[wi].label}: ${weekMeta[wi].hours.toFixed(1)} ч — открыть в worklog`"
+              @click="goToWeek(weekMeta[wi].from, weekMeta[wi].to)"
+            >{{ weekMeta[wi].short }}</button>
             <div
-              v-for="cell in week"
-              :key="cell ? cell.date : wi + '-empty'"
+              v-for="(cell, ci) in week"
+              :key="cell ? cell.date : wi + '-' + ci"
               class="heatmap-cell"
-              :class="{ 'heatmap-cell--clickable': !!cell }"
+              :class="{ 'heatmap-cell--clickable': !!cell, 'heatmap-cell--weekend': cell && isWeekend(cell.date) }"
               :data-level="cell ? cell.level : -1"
               :title="cell ? `${cell.date}: ${cell.hours} ч — открыть в worklog` : ''"
               @click="cell ? goToWorklog(cell.date) : null"
-            ></div>
+            >{{ cell && cell.hours > 0 ? cell.hours.toFixed(1) : '' }}</div>
           </div>
         </div>
       </div>
@@ -45,7 +53,16 @@ function goToWorklog(date: string) {
   router.push({ name: 'worklog', query: { from: date, to: date } });
 }
 
+function goToWeek(from: string, to: string) {
+  router.push({ name: 'worklog', query: { from, to } });
+}
+
 const weekdayLabels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+function isWeekend(dateIso: string): boolean {
+  const d = new Date(dateIso).getDay();
+  return d === 0 || d === 6;
+}
 
 // Группируем ячейки по неделям (вертикальные колонки), как в GitHub contribution graph
 // Неделя начинается с понедельника (индекс 0 = Пн)
@@ -74,6 +91,36 @@ const weeks = computed(() => {
   }
   return result;
 });
+
+// Метаданные по каждой колонке-неделе: номер недели (ISO), диапазон дат,
+// суммарные часы и уровень заполнения (0..4) для окраски шапки.
+const weekMeta = computed(() => {
+  const normPerDay = 8;
+  const target = normPerDay * 5;
+  return weeks.value.map((week) => {
+    const present = week.filter(Boolean) as HeatmapCell[];
+    const first = present[0];
+    if (!first) return null;
+    const from = first.date;
+    const last = present[present.length - 1];
+    const to = last ? last.date : from;
+    const hours = present.reduce((s, c) => s + c.hours, 0);
+    // ISO-номер недели из первой ячейки
+    const iso = first.date.slice(0, 4) + '-W' + isoWeekNum(first.date);
+    const ratio = hours / target;
+    const level: 0 | 1 | 2 | 3 | 4 = hours <= 0 ? 0 : ratio < 0.5 ? 1 : ratio < 0.8 ? 2 : ratio < 1.0 ? 3 : 4;
+    return { label: iso, short: iso.split('-W')[1], from, to, hours, level };
+  });
+});
+
+function isoWeekNum(dateIso: string): string {
+  const date = new Date(dateIso);
+  const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+  return String(Math.ceil((((target.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)).padStart(2, '0');
+}
 </script>
 
 <style scoped>
@@ -92,12 +139,13 @@ const weeks = computed(() => {
   gap: 3px;
   padding-top: 2px;
 }
+.weekday-spacer { height: 22px; }
 .heatmap-weekdays span {
   font-size: 0.7rem;
   color: var(--muted);
-  width: 1.5rem;
-  height: 14px;
-  line-height: 14px;
+  width: 2.5rem;
+  height: 22px;
+  line-height: 22px;
   text-align: right;
 }
 .heatmap-weeks {
@@ -108,15 +156,41 @@ const weeks = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  align-items: stretch;
 }
+.heatmap-week-num {
+  height: 20px;
+  border: none;
+  border-radius: 3px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  margin-bottom: 1px;
+  line-height: 20px;
+  padding: 0;
+}
+.heatmap-week-num:hover { opacity: 0.8; }
+.heatmap-week-num--0 { background: var(--heatmap-0); color: var(--muted); }
+.heatmap-week-num--1 { background: var(--heatmap-1); }
+.heatmap-week-num--2 { background: var(--heatmap-2); }
+.heatmap-week-num--3 { background: var(--heatmap-3); }
+.heatmap-week-num--4 { background: var(--heatmap-4); }
 .heatmap-cell {
-  width: 14px;
-  height: 14px;
+  width: 2.5rem;
+  height: 22px;
   border-radius: 3px;
   background: var(--heatmap-0);
   transition: background 0.15s;
   cursor: default;
+  font-size: 0.6rem;
+  line-height: 22px;
+  text-align: center;
+  color: rgba(0, 0, 0, 0.55);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
 }
+.heatmap-cell--weekend { opacity: 0.5; }
 .heatmap-cell[data-level="-1"] { background: transparent; }
 .heatmap-cell[data-level="0"]  { background: var(--heatmap-0); }
 .heatmap-cell[data-level="1"]  { background: var(--heatmap-1); }

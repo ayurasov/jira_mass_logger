@@ -107,6 +107,7 @@ export interface IssueDto { id: string; key: string; summary?: string | null; }
 export interface WorklogDto {
   id: string;
   issueKey?: string | null;
+  issueSummary?: string | null;
   started: string;
   timeSpentSeconds: number;
   comment?: string | null;

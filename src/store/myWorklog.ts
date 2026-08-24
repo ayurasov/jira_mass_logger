@@ -49,7 +49,7 @@ function dtoToRow(dto: WorklogDto, projectKey?: string | null, issueSummary?: st
     rowKey: rowKeyOf(dto.id, dto.issueKey ?? '', started),
     worklogId: dto.id,
     issueKey: dto.issueKey ?? '',
-    issueSummary,
+    issueSummary: issueSummary ?? dto.issueSummary ?? null,
     projectKey: projectKey ?? (dto.issueKey ? dto.issueKey.split('-')[0] : null),
     date,
     weekday,
@@ -108,6 +108,10 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       projectKey: '',
       searchText: '',
     },
+    sort: {
+      key: 'date' as 'date' | 'issue' | 'hours' | 'status',
+      dir: 'desc' as 'asc' | 'desc',
+    },
     pendingConflict: null as { local: WorklogRow; remote: WorklogDto } | null,
     autoSyncTimer: null as ReturnType<typeof setInterval> | null,
     fetchInfo: null as string | null, // сообщение о последней синхронизации (0 записей / успешно)
@@ -124,6 +128,23 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         if (searchText && !r.comment.toLowerCase().includes(searchText.toLowerCase())) return false;
         return true;
       });
+    },
+    sortedRows(): WorklogRow[] {
+      const rows = [...this.filteredRows];
+      const { key, dir } = this.sort;
+      const mul = dir === 'asc' ? 1 : -1;
+      rows.sort((a, b) => {
+        let av: number | string;
+        let bv: number | string;
+        if (key === 'hours') { av = a.hours; bv = b.hours; }
+        else if (key === 'issue') { av = a.issueKey; bv = b.issueKey; }
+        else if (key === 'status') { av = a.syncStatus; bv = b.syncStatus; }
+        else { av = a.started; bv = b.started; }
+        if (av < bv) return -1 * mul;
+        if (av > bv) return 1 * mul;
+        return 0;
+      });
+      return rows;
     },
     hasPendingSync(state): boolean {
       return state.rows.some((r) => r.syncStatus === 'pending' || r.syncStatus === 'local-only');
@@ -367,8 +388,48 @@ export const useMyWorklogStore = defineStore('myWorklog', {
     async setPeriod(from: string, to: string, fetch = true) {
       this.filters.fromDate = from;
       this.filters.toDate = to;
+      this.persistFilters();
       if (fetch) await this.fetchFromJira(true);
       else await this.loadFromCache();
+    },
+
+    setFilters(patch: Partial<{ issueKey: string; projectKey: string; searchText: string; fromDate: string; toDate: string }>) {
+      Object.assign(this.filters, patch);
+      this.persistFilters();
+    },
+
+    setSort(key: 'date' | 'issue' | 'hours' | 'status') {
+      if (this.sort.key === key) {
+        this.sort.dir = this.sort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        this.sort.key = key;
+        this.sort.dir = key === 'date' ? 'desc' : 'asc';
+      }
+      this.persistFilters();
+    },
+
+    persistFilters() {
+      try {
+        localStorage.setItem('jiratime-worklog-filters', JSON.stringify({ filters: this.filters, sort: this.sort }));
+      } catch { /* квота/приватный режим — не критично */ }
+    },
+
+    restoreFilters() {
+      try {
+        const raw = localStorage.getItem('jiratime-worklog-filters');
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        if (saved?.filters) Object.assign(this.filters, saved.filters);
+        if (saved?.sort) Object.assign(this.sort, saved.sort);
+      } catch { /* битый JSON — игнорируем */ }
+    },
+
+    /** Мягкое обновление из Jira по текущему периоду: кэш показываем мгновенно,
+     *  затем тянем только изменения (watermark), без force=true (который
+     *  сбрасывал since=0 и «подвешивал» таблицу на полном перечёте). */
+    async refreshFromJira() {
+      await this.loadFromCache();
+      await this.fetchFromJira(false);
     },
 
     setupNetworkListeners() {

@@ -127,6 +127,9 @@ export const useAnalyticsStore = defineStore('analytics', {
 
     // статистика bulk-мастера из localStorage
     bulkEntriesCreated: 0,
+
+    // map projectKey → projectName, для подписей в разбивке по проектам
+    _projectNames: new Map<string, string>(),
   }),
 
   getters: {
@@ -150,8 +153,8 @@ export const useAnalyticsStore = defineStore('analytics', {
           ? (r.projectKey || r.issueKey.split('-')[0] || '?')
           : r.issueKey;
         const label = this.breakdownMode === 'project'
-          ? (r.projectKey || r.issueKey.split('-')[0] || '?')
-          : `${r.issueKey}${r.issueSummary ? ' ' + r.issueSummary.slice(0, 40) : ''}`;
+          ? (this._projectNames.get(key) || r.projectKey || r.issueKey.split('-')[0] || '?')
+          : `${r.issueKey}${r.issueSummary ? ' — ' + r.issueSummary.slice(0, 50) : ''}`;
         const h = (r.timeSpentSeconds ?? 0) / 3600;
         const prev = map.get(key) ?? { label, hours: 0 };
         map.set(key, { label, hours: prev.hours + h });
@@ -232,6 +235,18 @@ export const useAnalyticsStore = defineStore('analytics', {
         const to   = toIsoDate(today);
         this._rows = await tauriApi.listCachedWorklogs(from, to);
         this.bulkEntriesCreated = Number(localStorage.getItem('jiratime-bulk-entries-created') ?? '0');
+        // Названия проектов для разбивки (best-effort: не блокируем дашборд при ошибке).
+        try {
+          const profiles = (await import('./jiraProfiles')).useJiraProfilesStore();
+          await profiles.ensureLoaded();
+          const params = profiles.activeConnectionParams;
+          if (params) {
+            const projects = await tauriApi.getProjects(params);
+            const m = new Map<string, string>();
+            for (const p of projects) m.set(p.key, p.name);
+            this._projectNames = m;
+          }
+        } catch { /* Jira недоступен — подписи будут просто ключами проектов */ }
         this.lastFetched = Date.now();
       } catch (e) {
         this.error = e instanceof Error ? e.message : 'Не удалось загрузить данные';

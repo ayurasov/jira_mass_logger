@@ -5,11 +5,13 @@ import { useDayFromCalendarStore } from '../store/dayFromCalendar';
 import { tauriApi } from '../lib/tauriApi';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { useSettingsStore } from '../store/settings';
+import { useFavoriteTasksStore } from '../store/favoriteTasks';
 
 const store = useDayFromCalendarStore();
 const router = useRouter();
 const settings = useSettingsStore();
 const jiraStore = useJiraProfilesStore();
+const favorites = useFavoriteTasksStore();
 
 const selectedDate = ref(new Date().toISOString().slice(0, 10));
 const issueSearchMap = ref<Record<number, string>>({});
@@ -89,6 +91,9 @@ function selectIssue(idx: number, key: string, summary: string) {
   store.setIssueForRow(idx, key, summary);
   issueOptionsMap.value[idx] = [];
   issueSearchMap.value[idx] = '';
+}
+function selectFavorite(idx: number, key: string, summary: string | null | undefined) {
+  store.setIssueForRow(idx, key, summary ?? null);
 }
 
 async function logSingle(idx: number) {
@@ -189,7 +194,7 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
       <span>
         Покрыто: {{ fmtDuration(store.coveredSeconds) }} / {{ store.workHoursPerDay }}ч
         <template v-if="store.uncoveredSeconds > 0">
-          · ⚠️ Не залогировано ещё {{ uncoveredHours }}ч
+          · ⚠️ Не залогировано ещё {{ uncoveredHours }}
         </template>
         <template v-else>
           · ✅ Норма выполнена
@@ -260,12 +265,28 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
 
           <!-- Issue picker -->
           <div class="issue-row">
+            <!-- Любимые задачи: быстрый выбор без поиска -->
+            <div v-if="favorites.has && !row.selectedIssueKey" class="favorites-bar">
+              <button
+                v-for="f in favorites.items"
+                :key="f.issueKey"
+                class="fav-chip"
+                :title="f.issueSummary || f.issueKey"
+                @click="selectFavorite(idx, f.issueKey, f.issueSummary)">
+                {{ f.issueKey }}
+                <span class="fav-chip__remove" @click.stop="favorites.remove(f.issueKey)" title="Убрать из избранного">✕</span>
+              </button>
+            </div>
             <span v-if="row.selectedIssueKey" class="issue-chip">
               {{ row.selectedIssueKey }}
               <span v-if="row.selectedIssueSummary" class="issue-summary">
                 {{ row.selectedIssueSummary }}
               </span>
               <button @click="store.setIssueForRow(idx, '', null)" class="btn-clear">✕</button>
+              <button
+                :class="['btn-star', favorites.isFavorite(row.selectedIssueKey) ? 'is-fav' : '']"
+                :title="favorites.isFavorite(row.selectedIssueKey) ? 'В избранном' : 'Добавить в избранное'"
+                @click="favorites.toggle(row.selectedIssueKey, row.selectedIssueSummary)">{{ favorites.isFavorite(row.selectedIssueKey) ? '★' : '☆' }}</button>
             </span>
             <div class="issue-search-wrap" v-if="!row.selectedIssueKey">
               <input
@@ -390,6 +411,16 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
 }
 .issue-summary { color: #555; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-clear { background: none; border: none; cursor: pointer; font-size: 12px; padding: 0; }
+.btn-star { background: none; border: none; cursor: pointer; font-size: 14px; padding: 0 2px; color: #888; line-height: 1; }
+.btn-star.is-fav { color: #f5a623; }
+.favorites-bar { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; width: 100%; padding: 2px 0; }
+.fav-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; background: #fff8e1; border: 1px solid #ffe082; border-radius: 12px; font-size: 11px; cursor: pointer; line-height: 1.4;
+}
+.fav-chip:hover { background: #fff3c4; }
+.fav-chip__remove { color: #999; font-size: 10px; }
+.fav-chip__remove:hover { color: #c92a2a; }
 .issue-search-wrap { position: relative; }
 .issue-search { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border, #ddd); font-size: 12px; width: 220px; }
 .issue-dropdown {

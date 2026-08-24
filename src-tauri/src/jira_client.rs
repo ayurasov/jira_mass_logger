@@ -440,6 +440,7 @@ pub struct IssueDto {
 pub struct WorklogDto {
     pub id: String,
     pub issue_key: Option<String>,
+    pub issue_summary: Option<String>,
     pub started: String,
     pub time_spent_seconds: i64,
     pub comment: Option<String>,
@@ -1024,7 +1025,6 @@ async fn fetch_worklogs_by_jql(
         let issue_key = issue.get("key").and_then(|k| k.as_str()).unwrap_or("");
         let summary = issue.get("fields").and_then(|f| f.get("summary")).and_then(|s| s.as_str()).unwrap_or("").to_string();
         if issue_key.is_empty() { continue; }
-        let _ = summary; // summary зарезервирован для будущего UI
 
         // Берём worklog по найденной задаче. Jira Server 8.x поддерживает
         // пагинацию через startAt/maxResults (по умолчанию ~20–5000 в зависимости
@@ -1078,6 +1078,7 @@ async fn fetch_worklogs_by_jql(
             let updated = v.get("updated").and_then(|x| x.as_str()).map(|s| s.to_string());
             out.push(WorklogDto {
                 id, issue_key: Some(issue_key.to_string()),
+                issue_summary: if summary.is_empty() { None } else { Some(summary.clone()) },
                 started: started.to_string(), time_spent_seconds, comment, author, updated,
             });
         }
@@ -1114,12 +1115,14 @@ fn parse_worklogs_with_map(
         //   3. сырой numeric issueId — последняя надежда, иначе null
         let numeric_id = v.get("issueId").and_then(|x| x.as_str()).map(|s| s.to_string());
         let explicit_key = v.get("issueKey").and_then(|x| x.as_str()).map(|s| s.to_string());
-        let issue_key = numeric_id.as_deref()
+        // (issueKey, issueSummary) из issue_map, иначе явный ключ/числовой id без summary.
+        let (issue_key, issue_summary): (Option<String>, Option<String>) = numeric_id.as_deref()
             .and_then(|nid| issue_map.get(nid))
-            .map(|(key, _)| key.clone())
-            .or(explicit_key)
-            .or(numeric_id);
-        Some(WorklogDto { id, issue_key, started, time_spent_seconds, comment, author, updated })
+            .map(|(k, s)| (Some(k.clone()), s.clone()))
+            .or_else(|| explicit_key.as_ref().map(|k| (Some(k.clone()), None)))
+            .or_else(|| numeric_id.as_ref().map(|k| (Some(k.clone()), None)))
+            .unwrap_or((None, None));
+        Some(WorklogDto { id, issue_key, issue_summary, started, time_spent_seconds, comment, author, updated })
     }).collect()
 }
 
@@ -1144,7 +1147,7 @@ fn parse_worklogs(values: Vec<Value>, fallback_issue_key: Option<&str>) -> Vec<W
         // fallback_issue_key имеет приоритет над issueId (последнее — непригодный числовой id).
         let issue_key = fallback_issue_key.map(|s| s.to_string())
             .or_else(|| v.get("issueId").and_then(|x| x.as_str()).map(|s| s.to_string()));
-        Some(WorklogDto { id, issue_key, started, time_spent_seconds, comment, author, updated })
+        Some(WorklogDto { id, issue_key, issue_summary: None, started, time_spent_seconds, comment, author, updated })
     }).collect()
 }
 
@@ -1323,6 +1326,7 @@ mod tests {
         let wl = WorklogDto {
             id: "1".to_string(),
             issue_key: Some("SRM-42".to_string()),
+            issue_summary: Some("Заголовок задачи".to_string()),
             started: "2026-08-21T10:00:00.000+0000".to_string(),
             time_spent_seconds: 5400,
             comment: Some("Разработка".to_string()),
@@ -1332,6 +1336,7 @@ mod tests {
         let json = serde_json::to_value(&wl).unwrap();
         assert!(json.get("issueKey").is_some(), "WorklogDto должен сериализоваться в issueKey, не issue_key: {json}");
         assert!(json.get("timeSpentSeconds").is_some(), "WorklogDto должен сериализоваться в timeSpentSeconds: {json}");
+        assert!(json.get("issueSummary").is_some(), "WorklogDto должен сериализоваться в issueSummary: {json}");
         assert!(json.get("issue_key").is_none(), "snake_case не должен присутствовать: {json}");
 
         // Обратная десериализация из camelCase.

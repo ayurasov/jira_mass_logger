@@ -70,13 +70,13 @@
         </colgroup>
         <thead>
           <tr>
-            <th>Дата</th>
+            <th class="th-sortable" @click="store.setSort('date')">Дата <span class="sort-ind">{{ sortIndicator('date') }}</span></th>
             <th>Дн.</th>
-            <th>Задача</th>
-            <th class="col-hours">Часы</th>
+            <th class="th-sortable" @click="store.setSort('issue')">Задача <span class="sort-ind">{{ sortIndicator('issue') }}</span></th>
+            <th class="th-sortable col-hours" @click="store.setSort('hours')">Часы <span class="sort-ind">{{ sortIndicator('hours') }}</span></th>
             <th>Описание</th>
             <th class="col-start">Старт</th>
-            <th>Статус</th>
+            <th class="th-sortable" @click="store.setSort('status')">Статус <span class="sort-ind">{{ sortIndicator('status') }}</span></th>
             <th></th>
           </tr>
         </thead>
@@ -120,7 +120,7 @@
                   />
                   <span v-else>{{ row.hours.toFixed(2) }}</span>
                 </td>
-                <td @dblclick="startEdit(row.rowKey, 'comment')">
+                <td class="comment-cell" @dblclick="startEdit(row.rowKey, 'comment')">
                   <input
                     v-if="isEditing(row.rowKey, 'comment')"
                     v-model="editBuffer"
@@ -237,7 +237,8 @@ const deleteTarget = ref<WorklogRow | null>(null);
 let unlistenResume: (() => void) | null = null;
 
 onMounted(async () => {
-  // Период из query (?from=&to=) — используется для переходов из дашборда.
+  // Приоритет периода: route.query (?from=&to=) → сохранённые фильтры → дефолт (27 дней).
+  store.restoreFilters();
   const qFrom = (route.query.from as string) || '';
   const qTo = (route.query.to as string) || '';
   if (qFrom || qTo) {
@@ -246,52 +247,32 @@ onMounted(async () => {
     const to = qTo || now.toISOString().slice(0, 10);
     store.filters.fromDate = from;
     store.filters.toDate = to;
-  } else {
+  } else if (!store.filters.fromDate || !store.filters.toDate) {
     const now = new Date();
     const from = new Date(now);
     from.setDate(from.getDate() - 27);
     store.filters.fromDate = from.toISOString().slice(0, 10);
     store.filters.toDate = now.toISOString().slice(0, 10);
   }
+  store.persistFilters();
 
   await jiraProfiles.ensureLoaded();
   await store.loadFromCache();
   store.setupNetworkListeners();
   store.startAutoSync();
+  // Инкрементальная синхронизация (watermark), а не force=true — иначе
+  // «Обновление…» подолгу висло на полном перечёте всего worklog.
   await store.fetchFromJira(false);
 
   // При выходе Windows-ноутбука из спящего режима main.rs эмитит
-  // "system:possible_resume" при возврате фокуса окна — форсируем ресинх.
+  // "system:possible_resume" при возврате фокуса окна — мягкая ресинх.
   unlistenResume = await listen('system:possible_resume', () => {
-    store.fetchFromJira(true);
+    store.refreshFromJira();
   });
-
-  // Начальная установка периода в onMounted могла триггерить watcher —
-  // теперь разрешаем ему реагировать на реальные ручные изменения даты.
-  periodWatchReady = true;
 });
 
-// Смена периода в фильтрах (ручной ввод даты) — перезагружаем из Jira за новый
-// интервал с дебаунсом: не бьём по Jira на каждое нажатие, но и не заставляем
-// пользователя жать отдельную кнопку. Начальную загрузку пропускаем.
-let periodTimer: ReturnType<typeof setTimeout> | null = null;
-let periodWatchReady = false;
-watch(
-  () => [store.filters.fromDate, store.filters.toDate],
-  () => {
-    if (!periodWatchReady) return;
-    if (periodTimer) clearTimeout(periodTimer);
-    periodTimer = setTimeout(() => {
-      // Только если обе даты валидны и период корректен (from <= to).
-      const { fromDate, toDate } = store.filters;
-      if (fromDate && toDate && fromDate <= toDate) {
-        store.fetchFromJira(true);
-      }
-    }, 500);
-  },
-);
-
-// Переход из дашборда на worklog?from=&to= — обновляем период и перезагружаем.
+// Переход из дашборда на worklog?from=&to= — обновляем период и перезагружаем
+// мягко (кэш мгновенно + инкремент из Jira).
 watch(
   () => [route.query.from as string, route.query.to as string],
   ([from, to]) => {
@@ -302,10 +283,15 @@ watch(
     if (f !== store.filters.fromDate || t !== store.filters.toDate) {
       store.filters.fromDate = f;
       store.filters.toDate = t;
-      store.fetchFromJira(true);
+      store.persistFilters();
+      store.refreshFromJira();
     }
   },
 );
+
+// Смена даты в фильтрах НЕ запускает автоматический запрос к Jira —
+// пользователь жмёт «↻ Обновить из Jira». Раньше debounce-watcher бил по Jira
+// на каждое изменение и таблица «подвисала» на полном перечёте (force=true).
 
 onBeforeUnmount(() => {
   store.stopAutoSync();
@@ -314,7 +300,7 @@ onBeforeUnmount(() => {
 
 const groupedByWeek = computed(() => {
   const byWeek = new Map<string, WorklogRow[]>();
-  for (const row of store.filteredRows) {
+  for (const row of store.sortedRows) {
     if (!byWeek.has(row.isoWeek)) byWeek.set(row.isoWeek, []);
     byWeek.get(row.isoWeek)!.push(row);
   }
@@ -417,7 +403,15 @@ async function doDelete() {
 }
 
 async function refreshFromJira() {
-  await store.fetchFromJira(true);
+  // Кнопка «↻ Обновить из Jira»: мгновенно показываем кэш по текущему периоду,
+  // затем тянем только изменения (watermark). Без force=true, чтобы таблица
+  // не «подвисала» на полном перечёте всего worklog.
+  await store.refreshFromJira();
+}
+
+function sortIndicator(key: 'date' | 'issue' | 'hours' | 'status'): string {
+  if (store.sort.key !== key) return '';
+  return store.sort.dir === 'asc' ? '▲' : '▼';
 }
 
 function onToggleAutoSync(e: Event) {
