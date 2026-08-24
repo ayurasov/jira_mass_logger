@@ -146,6 +146,8 @@ code { background: var(--chip); padding: 0.125rem 0.375rem; border-radius: 0.375
   padding: 0.75rem 0.875rem;
   min-height: 2.75rem;
 }
+.table-input,
+.table-textarea { box-sizing: border-box; line-height: 1.35; }
 .text-area,
 .table-textarea { resize: vertical; min-height: 4rem; }
 
@@ -204,13 +206,14 @@ code { background: var(--chip); padding: 0.125rem 0.375rem; border-radius: 0.375
 .primary-btn:disabled,
 .secondary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .ghost-btn { border-color: transparent; background: transparent; padding: 0.4rem 0.6rem; min-height: auto; }
+.bulk-wizard-page .ghost-btn { white-space: nowrap; }
 .ghost-btn.danger,
 .badge.danger { color: var(--danger); }
 
 .template-chip { background: var(--chip); text-align: left; }
 .template-chip.wide { min-width: 14rem; }
 
-.weekday-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.weekday-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); max-width: 30rem; }
 .weekday-item {
   display: flex;
   align-items: center;
@@ -226,6 +229,9 @@ code { background: var(--chip); padding: 0.125rem 0.375rem; border-radius: 0.375
 .preview-table { width: 100%; min-width: 64rem; border-collapse: collapse; }
 .preview-table th,
 .preview-table td { border-bottom: 1px solid var(--border); padding: 0.875rem; vertical-align: top; font-size: 0.95rem; }
+.bulk-wizard-page .preview-table { min-width: 76rem; table-layout: fixed; }
+.bulk-wizard-page .preview-table th,
+.bulk-wizard-page .preview-table td { vertical-align: middle; }
 .preview-table th { position: sticky; top: 0; background: var(--chip); text-align: left; z-index: 1; }
 .preview-table tr.skipped { opacity: 0.55; }
 .preview-table tr.conflict { background: rgba(255, 188, 77, 0.08); }
@@ -256,6 +262,7 @@ code { background: var(--chip); padding: 0.125rem 0.375rem; border-radius: 0.375
 
 .save-template-card { margin-top: 0.25rem; }
 .inline-actions.stretch > .text-input { flex: 1; }
+.preview-actions { justify-content: flex-end; }
 
 /* --- Windows HiDPI (125% / 150% / 200%) --- */
 /* Все размеры выше заданы в rem, так что Windows-масштабирование (125%/150%/200%)

@@ -130,7 +130,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
         <section v-show="wizard.step === 1" class="wizard-step-panel">
           <div class="panel-header">
             <h2>Шаг 1. Выбор задачи Jira</h2>
-            <p>Автокомплит с дебаунсом 300мс ищет по JQL и подмешивает последние/избранные задачи.</p>
+            <p>Введите ключ задачи (например ABC-123) или вставьте ссылку — мастер найдёт её в Jira.</p>
           </div>
 
           <div class="grid two-col">
@@ -215,7 +215,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
               <textarea
                 v-model="holidayJson"
                 class="text-area"
-                rows="5"
+                rows="3"
                 placeholder='[{"date":"2026-01-01","label":"Новый год"}] или ["2026-01-01","2026-01-02"]'
               />
               <div class="inline-actions">
@@ -295,6 +295,16 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
 
           <div class="preview-table-wrap">
             <table class="preview-table">
+              <colgroup>
+                <col style="width: 7rem" />
+                <col style="width: 4rem" />
+                <col style="width: 6rem" />
+                <col style="width: 22rem" />
+                <col style="width: 11rem" />
+                <col style="width: 9rem" />
+                <col style="width: 7rem" />
+                <col style="width: 6rem" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Дата</th>
@@ -361,8 +371,8 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && wizard.star
             <pre>{{ wizard.statusLogLines.join('\n') }}</pre>
           </div>
 
-          <div class="inline-actions">
-            <button class="secondary-btn" @click="submitWizard" :disabled="wizard.sending">{{ wizard.sending ? 'Отправка…' : 'Подтвердить и отправить' }}</button>
+          <div class="inline-actions preview-actions">
+            <button class="primary-btn" @click="submitWizard" :disabled="wizard.sending">{{ wizard.sending ? 'Отправка…' : 'Подтвердить и отправить' }}</button>
             <button class="secondary-btn" @click="exportLog" :disabled="wizard.statusLogLines.length === 0">Экспортировать лог</button>
           </div>
         </section>
