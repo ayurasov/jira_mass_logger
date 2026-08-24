@@ -265,17 +265,21 @@ onMounted(async () => {
   unlistenResume = await listen('system:possible_resume', () => {
     store.fetchFromJira(true);
   });
+
+  // Начальная установка периода в onMounted могла триггерить watcher —
+  // теперь разрешаем ему реагировать на реальные ручные изменения даты.
+  periodWatchReady = true;
 });
 
 // Смена периода в фильтрах (ручной ввод даты) — перезагружаем из Jira за новый
 // интервал с дебаунсом: не бьём по Jira на каждое нажатие, но и не заставляем
 // пользователя жать отдельную кнопку. Начальную загрузку пропускаем.
 let periodTimer: ReturnType<typeof setTimeout> | null = null;
-let firstPeriodWatch = true;
+let periodWatchReady = false;
 watch(
   () => [store.filters.fromDate, store.filters.toDate],
   () => {
-    if (firstPeriodWatch) { firstPeriodWatch = false; return; }
+    if (!periodWatchReady) return;
     if (periodTimer) clearTimeout(periodTimer);
     periodTimer = setTimeout(() => {
       // Только если обе даты валидны и период корректен (from <= to).

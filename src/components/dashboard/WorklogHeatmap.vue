@@ -21,10 +21,10 @@
               v-for="cell in week"
               :key="cell ? cell.date : wi + '-empty'"
               class="heatmap-cell"
-              :class="{ 'heatmap-cell--clickable': cell && cell.hours > 0 }"
+              :class="{ 'heatmap-cell--clickable': !!cell }"
               :data-level="cell ? cell.level : -1"
               :title="cell ? `${cell.date}: ${cell.hours} ч — открыть в worklog` : ''"
-              @click="cell && cell.hours > 0 ? goToWorklog(cell.date) : null"
+              @click="cell ? goToWorklog(cell.date) : null"
             ></div>
           </div>
         </div>

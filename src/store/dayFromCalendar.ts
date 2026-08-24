@@ -209,7 +209,7 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
           if (w.issueKey !== issueKey) continue;
           if (w.started.slice(0, 10) !== date) continue;
           const c = this.normSubject(w.comment);
-          if (c && (c.includes(subj) || subj.includes(c))) return true;
+          if (c && c === subj) return true;
         }
       }
       return false;
@@ -312,6 +312,20 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
       if (!row) return;
       row.selectedIssueKey = issueKey;
       row.selectedIssueSummary = issueSummary;
+      // Пересчитываем статус дедупликации для новой выбранной задачи,
+      // чтобы warning/блокировка были актуальны сразу после ручного выбора.
+      if (issueKey && row.startedLocal) {
+        const exact = this.isExactAlreadyLogged(issueKey, row.startedLocal, row.comment);
+        row.logged = exact;
+        row.logError = exact ? 'Уже залогировано' : null;
+        row.dedupWarning = !exact && this.hasSameIssueSameDay(issueKey, row.startedLocal, row.comment)
+          ? 'В этот день уже есть worklog по этой задаче — проверьте дубль'
+          : null;
+      } else {
+        row.logged = false;
+        row.logError = null;
+        row.dedupWarning = null;
+      }
       tauriApi.rememberMeetingIssueMatch(
         row.event.subject,
         row.event.seriesMasterId ?? null,
