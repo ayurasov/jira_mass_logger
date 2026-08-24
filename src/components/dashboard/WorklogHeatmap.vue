@@ -21,8 +21,10 @@
               v-for="cell in week"
               :key="cell ? cell.date : wi + '-empty'"
               class="heatmap-cell"
+              :class="{ 'heatmap-cell--clickable': cell && cell.hours > 0 }"
               :data-level="cell ? cell.level : -1"
-              :title="cell ? `${cell.date}: ${cell.hours} ч` : ''"
+              :title="cell ? `${cell.date}: ${cell.hours} ч — открыть в worklog` : ''"
+              @click="cell && cell.hours > 0 ? goToWorklog(cell.date) : null"
             ></div>
           </div>
         </div>
@@ -33,9 +35,15 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { useAnalyticsStore, type HeatmapCell } from '../../store/analytics';
 
 const store = useAnalyticsStore();
+const router = useRouter();
+
+function goToWorklog(date: string) {
+  router.push({ name: 'worklog', query: { from: date, to: date } });
+}
 
 const weekdayLabels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -116,6 +124,8 @@ const weeks = computed(() => {
 .heatmap-cell[data-level="3"]  { background: var(--heatmap-3); }
 .heatmap-cell[data-level="4"]  { background: var(--heatmap-4); }
 .heatmap-cell:hover { opacity: 0.75; }
+.heatmap-cell--clickable { cursor: pointer; }
+.heatmap-cell--clickable:hover { outline: 1.5px solid var(--primary); outline-offset: 1px; opacity: 1; }
 
 .heatmap-legend {
   display: flex;

@@ -70,10 +70,14 @@ async function searchIssues(idx: number, q: string) {
     const params = jiraStore.activeConnectionParams;
     if (!params) return;
     try {
-      const res = await tauriApi.getIssuesByJql(
-        params,
-        `text ~ "${q}" ORDER BY updated DESC`,
-      );
+      // Если запрос похож на ключ задачи (ABC-123) — ищем по ключу точно,
+      // иначе обычный полнотекстовый поиск по text.
+      const trimmed = q.trim();
+      const isIssueKey = /^[A-Za-z][A-Za-z0-9]+-\d+$/.test(trimmed);
+      const jql = isIssueKey
+        ? `key = "${trimmed.toUpperCase()}" ORDER BY updated DESC`
+        : `text ~ "${trimmed}" ORDER BY updated DESC`;
+      const res = await tauriApi.getIssuesByJql(params, jql);
       issueOptionsMap.value[idx] = res.map((i) => ({ key: i.key, summary: i.summary ?? '' }));
     } catch {
       issueOptionsMap.value[idx] = [];
@@ -268,7 +272,7 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
                 type="text"
                 :value="issueSearchMap[idx] ?? ''"
                 @input="searchIssues(idx, ($event.target as HTMLInputElement).value)"
-                placeholder="Поиск задачи Jira…"
+                placeholder="Поиск задачи: текст или ключ ABC-123…"
                 class="issue-search" />
               <div v-if="(issueOptionsMap[idx] ?? []).length > 0" class="issue-dropdown">
                 <div
@@ -292,6 +296,7 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
               {{ row.logged ? '✅ Залогировано' : '▶ В worklog' }}
             </button>
             <span v-if="row.logError" class="row-error">{{ row.logError }}</span>
+            <span v-else-if="row.dedupWarning" class="row-warning">⚠ {{ row.dedupWarning }}</span>
           </div>
         </div>
       </div>
@@ -401,6 +406,7 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
 
 .row-actions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 .row-error { color: #dc2626; font-size: 11px; }
+.row-warning { color: #b45309; font-size: 11px; }
 .loading, .empty { color: #888; padding: 24px; text-align: center; }
 .error { color: #dc2626; padding: 8px 12px; background: #fee2e2; border-radius: 4px; }
 </style>

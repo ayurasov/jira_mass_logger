@@ -110,7 +110,8 @@ export const useMyWorklogStore = defineStore('myWorklog', {
     },
     pendingConflict: null as { local: WorklogRow; remote: WorklogDto } | null,
     autoSyncTimer: null as ReturnType<typeof setInterval> | null,
-    fetchInfo: null as string | null, // сообщение о последней синхронизации (0 записей / ошибка)
+    fetchInfo: null as string | null, // сообщение о последней синхронизации (0 записей / успешно)
+    fetchError: null as string | null, // текст ошибки Jira (отдельно от успешного fetchInfo)
   }),
   getters: {
     filteredRows(state): WorklogRow[] {
@@ -144,6 +145,10 @@ export const useMyWorklogStore = defineStore('myWorklog', {
     },
 
     async fetchFromJira(force = false) {
+      // Защита от повторного входа: если синхронизация уже идёт (например, сработал
+      // авто-таймер во время ручного обновления), не запускаем параллельный запрос —
+      // иначе «Обновление…» висит дольше, а loading сбрасывается вrace-условии.
+      if (this.loading) return;
       const params = this.activeConnectionParams();
       if (!params) return;
       this.loading = true;
@@ -181,11 +186,13 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         localStorage.setItem('jiratime-worklog-last-sync', new Date().toISOString());
         this.lastSyncedAt = new Date().toISOString();
         await this.loadFromCache();
+        this.fetchError = null;
         this.fetchInfo = dtos.length === 0
           ? 'Jira вернула 0 worklog за выбранный период. Проверьте период, фильтр и что записи существуют.'
           : `Загружено ${dtos.length} записей из Jira.`;
       } catch (e: any) {
-        this.fetchInfo = String(e?.message ?? e);
+        this.fetchError = String(e?.message ?? e);
+        this.fetchInfo = this.fetchError;
       } finally {
         this.loading = false;
       }
@@ -354,6 +361,14 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         }
       }
       await this.loadFromCache();
+    },
+
+    /** Устанавливает период и (по умолчанию) форсирует перезагрузку из Jira именно за него. */
+    async setPeriod(from: string, to: string, fetch = true) {
+      this.filters.fromDate = from;
+      this.filters.toDate = to;
+      if (fetch) await this.fetchFromJira(true);
+      else await this.loadFromCache();
     },
 
     setupNetworkListeners() {

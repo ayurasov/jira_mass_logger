@@ -12,13 +12,19 @@
     </div>
 
     <ul v-else class="missing-list">
-      <li v-for="d in days" :key="d.date" class="missing-item">
+      <li
+        v-for="d in days"
+        :key="d.date"
+        class="missing-item missing-item--clickable"
+        @click="goToWorklog(d.date)"
+        title="Открыть день в Моём worklog"
+      >
         <span class="missing-date">{{ formatDate(d.date) }}</span>
         <span class="missing-hours" :data-ok="d.hours > 0">
           {{ d.hours > 0 ? d.hours + ' ч' : 'Нет записей' }}
         </span>
         <span class="missing-deficit">-{{ d.deficit }} ч</span>
-        <button class="dash-quick-btn" @click="goToWizard(d.date)" title="Быстрый переход в булк-мастер">
+        <button class="dash-quick-btn" @click.stop="goToWizard(d.date)" title="Быстрый переход в булк-мастер">
           ↗️ Создать
         </button>
       </li>
@@ -50,6 +56,11 @@ function goToWizard(date: string) {
   // route name: 'bulk' (см. src/router/index.ts)
   router.push({ name: 'bulk', query: { date } });
 }
+
+function goToWorklog(date: string) {
+  // открываем Мой worklog на выбранном дне
+  router.push({ name: 'worklog', query: { from: date, to: date } });
+}
 </script>
 
 <style scoped>
@@ -78,6 +89,9 @@ function goToWizard(date: string) {
   background: var(--chip);
   font-size: 0.88rem;
 }
+.missing-item--clickable { cursor: pointer; transition: background 0.15s, transform 0.05s; }
+.missing-item--clickable:hover { background: color-mix(in srgb, var(--primary) 14%, var(--chip)); }
+.missing-item--clickable:active { transform: translateY(1px); }
 .missing-date { flex: 1; min-width: 0; }
 .missing-hours {
   color: var(--warning);

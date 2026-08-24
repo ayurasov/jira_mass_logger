@@ -24,6 +24,8 @@ export interface MeetingRow {
   /** true — запись уже залогирована в этом сеансе */
   logged: boolean;
   logError: string | null;
+  /** Мягкое предупреждение о возможном дубле (та же задача в тот же день, но другое время) — не блокирует логирование. */
+  dedupWarning: string | null;
 }
 
 export interface DayBulkPreviewItem {
@@ -42,6 +44,8 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
     worklogTodaySeconds: 0,
     /** Кэш worklog за текущий день — для дедупликации (issueKey|date|HH:MM) */
     existingKeys: new Set<string>(),
+    /** Worklog-записи выбранного дня из кэша — для мягкой дедупликации (та же задача в тот же день). */
+    existingDayWorklogs: [] as { issueKey: string; started: string; comment: string | null }[],
     /** Сводка по неделе: день → задачи+часы */
     weekSummary: [] as { date: string; weekday: string; totalSeconds: number; items: { issueKey: string; seconds: number; comment: string | null }[] }[],
     weekLoading: false,
@@ -133,6 +137,11 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
         this.existingKeys = new Set(
           wls.map((w) => this.dedupKey(w.issueKey, w.started)),
         );
+        this.existingDayWorklogs = wls.map((w) => ({
+          issueKey: w.issueKey,
+          started: w.started,
+          comment: w.comment ?? null,
+        }));
         this.rows = await Promise.all(
           events.map(async (ev) => {
             const suggestion = await tauriApi.suggestIssueForMeeting(
@@ -142,9 +151,13 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
             const roundedSeconds = this.roundDuration(ev.durationMinutes);
             const startedLocal = this.toJiraStarted(ev.startAt);
             const issueKey = suggestion.issueKey ?? null;
-            // Помечаем уже залогированным, если в кэше есть запись с тем же ключом
+            // Жёсткая дедупликация: точное совпадение issueKey+дата+HH:MM
+            // либо совпадение по теме (comment содержит subject совещания).
             const alreadyLogged =
-              !!issueKey && this.existingKeys.has(this.dedupKey(issueKey, startedLocal));
+              !!issueKey && startedLocal && this.isExactAlreadyLogged(issueKey, startedLocal, ev.subject);
+            // Мягкое предупреждение: в этот день уже есть worklog по той же задаче,
+            // но в другое время — возможно дубль, но не блокируем.
+            const sameIssue = issueKey && startedLocal && this.hasSameIssueSameDay(issueKey, startedLocal, ev.subject);
             return {
               event: ev,
               suggestion,
@@ -155,6 +168,9 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
               startedLocal,
               logged: alreadyLogged,
               logError: alreadyLogged ? 'Уже залогировано' : null,
+              dedupWarning: !alreadyLogged && sameIssue
+                ? 'В этот день уже есть worklog по этой задаче — проверьте дубль'
+                : null,
             } as MeetingRow;
           }),
         );
@@ -172,6 +188,40 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
       const local = this.toLocalHHMM(startedJiraIso);
       const date = startedJiraIso.slice(0, 10);
       return `${issueKey}|${date}|${local}`;
+    },
+
+    /** Нормализует строку для сравнения тем: нижний регистр, без лишних пробелов/пунктуации. */
+    normSubject(s: string | null | undefined): string {
+      if (!s) return '';
+      return s.toLowerCase().replace(/\s+/g, ' ').replace(/[.,;:!?—\-()«»\"']+/g, ' ').trim();
+    },
+
+    /** Жёсткая дедупликация: точное совпадение issueKey+дата+HH:MM
+     *  либо совпадение по теме (comment worklog содержит subject совещания или наоборот). */
+    isExactAlreadyLogged(issueKey: string, startedLocal: string, subject?: string | null): boolean {
+      // 1) точное совпадение по времени
+      if (this.existingKeys.has(this.dedupKey(issueKey, startedLocal))) return true;
+      // 2) совпадение по теме: та же задача + тот же день + comment содержит subject
+      const date = startedLocal.slice(0, 10);
+      const subj = this.normSubject(subject);
+      if (subj) {
+        for (const w of this.existingDayWorklogs) {
+          if (w.issueKey !== issueKey) continue;
+          if (w.started.slice(0, 10) !== date) continue;
+          const c = this.normSubject(w.comment);
+          if (c && (c.includes(subj) || subj.includes(c))) return true;
+        }
+      }
+      return false;
+    },
+
+    /** Мягкая дедупликация: та же задача в тот же день, но в другое время. Не блокирует. */
+    hasSameIssueSameDay(issueKey: string, startedLocal: string, subject?: string | null): boolean {
+      if (this.isExactAlreadyLogged(issueKey, startedLocal, subject)) return false;
+      const date = startedLocal.slice(0, 10);
+      return this.existingDayWorklogs.some(
+        (w) => w.issueKey === issueKey && w.started.slice(0, 10) === date,
+      );
     },
 
     /** Локальные HH:MM из Jira started (уже в локальной TZ с offset). */
@@ -273,9 +323,8 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
     async logSingleRow(idx: number) {
       const row = this.rows[idx];
       if (!row?.selectedIssueKey || !row.startedLocal) return;
-      // Дедуп: повторная проверка перед отправкой в Jira
-      const key = this.dedupKey(row.selectedIssueKey, row.startedLocal);
-      if (this.existingKeys.has(key)) {
+      // Дедуп: повторная проверка перед отправкой в Jira (жёсткая — только точное совпадение/тема)
+      if (this.isExactAlreadyLogged(row.selectedIssueKey, row.startedLocal, row.comment)) {
         row.logged = true;
         row.logError = 'Уже залогировано';
         return;
@@ -298,7 +347,8 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
           row.selectedIssueKey,
           row.selectedIssueSummary,
         );
-        this.existingKeys.add(key);
+        this.existingKeys.add(this.dedupKey(row.selectedIssueKey, row.startedLocal));
+        this.existingDayWorklogs.push({ issueKey: row.selectedIssueKey, started: row.startedLocal, comment: row.comment });
         row.logged = true;
         row.logError = null;
         this.loadWeek().catch(() => {});
@@ -310,7 +360,7 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
     buildBulkPreview(): DayBulkPreviewItem[] {
       this.bulkPreview = this.rows
         .filter((r) => r.selectedIssueKey && r.startedLocal && !r.logged)
-        .filter((r) => !this.existingKeys.has(this.dedupKey(r.selectedIssueKey!, r.startedLocal!)))
+        .filter((r) => !this.isExactAlreadyLogged(r.selectedIssueKey!, r.startedLocal!, r.comment))
         .map((r) => ({
           event: r.event,
           issueKey: r.selectedIssueKey!,
@@ -327,13 +377,13 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
       await jp.ensureLoaded();
       const params = jp.activeConnectionParams;
       if (!params) throw new Error('Нет активного Jira профиля');
-      // Повторная проверка дедупа прямо перед отправкой: preview мог устареть.
+      // Повторная проверка дедупа прямо перед отправкой: preview мог устареть (жёсткая).
       const toSend = items.filter(
-        (i) => !this.existingKeys.has(this.dedupKey(i.issueKey, i.startedLocal)),
+        (i) => !this.isExactAlreadyLogged(i.issueKey, i.startedLocal, i.comment),
       );
       // Уже залогированные помечаем как есть.
       items.forEach((i) => {
-        if (this.existingKeys.has(this.dedupKey(i.issueKey, i.startedLocal))) {
+        if (this.isExactAlreadyLogged(i.issueKey, i.startedLocal, i.comment)) {
           const rowIdx = this.rows.findIndex((r) => r.event.id === i.event.id);
           if (rowIdx >= 0) {
             this.rows[rowIdx].logged = true;
@@ -363,6 +413,7 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
         }
         if (res.success) {
           this.existingKeys.add(this.dedupKey(item.issueKey, item.startedLocal));
+          this.existingDayWorklogs.push({ issueKey: item.issueKey, started: item.startedLocal, comment: item.comment });
           tauriApi.rememberMeetingIssueMatch(
             item.event.subject,
             item.event.seriesMasterId ?? null,

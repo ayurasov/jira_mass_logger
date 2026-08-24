@@ -5,8 +5,9 @@
         <h1>Мой worklog</h1>
         <span v-if="!store.isOnline" class="badge badge--offline">Оффлайн</span>
         <span v-else-if="store.hasPendingSync" class="badge badge--pending">Синхронизация…</span>
+        <span v-else-if="store.loading" class="badge badge--pending">Обновление…</span>
+        <span v-else-if="store.fetchError" class="badge badge--offline">Ошибка Jira</span>
         <span v-else-if="store.fetchInfo && store.fetchInfo.startsWith('Jira вернула 0')" class="badge badge--pending">Jira: 0 записей</span>
-        <span v-else-if="store.fetchInfo" class="badge badge--offline">Ошибка Jira</span>
         <span v-else class="badge badge--ok">Синхронизировано</span>
       </div>
       <div class="worklog-header__actions">
@@ -18,7 +19,7 @@
       </div>
     </header>
 
-    <div v-if="store.fetchInfo" class="fetch-info" :class="{ 'fetch-info--error': store.fetchInfo.startsWith('Jira вернула 0') || store.fetchInfo.includes('ошибк') }">
+    <div v-if="store.fetchInfo" class="fetch-info" :class="{ 'fetch-info--error': !!store.fetchError || store.fetchInfo.includes('ошибк') }">
       {{ store.fetchInfo }}
     </div>
     <div v-if="openAutoSyncSettings" class="autosync-panel">
@@ -210,9 +211,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { save } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
+import { useRoute } from 'vue-router';
 import { useMyWorklogStore, type WorklogRow } from '../store/myWorklog';
 import { useSettingsStore } from '../store/settings';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
@@ -222,6 +224,7 @@ import { WEEKDAY_RU_SHORT } from '../utils/dateRange';
 const store = useMyWorklogStore();
 const settings = useSettingsStore();
 const jiraProfiles = useJiraProfilesStore();
+const route = useRoute();
 
 const openAutoSyncSettings = ref(false);
 const scrollContainer = ref<HTMLElement | null>(null);
@@ -234,11 +237,22 @@ const deleteTarget = ref<WorklogRow | null>(null);
 let unlistenResume: (() => void) | null = null;
 
 onMounted(async () => {
-  const now = new Date();
-  const from = new Date(now);
-  from.setDate(from.getDate() - 27);
-  store.filters.fromDate = from.toISOString().slice(0, 10);
-  store.filters.toDate = now.toISOString().slice(0, 10);
+  // Период из query (?from=&to=) — используется для переходов из дашборда.
+  const qFrom = (route.query.from as string) || '';
+  const qTo = (route.query.to as string) || '';
+  if (qFrom || qTo) {
+    const now = new Date();
+    const from = qFrom || new Date(now.getTime() - 27 * 86400000).toISOString().slice(0, 10);
+    const to = qTo || now.toISOString().slice(0, 10);
+    store.filters.fromDate = from;
+    store.filters.toDate = to;
+  } else {
+    const now = new Date();
+    const from = new Date(now);
+    from.setDate(from.getDate() - 27);
+    store.filters.fromDate = from.toISOString().slice(0, 10);
+    store.filters.toDate = now.toISOString().slice(0, 10);
+  }
 
   await jiraProfiles.ensureLoaded();
   await store.loadFromCache();
@@ -252,6 +266,42 @@ onMounted(async () => {
     store.fetchFromJira(true);
   });
 });
+
+// Смена периода в фильтрах (ручной ввод даты) — перезагружаем из Jira за новый
+// интервал с дебаунсом: не бьём по Jira на каждое нажатие, но и не заставляем
+// пользователя жать отдельную кнопку. Начальную загрузку пропускаем.
+let periodTimer: ReturnType<typeof setTimeout> | null = null;
+let firstPeriodWatch = true;
+watch(
+  () => [store.filters.fromDate, store.filters.toDate],
+  () => {
+    if (firstPeriodWatch) { firstPeriodWatch = false; return; }
+    if (periodTimer) clearTimeout(periodTimer);
+    periodTimer = setTimeout(() => {
+      // Только если обе даты валидны и период корректен (from <= to).
+      const { fromDate, toDate } = store.filters;
+      if (fromDate && toDate && fromDate <= toDate) {
+        store.fetchFromJira(true);
+      }
+    }, 500);
+  },
+);
+
+// Переход из дашборда на worklog?from=&to= — обновляем период и перезагружаем.
+watch(
+  () => [route.query.from as string, route.query.to as string],
+  ([from, to]) => {
+    if (!from && !to) return;
+    const now = new Date();
+    const f = from || new Date(now.getTime() - 27 * 86400000).toISOString().slice(0, 10);
+    const t = to || now.toISOString().slice(0, 10);
+    if (f !== store.filters.fromDate || t !== store.filters.toDate) {
+      store.filters.fromDate = f;
+      store.filters.toDate = t;
+      store.fetchFromJira(true);
+    }
+  },
+);
 
 onBeforeUnmount(() => {
   store.stopAutoSync();
