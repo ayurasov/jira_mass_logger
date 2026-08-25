@@ -42,8 +42,8 @@
     <div class="filters">
       <input v-model="store.filters.issueKey" class="filters__input" placeholder="Фильтр по задаче (ABC-123)" />
       <input v-model="store.filters.projectKey" class="filters__input" placeholder="Проект (ABC)" />
-      <input v-model="store.filters.fromDate" type="date" class="filters__input" />
-      <input v-model="store.filters.toDate" type="date" class="filters__input" />
+      <DatePicker v-model="store.filters.fromDate" placeholder="Дата с" class="filters__input" />
+      <DatePicker v-model="store.filters.toDate" placeholder="Дата по" class="filters__input" />
       <input v-model="store.filters.searchText" class="filters__input filters__input--search" placeholder="Поиск в описании…" />
       <label class="filters__norm">
         Норма в день, ч:
@@ -197,7 +197,7 @@
           </label>
           <label>
             Дата
-            <input v-model="editForm.date" type="date" />
+            <DatePicker v-model="editForm.date" />
           </label>
           <label>
             Время начала
@@ -232,7 +232,7 @@
           </label>
           <label>
             Новая дата
-            <input v-model="duplicateForm.date" type="date" />
+            <DatePicker v-model="duplicateForm.date" />
           </label>
           <label>
             Время начала
@@ -279,6 +279,7 @@ import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { tauriApi } from '../lib/tauriApi';
 import { WEEKDAY_RU_SHORT } from '../utils/dateRange';
 import ActionIcon from '../components/ActionIcon.vue';
+import DatePicker from '../components/DatePicker.vue';
 
 const store = useMyWorklogStore();
 const settings = useSettingsStore();
@@ -517,7 +518,10 @@ async function doDelete() {
 }
 
 async function refreshFromJira() {
-  await store.fetchFromJiraFull();
+  // Быстрая инкрементальная синхронизация (по watermark, как при переходе
+  // с дашборда по клику на день/неделю) — а не полная ресинхронизация всего
+  // диапазона с нуля, которая уходила в долгое ожидание на больших периодах.
+  await store.refreshFromJira();
 }
 
 function sortIndicator(key: 'date' | 'issue' | 'hours' | 'status'): string {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import DatePicker from '../components/DatePicker.vue';
 import { useDayFromCalendarStore } from '../store/dayFromCalendar';
 import { tauriApi } from '../lib/tauriApi';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
@@ -169,8 +170,8 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
           <button @click="goToday" class="nav-today" title="Сегодня">Сегодня</button>
           <button @click="navigateDay(1)" class="nav-btn" title="Следующий день"><ActionIcon name="chevron-right" :size="14" /></button>
         </div>
-        <input type="date" v-model="selectedDate"
-          @change="store.loadDay(selectedDate)" class="date-picker" />
+        <DatePicker v-model="selectedDate"
+          @update:modelValue="store.loadDay(selectedDate)" class="date-picker" />
         <button @click="store.loadDay(selectedDate, true)" :disabled="store.loading" class="btn-refresh">
           <ActionIcon name="refresh" :size="14" /> Обновить
         </button>

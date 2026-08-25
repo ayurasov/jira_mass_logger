@@ -11,9 +11,9 @@
           <button :class="['dash-tab', chartType==='donut' && 'active']" @click="chartType='donut'">Donut</button>
           <button :class="['dash-tab', chartType==='bar' && 'active']" @click="chartType='bar'">Bar</button>
         </div>
-        <input type="date" class="dash-date-input" v-model="from" />
+        <DatePicker v-model="from" class="dash-date-input" />
         <span style="font-size:0.8rem;opacity:.6">—</span>
-        <input type="date" class="dash-date-input" v-model="to" />
+        <DatePicker v-model="to" class="dash-date-input" />
       </div>
     </div>
     <div ref="chartEl" class="dash-chart-area"></div>
@@ -22,6 +22,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, toRef } from 'vue';
+import DatePicker from '../DatePicker.vue';
 import { PieChart, BarChart } from 'echarts/charts';
 import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components';
 import * as echarts from 'echarts/core';
