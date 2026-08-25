@@ -246,6 +246,7 @@
 import { ref, reactive, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import ActionIcon from '../components/ActionIcon.vue';
 
 // ────────── Types ──────────
 

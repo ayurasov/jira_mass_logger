@@ -220,6 +220,7 @@ import { useSettingsStore } from '../store/settings';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { tauriApi } from '../lib/tauriApi';
 import { WEEKDAY_RU_SHORT } from '../utils/dateRange';
+import ActionIcon from '../components/ActionIcon.vue';
 
 const store = useMyWorklogStore();
 const settings = useSettingsStore();

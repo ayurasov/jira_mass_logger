@@ -178,7 +178,8 @@ const props = withDefaults(defineProps<{ name: ActionIconName; size?: number }>(
 
 <style scoped>
 .action-svg-icon {
-  display: block;
+  display: inline-block;
+  vertical-align: -0.2em;
   flex-shrink: 0;
 }
 </style>

@@ -114,6 +114,7 @@ import { ref, reactive, computed, onMounted, nextTick } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { format, getWeek } from 'date-fns';
 import { ru } from 'date-fns/locale';
+import ActionIcon from '../components/ActionIcon.vue';
 
 interface TemplateItem {
   id: number;
