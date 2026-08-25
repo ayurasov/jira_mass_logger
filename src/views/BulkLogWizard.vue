@@ -4,6 +4,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { useBulkWizardStore } from '../store/bulkWizard';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { useAnalyticsStore } from '../store/analytics';
+import ActionIcon from '../components/ActionIcon.vue';
 import { useSettingsStore } from '../store/settings';
 import { tauriApi } from '../lib/tauriApi';
 import { DATE_RANGE_PRESETS } from '../utils/dateRange';
@@ -208,7 +209,8 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
                   <strong>{{ option.key }}</strong>
                   <span v-if="option.summary"> — {{ option.summary }}</span>
                 </div>
-                <small>{{ option.isFavorite ? '★ Избранное' : option.source === 'recent' ? 'Недавняя' : 'Найдено в Jira' }}</small>
+                <small v-if="option.isFavorite" class="fav-inline"><ActionIcon name="star" :size="11" /> Избранное</small>
+                <small v-else>{{ option.source === 'recent' ? 'Недавняя' : 'Найдено в Jira' }}</small>
               </button>
             </div>
 

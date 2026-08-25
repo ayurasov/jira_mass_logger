@@ -10,6 +10,7 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import ActionIcon from '../components/ActionIcon.vue'
 
 const LOG_LINES = 300
 const REFRESH_INTERVAL_MS = 5000
@@ -109,12 +110,12 @@ onUnmounted(() => {
         </label>
 
         <button class="logs-action-btn" :disabled="loading" @click="fetchLogs">
-          <span v-if="loading">↻ Загрузка...</span>
-          <span v-else>↻ Обновить</span>
+          <span v-if="loading" class="btn-inline"><ActionIcon name="refresh" :size="13" /> Загрузка...</span>
+          <span v-else class="btn-inline"><ActionIcon name="refresh" :size="13" /> Обновить</span>
         </button>
 
         <button class="logs-action-btn" @click="openLogDir">
-          📂 Открыть папку
+          <ActionIcon name="folder" :size="13" /> Открыть папку
         </button>
       </div>
     </div>
@@ -232,6 +233,8 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .logs-action-btn:hover:not(:disabled) { background: var(--color-surface-offset, #f3f0ec); }
+.logs-action-btn { display: inline-flex; align-items: center; gap: 5px; }
+.btn-inline { display: inline-flex; align-items: center; gap: 5px; }
 .logs-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Содержимое логов */

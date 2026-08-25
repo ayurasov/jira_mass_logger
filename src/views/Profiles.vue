@@ -1,6 +1,6 @@
 <template>
   <div class="profiles-page">
-    <h1 class="page-title">&#x1F517; Подключения</h1>
+    <h1 class="page-title"><ActionIcon name="link" :size="22" /> Подключения</h1>
 
     <!-- JIRA PROFILES -->
     <section class="card">
@@ -13,14 +13,14 @@
       <table v-else class="profile-table">
         <thead>
           <tr>
-            <th>&#x2714;</th><th>Название</th><th>URL</th><th>Тип</th><th>Пользователь</th><th>Авторизация</th><th>Статус</th><th></th>
+            <th><ActionIcon name="check-circle" :size="14" /></th><th>Название</th><th>URL</th><th>Тип</th><th>Пользователь</th><th>Авторизация</th><th>Статус</th><th></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="p in jiraProfiles" :key="p.id" :class="{ active: p.isActive }">
             <td>
               <button class="icon-btn" :title="p.isActive ? 'Активен' : 'Сделать активным'" @click="setJiraActive(p.id)">
-                {{ p.isActive ? '&#x1F7E2;' : '&#x26AA;' }}
+                <ActionIcon name="dot" :size="14" :class="p.isActive ? 'status-dot--active' : 'status-dot--inactive'" />
               </button>
             </td>
             <td class="name-cell">{{ p.name }}</td>
@@ -31,15 +31,15 @@
               <span class="badge" :class="p.authType || 'token'">{{ authTypeLabel(p.authType) }}</span>
             </td>
             <td>
-              <span v-if="jiraTestResults[p.id] === 'ok'" class="status-ok">&#x2705; OK</span>
-              <span v-else-if="jiraTestResults[p.id] === 'err'" class="status-err">&#x274C; Ошибка</span>
+              <span v-if="jiraTestResults[p.id] === 'ok'" class="status-ok"><ActionIcon name="check-circle" :size="14" /> OK</span>
+              <span v-else-if="jiraTestResults[p.id] === 'err'" class="status-err"><ActionIcon name="x-circle" :size="14" /> Ошибка</span>
               <span v-else-if="jiraTestResults[p.id] === 'testing'" class="status-testing">⏳</span>
               <span v-else class="status-none">—</span>
             </td>
             <td class="actions-cell">
-              <button class="icon-btn" title="Тест" @click="testJiraProfile(p)">&#x1F50C;</button>
-              <button class="icon-btn" title="Редактировать" @click="openJiraForm(p)">&#x270F;&#xFE0F;</button>
-              <button class="icon-btn danger" title="Удалить" @click="deleteJiraProfile(p.id)">&#x1F5D1;&#xFE0F;</button>
+              <button class="icon-btn" title="Тест" @click="testJiraProfile(p)"><ActionIcon name="link" :size="15" /></button>
+              <button class="icon-btn" title="Редактировать" @click="openJiraForm(p)"><ActionIcon name="edit" :size="15" /></button>
+              <button class="icon-btn danger" title="Удалить" @click="deleteJiraProfile(p.id)"><ActionIcon name="trash" :size="15" /></button>
             </td>
           </tr>
         </tbody>
@@ -57,7 +57,7 @@
       <table v-else class="profile-table">
         <thead>
           <tr>
-            <th>&#x2714;</th><th>Название</th><th>Режим</th><th>URL / Tenant</th><th>Пользователь</th><th>Статус</th><th></th>
+            <th><ActionIcon name="check-circle" :size="14" /></th><th>Название</th><th>Режим</th><th>URL / Tenant</th><th>Пользователь</th><th>Статус</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -65,7 +65,7 @@
           <tr :class="{ active: p.isActive }">
             <td>
               <button class="icon-btn" @click="setExchActive(p.id)">
-                {{ p.isActive ? '&#x1F7E2;' : '&#x26AA;' }}
+                <ActionIcon name="dot" :size="14" :class="p.isActive ? 'status-dot--active' : 'status-dot--inactive'" />
               </button>
             </td>
             <td class="name-cell">{{ p.name }}</td>
@@ -73,15 +73,15 @@
             <td class="url-cell">{{ p.authMode === 'graph' ? (p.tenantId || '—') : (p.ewsUrl || '—') }}</td>
             <td>{{ p.username }}</td>
             <td>
-              <span v-if="exchTestResults[p.id]?.status === 'ok'" class="status-ok">&#x2705; OK</span>
-              <span v-else-if="exchTestResults[p.id]?.status === 'err'" class="status-err" :title="exchTestResults[p.id]?.message">&#x274C; Ошибка</span>
+              <span v-if="exchTestResults[p.id]?.status === 'ok'" class="status-ok"><ActionIcon name="check-circle" :size="14" /> OK</span>
+              <span v-else-if="exchTestResults[p.id]?.status === 'err'" class="status-err" :title="exchTestResults[p.id]?.message"><ActionIcon name="x-circle" :size="14" /> Ошибка</span>
               <span v-else-if="exchTestResults[p.id]?.status === 'testing'" class="status-testing">⏳</span>
               <span v-else class="status-none">—</span>
             </td>
             <td class="actions-cell">
-              <button class="icon-btn" title="Тест" @click="testExchProfile(p)">&#x1F50C;</button>
-              <button class="icon-btn" title="Редактировать" @click="openExchForm(p)">&#x270F;&#xFE0F;</button>
-              <button class="icon-btn danger" title="Удалить" @click="deleteExchProfile(p.id)">&#x1F5D1;&#xFE0F;</button>
+              <button class="icon-btn" title="Тест" @click="testExchProfile(p)"><ActionIcon name="link" :size="15" /></button>
+              <button class="icon-btn" title="Редактировать" @click="openExchForm(p)"><ActionIcon name="edit" :size="15" /></button>
+              <button class="icon-btn danger" title="Удалить" @click="deleteExchProfile(p.id)"><ActionIcon name="trash" :size="15" /></button>
             </td>
           </tr>
           <tr v-if="exchTestResults[p.id]?.status === 'err' && exchTestResults[p.id]?.message" class="err-row">
@@ -117,7 +117,7 @@
             </select>
           </label>
           <div v-if="jiraForm.authType === 'server_basic'" class="auth-hint">
-            ⚠️ Basic Auth передаёт пароль в заголовке Authorization (Base64). Убедитесь, что соединение по HTTPS.
+            <ActionIcon name="warning" :size="13" /> Basic Auth передаёт пароль в заголовке Authorization (Base64). Убедитесь, что соединение по HTTPS.
             Пароль сохраняется в Windows Credential Manager, а не в базе приложения.
           </div>
           <div v-else class="auth-hint">
@@ -183,7 +183,7 @@
             После сохранения нажмите «Авторизация Graph» — откроется окно браузера Microsoft.
           </div>
           <button v-if="exchForm.clientId && exchForm.tenantId" class="btn btn-secondary" :disabled="oauthInProgress" @click="startOAuth">
-            {{ oauthInProgress ? 'Ожидание авторизации...' : '&#x1F511; Авторизация Graph' }}
+            <ActionIcon name="key" :size="14" v-if="!oauthInProgress" /> {{ oauthInProgress ? 'Ожидание авторизации...' : 'Авторизация Graph' }}
           </button>
           <div v-if="oauthResult" :class="oauthResult.ok ? 'status-ok' : 'status-err'">{{ oauthResult.message }}</div>
         </template>
@@ -669,14 +669,14 @@ async function startOAuth() {
 
 <style scoped>
 .profiles-page { padding: 1.5rem; max-width: 1100px; }
-.page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 1.2rem; }
+.page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 1.2rem; display: flex; align-items: center; gap: .5rem; }
 .card { background: var(--surface, #fff); border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); padding: 1.2rem 1.4rem; }
 .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
 .card-title { font-size: 1.05rem; font-weight: 600; }
 .btn { padding: .4rem .9rem; border-radius: 6px; border: 1px solid var(--border, #d0d5dd); cursor: pointer; font-size: .9rem; background: var(--surface, #fff); }
 .btn-primary { background: #0052cc; color: #fff; border-color: #0052cc; }
 .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
-.btn-secondary { background: #f0f0f0; border-color: #bbb; }
+.btn-secondary { background: #f0f0f0; border-color: #bbb; display: inline-flex; align-items: center; gap: .35rem; }
 .profile-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .profile-table th, .profile-table td { padding: .45rem .6rem; text-align: left; border-bottom: 1px solid var(--border, #eee); }
 .profile-table tr.active td { background: #f0f8ff; }
@@ -692,11 +692,11 @@ async function startOAuth() {
 .badge.pat { background: #f0e8ff; color: #5a1a8f; }
 .badge.server_basic { background: #fff3cd; color: #664d03; }
 .actions-cell { white-space: nowrap; }
-.icon-btn { background: none; border: none; cursor: pointer; font-size: 1rem; padding: .2rem .3rem; border-radius: 4px; }
+.icon-btn { background: none; border: none; cursor: pointer; font-size: 1rem; padding: .2rem .3rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
 .icon-btn:hover { background: #f0f0f0; }
 .icon-btn.danger:hover { background: #fee2e2; }
-.status-ok { color: #15803d; font-size: .85rem; }
-.status-err { color: #dc2626; font-size: .85rem; }
+.status-ok { color: #15803d; font-size: .85rem; display: inline-flex; align-items: center; gap: .25rem; }
+.status-err { color: #dc2626; font-size: .85rem; display: inline-flex; align-items: center; gap: .25rem; }
 .status-testing { color: #888; font-size: .85rem; }
 .status-none { color: #bbb; font-size: .85rem; }
 .err-row td.err-detail {
@@ -718,6 +718,8 @@ async function startOAuth() {
 .filters-section { border-top: 1px solid #eee; padding-top: .75rem; display: flex; flex-direction: column; gap: .4rem; }
 .filters-title { font-size: .82rem; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
 .oauth-hint { font-size: .82rem; color: #888; }
+.status-dot--active { color: #15803d; fill: currentColor; }
+.status-dot--inactive { color: #ccc; fill: currentColor; }
 .auth-hint {
   font-size: .82rem;
   line-height: 1.45;

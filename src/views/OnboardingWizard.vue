@@ -7,6 +7,7 @@ import JiraConnectionStep from '../components/onboarding/JiraConnectionStep.vue'
 import ExchangeConnectionStep from '../components/onboarding/ExchangeConnectionStep.vue';
 import WorkScheduleStep from '../components/onboarding/WorkScheduleStep.vue';
 import TourStep from '../components/onboarding/TourStep.vue';
+import ActionIcon, { type ActionIconName } from '../components/ActionIcon.vue';
 
 const router = useRouter();
 const settings = useSettingsStore();
@@ -14,11 +15,11 @@ const jiraProfiles = useJiraProfilesStore();
 
 const currentStep = ref(0);
 
-const steps = [
-  { id: 'jira',     title: 'Подключение к Jira',        icon: '🔗' },
-  { id: 'exchange', title: 'Подключение к Exchange',     icon: '📅' },
-  { id: 'schedule', title: 'Рабочий график',             icon: '⏱️' },
-  { id: 'tour',     title: 'Быстрый тур',                icon: '🚀' },
+const steps: { id: string; title: string; icon: ActionIconName }[] = [
+  { id: 'jira',     title: 'Подключение к Jira',        icon: 'link' },
+  { id: 'exchange', title: 'Подключение к Exchange',     icon: 'clock' },
+  { id: 'schedule', title: 'Рабочий график',             icon: 'clock' },
+  { id: 'tour',     title: 'Быстрый тур',                icon: 'bolt' },
 ];
 
 const isLastStep = computed(() => currentStep.value === steps.length - 1);
@@ -62,7 +63,7 @@ function goToStep(idx: number) {
           :title="step.title"
           @click="goToStep(idx)"
         >
-          <span class="step-icon">{{ step.icon }}</span>
+          <span class="step-icon"><ActionIcon :name="step.icon" :size="20" /></span>
           <span class="step-label">{{ step.title }}</span>
         </button>
       </nav>
@@ -160,7 +161,7 @@ function goToStep(idx: number) {
   font-weight: 600;
 }
 
-.step-icon { font-size: 1.5em; }
+.step-icon { display: inline-flex; align-items: center; justify-content: center; }
 
 /* Анимация переходов между шагами */
 .slide-step-enter-active,

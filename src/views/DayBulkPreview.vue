@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDayFromCalendarStore } from '../store/dayFromCalendar';
+import ActionIcon from '../components/ActionIcon.vue';
 
 const store = useDayFromCalendarStore();
 const router = useRouter();
@@ -38,7 +39,7 @@ async function submit() {
 <template>
   <div class="preview-page">
     <div class="preview-header">
-      <button @click="router.back()" class="btn-back">← Назад</button>
+      <button @click="router.back()" class="btn-back"><ActionIcon name="chevron-left" :size="14" /> Назад</button>
       <h2>Предпросмотр: залогировать весь день</h2>
     </div>
 
@@ -70,7 +71,7 @@ async function submit() {
       <div class="preview-footer">
         <span>Всего записей: <strong>{{ store.bulkPreview.length }}</strong></span>
         <button @click="submit" :disabled="submitting" class="btn-submit">
-          {{ submitting ? 'Логируем…' : '✅ Залогировать всё' }}
+          <template v-if="!submitting"><ActionIcon name="check-circle" :size="14" /> </template>{{ submitting ? 'Логируем…' : 'Залогировать всё' }}
         </button>
       </div>
     </div>
@@ -82,12 +83,12 @@ async function submit() {
         :key="i"
         class="result-row"
         :class="r.success ? 'ok' : 'fail'">
-        <span>{{ r.success ? '✅' : '❌' }}</span>
+        <span><ActionIcon :name="r.success ? 'check-circle' : 'x-circle'" :size="14" /></span>
         <strong>{{ r.issueKey }}</strong>
         <span v-if="!r.success" class="err-msg">{{ r.error }}</span>
       </div>
       <button @click="router.push('/calendar')" class="btn-back btn-done">
-        ← Вернуться к дню
+        <ActionIcon name="chevron-left" :size="14" /> Вернуться к дню
       </button>
     </div>
   </div>

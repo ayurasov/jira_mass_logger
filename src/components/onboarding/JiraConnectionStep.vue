@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import ActionIcon from '../ActionIcon.vue';
 
 const emit = defineEmits<{ done: [] }>();
 
@@ -175,18 +176,18 @@ async function testAndSave() {
 
       <!-- Подсказка Basic -->
       <p v-if="isBasic" class="step-hint">
-        ⚠️️ Basic Auth передаёт пароль в base64. Используйте только по HTTPS.
+        <ActionIcon name="warning" :size="13" /> Basic Auth передаёт пароль в base64. Используйте только по HTTPS.
       </p>
 
       <!-- Статус -->
       <transition name="fade">
         <div v-if="error" class="step-error" role="alert">
-          <span class="status-icon">⚠️</span> {{ error }}
+          <span class="status-icon"><ActionIcon name="warning" :size="14" /></span> {{ error }}
         </div>
       </transition>
       <transition name="fade">
         <div v-if="success" class="step-success" role="status">
-          <span class="status-icon">✅</span> Соединение установлено
+          <span class="status-icon"><ActionIcon name="check-circle" :size="14" /></span> Соединение установлено
         </div>
       </transition>
 

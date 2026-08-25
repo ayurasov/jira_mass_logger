@@ -52,7 +52,7 @@
             <td>{{ p.authMode === 'graph' ? 'Microsoft Graph' : 'EWS' }}</td>
             <td>{{ p.username }}</td>
             <td>
-              <span v-if="p.isActive" class="badge badge--ok">✓ Активный</span>
+              <span v-if="p.isActive" class="badge badge--ok"><ActionIcon name="check-circle" :size="12" /> Активный</span>
               <button v-else class="btn btn--ghost btn--sm" :disabled="busy" @click="setActive(p)">
                 Сделать активным
               </button>
@@ -216,6 +216,7 @@
 import { ref, reactive, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { isEnabled, enable, disable } from '@tauri-apps/plugin-autostart';
+import ActionIcon from '../components/ActionIcon.vue';
 import {
   tauriApi,
   profileToConnectionParams,

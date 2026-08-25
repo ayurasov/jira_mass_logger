@@ -1,26 +1,27 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import ActionIcon, { type ActionIconName } from '../ActionIcon.vue';
 
 const emit = defineEmits<{ done: [] }>();
 
-const tourSteps = [
+const tourSteps: { icon: ActionIconName; title: string; text: string }[] = [
   {
-    icon: '⌨️',
+    icon: 'bolt',
     title: 'Ctrl+N — Быстрый трекинг',
     text: 'В любой момент нажмите Ctrl+N, чтобы открыть мастер массового логирования. Выберите задачи, укажите дни и часы — готово.',
   },
   {
-    icon: '📊',
+    icon: 'dashboard',
     title: 'Дашборд аналитики',
     text: 'На главном экране видно загрузку за неделю, heatmap заполненности за 3 месяца и список дней с «дырками» в worklog.',
   },
   {
-    icon: '📅',
+    icon: 'clock',
     title: 'Ctrl+L — Мой журнал',
     text: 'Ctrl+L открывает таблицу worklog. Двойной клик по ячейке — inline-редактирование. Enter сохраняет, Esc отменяет.',
   },
   {
-    icon: '🔔',
+    icon: 'bell',
     title: 'Напоминания',
     text: 'В разделе Настройки включите напоминание в конце рабочего дня. JiraTime пришлёт уведомление, если worklog не заполнен.',
   },
@@ -45,7 +46,7 @@ const isLast = () => current.value === tourSteps.length - 1;
 
     <Transition name="slide-step" mode="out-in">
       <div :key="current" class="tour-card">
-        <div class="tour-icon" aria-hidden="true">{{ tourSteps[current].icon }}</div>
+        <div class="tour-icon" aria-hidden="true"><ActionIcon :name="tourSteps[current].icon" :size="32" /></div>
         <h3 class="tour-card-title">{{ tourSteps[current].title }}</h3>
         <p class="tour-card-text">{{ tourSteps[current].text }}</p>
       </div>
@@ -66,7 +67,7 @@ const isLast = () => current.value === tourSteps.length - 1;
 
     <div class="step-actions">
       <button class="btn btn-primary" @click="next">
-        {{ isLast() ? 'Начать работу 🚀' : 'Далее' }}
+        {{ isLast() ? 'Начать работу' : 'Далее' }}
       </button>
     </div>
   </section>
