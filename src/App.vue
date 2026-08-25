@@ -2,6 +2,7 @@
 import { onMounted } from 'vue';
 import { useSettingsStore } from './store/settings';
 import SyncStatusIndicator from './components/SyncStatusIndicator.vue';
+import AboutPanel from './components/AboutPanel.vue';
 import { usePowerEvents } from './composables/usePowerEvents';
 import { useHotkeys } from './composables/useHotkeys';
 import { useUpdater } from './composables/useUpdater';
@@ -28,6 +29,8 @@ useUpdater();
     <!-- Индикатор сети/синхронизации — фиксирован в правом верхнем углу поверх навигации -->
     <SyncStatusIndicator class="app-sync-indicator" />
     <router-view />
+    <!-- Блок «О программе»: версия, автор, дата/копирайт, контакт в Telegram — правый нижний угол -->
+    <AboutPanel />
   </div>
 </template>
 
