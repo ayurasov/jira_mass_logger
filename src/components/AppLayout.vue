@@ -1,12 +1,13 @@
 <!--
   Постоянная боковая навигация — обёртка для всех основных экранов приложения
   (кроме онбординга). Даёт единый способ переключаться между экранами:
-  клик по пункту меню, горячие клавиши (см. useHotkeys) или сворачивание
+  клик по пункту меню, горячие клавиши (см. useHotkeys) или сворацивание
   панели в компактный режим с иконками.
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
+import AppLogo from './AppLogo.vue';
 
 interface NavItem {
   name: string;
@@ -49,6 +50,11 @@ onMounted(() => {
 <template>
   <div class="app-layout">
     <aside class="app-sidebar" :class="{ collapsed }">
+      <div class="sidebar-brand" :title="collapsed ? 'JiraTime' : undefined">
+        <AppLogo :size="28" />
+        <span v-if="!collapsed" class="sidebar-brand-name">JiraTime</span>
+      </div>
+
       <button
         class="sidebar-toggle"
         :title="collapsed ? 'Развернуть меню' : 'Свернуть меню'"
@@ -100,6 +106,24 @@ onMounted(() => {
 }
 .app-sidebar.collapsed {
   width: 3.75rem;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.9rem 0.75rem 0.25rem;
+  flex-shrink: 0;
+}
+.app-sidebar.collapsed .sidebar-brand {
+  justify-content: center;
+  padding: 0.9rem 0.4rem 0.25rem;
+}
+.sidebar-brand-name {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--fg);
+  white-space: nowrap;
 }
 
 .sidebar-toggle {
