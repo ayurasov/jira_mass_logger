@@ -2,6 +2,29 @@
   <div class="settings-screen">
     <h2>Настройки</h2>
 
+    <!-- ──────────── Общие настройки ──────────── -->
+    <section class="settings-card">
+      <div class="card-header">
+        <h3>Общие</h3>
+      </div>
+
+      <label class="checkbox-row-inline">
+        <input
+          type="checkbox"
+          :checked="autostartEnabled"
+          :disabled="autostartBusy"
+          @change="onToggleAutostart(($event.target as HTMLInputElement).checked)"
+        />
+        Запускать при старте Windows
+      </label>
+      <p class="hint">
+        Использует <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code> — не требует прав администратора.
+      </p>
+      <p v-if="autostartMessage" :class="['status-text', autostartSuccess ? 'status-text--ok' : 'status-text--error']">
+        {{ autostartMessage }}
+      </p>
+    </section>
+
     <!-- ──────────── Exchange profiles list ──────────── -->
     <section class="settings-card">
       <div class="card-header">
@@ -192,6 +215,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { isEnabled, enable, disable } from '@tauri-apps/plugin-autostart';
 import {
   tauriApi,
   profileToConnectionParams,
@@ -209,6 +233,46 @@ const editing = ref(false);
 const resetting = ref(false);
 const resetMessage = ref('');
 const resetSuccess = ref(false);
+
+// ──────────── Автозапуск при старте Windows (tauri-plugin-autostart) ────────────
+// Использует HKCU\Software\Microsoft\Windows\CurrentVersion\Run — без прав администратора.
+const autostartEnabled = ref(false);
+const autostartBusy = ref(false);
+const autostartMessage = ref('');
+const autostartSuccess = ref(false);
+
+async function loadAutostartState() {
+  try {
+    autostartEnabled.value = await isEnabled();
+  } catch (err) {
+    autostartMessage.value = `Не удалось получить статус автозапуска: ${err}`;
+    autostartSuccess.value = false;
+  }
+}
+
+async function onToggleAutostart(checked: boolean) {
+  autostartBusy.value = true;
+  autostartMessage.value = '';
+  try {
+    if (checked) {
+      await enable();
+    } else {
+      await disable();
+    }
+    autostartEnabled.value = checked;
+    autostartSuccess.value = true;
+    autostartMessage.value = checked
+      ? 'Автозапуск включён: JiraTime будет запускаться при входе в Windows.'
+      : 'Автозапуск отключён.';
+  } catch (err) {
+    autostartSuccess.value = false;
+    autostartMessage.value = `Ошибка изменения автозапуска: ${err}`;
+    // Возвращаем чекбокс в исходное состояние, если операция не удалась
+    await loadAutostartState();
+  } finally {
+    autostartBusy.value = false;
+  }
+}
 
 const profiles = ref<ExchangeProfileDto[]>([]);
 
@@ -242,7 +306,10 @@ async function loadProfiles() {
   }
 }
 
-onMounted(loadProfiles);
+onMounted(() => {
+  loadProfiles();
+  loadAutostartState();
+});
 
 function startCreate() {
   Object.assign(form, makeBlankForm());
@@ -415,6 +482,13 @@ async function resetAppData() {
 }
 
 .card-header h3 { margin: 0; }
+
+.checkbox-row-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
 
 .profiles-table {
   width: 100%;
