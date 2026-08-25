@@ -41,9 +41,13 @@
                 v-for="(cell, ci) in week"
                 :key="cell ? cell.date : wi + '-' + ci"
                 class="heatmap-cell"
-                :class="{ 'heatmap-cell--clickable': !!cell, 'heatmap-cell--weekend': cell && !isWorkingDay(cell.date) }"
+                :class="{
+                  'heatmap-cell--clickable': !!cell,
+                  'heatmap-cell--weekend': cell && isWeekend(cell.date) && !holidayTitle(cell.date),
+                  'heatmap-cell--holiday': cell && !!holidayTitle(cell.date),
+                }"
                 :data-level="cell ? cell.level : -1"
-                :title="cell ? `${cell.date}: ${cell.hours} ч — открыть в worklog` : ''"
+                :title="cell ? cellTitle(cell) : ''"
                 @click="cell ? goToWorklog(cell.date) : null"
               >{{ cell && cell.hours > 0 ? cell.hours.toFixed(1) : '' }}</div>
             </div>
@@ -60,6 +64,13 @@ import { useRouter } from 'vue-router';
 import { useAnalyticsStore, type HeatmapCell } from '../../store/analytics';
 import { useSettingsStore } from '../../store/settings';
 
+// Парсим 'YYYY-MM-DD' как ЛОКАЛЬНУЮ дату (а не UTC через new Date(str)),
+// чтобы избежать сдвига дня в часовых поясах западнее UTC.
+function parseIsoLocal(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
 const store = useAnalyticsStore();
 const settings = useSettingsStore();
 const router = useRouter();
@@ -75,13 +86,25 @@ function goToWeek(from: string, to: string) {
 const weekdayLabels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
 function isWeekend(dateIso: string): boolean {
-  const d = new Date(dateIso).getDay();
+  const d = parseIsoLocal(dateIso).getDay();
   return d === 0 || d === 6;
 }
 
 // Рабочий день = не выходной и не праздник (по производственному календарю РФ)
 function isWorkingDay(dateIso: string): boolean {
   return !isWeekend(dateIso) && !settings.isHoliday(dateIso);
+}
+
+function holidayTitle(dateIso: string): string | null {
+  return settings.holidaysMap.get(dateIso) ?? null;
+}
+
+function cellTitle(cell: HeatmapCell): string {
+  const holiday = holidayTitle(cell.date);
+  const base = `${cell.date}: ${cell.hours} ч`;
+  if (holiday) return `${base} — ${holiday} (нерабочий день)`;
+  if (isWeekend(cell.date)) return `${base} — выходной`;
+  return `${base} — открыть в worklog`;
 }
 
 // Группируем ячейки по неделям (вертикальные колонки), как в GitHub contribution graph
@@ -91,7 +114,7 @@ const weeks = computed(() => {
   if (!cells.length) return [];
 
   // находим день недели первой ячейки (индекс 1 = Пн в getDay())
-  const firstDate = new Date(cells[0].date);
+  const firstDate = parseIsoLocal(cells[0].date);
   const startDow = firstDate.getDay(); // 0=Вс, 1=Пн ...
   // преобразуем: 0=Пн..6=Вс
   const offset = startDow === 0 ? 6 : startDow - 1;
@@ -150,10 +173,10 @@ const months = computed(() => {
   for (let i = 0; i < meta.length; i++) {
     const w = meta[i];
     if (!w) continue;
-    const monthKey = new Date(w.from).getMonth();
-    if (!cur || new Date(cur.from).getMonth() !== monthKey) {
+    const monthKey = parseIsoLocal(w.from).getMonth();
+    if (!cur || parseIsoLocal(cur.from).getMonth() !== monthKey) {
       if (cur) out.push(finalizeMonth(cur));
-      cur = { label: fmt.format(new Date(w.from)).replace('.', ''), weeks: 0, from: w.from, to: w.to, hours: 0, target: 0 };
+      cur = { label: fmt.format(parseIsoLocal(w.from)).replace('.', ''), weeks: 0, from: w.from, to: w.to, hours: 0, target: 0 };
     }
     // считаем целевые часы месяца только по видимым в этой неделе рабочим дням
     const present = (cells[i] ?? []).filter(Boolean) as HeatmapCell[];
@@ -174,7 +197,7 @@ function finalizeMonth(m: { label: string; weeks: number; from: string; to: stri
 }
 
 function isoWeekNum(dateIso: string): string {
-  const date = new Date(dateIso);
+  const date = parseIsoLocal(dateIso);
   const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = target.getUTCDay() || 7;
   target.setUTCDate(target.getUTCDate() + 4 - dayNum);
@@ -286,6 +309,13 @@ function isoWeekNum(dateIso: string): string {
 .heatmap-cell--weekend[data-level="2"],
 .heatmap-cell--weekend[data-level="3"],
 .heatmap-cell--weekend[data-level="4"] { background: var(--heatmap-weekend-fill); opacity: 1; }
+/* Праздничный будний день — отдельный акцентный цвет, отличный от обычных Сб/Вс. */
+.heatmap-cell--holiday { opacity: 1; }
+.heatmap-cell--holiday[data-level="0"] { background: var(--heatmap-holiday, #f6cf6b); }
+.heatmap-cell--holiday[data-level="1"],
+.heatmap-cell--holiday[data-level="2"],
+.heatmap-cell--holiday[data-level="3"],
+.heatmap-cell--holiday[data-level="4"] { background: var(--heatmap-holiday-fill, #f0b429); color: #4a3400; }
 .heatmap-cell[data-level="0"]  { background: var(--heatmap-0); }
 .heatmap-cell[data-level="1"]  { background: var(--heatmap-1); }
 .heatmap-cell[data-level="2"]  { background: var(--heatmap-2); }

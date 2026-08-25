@@ -11,8 +11,16 @@ import { useSettingsStore } from './settings';
 
 // ────────────────────────────────────────────
 // Утилиты дат
+// ВАЖНО: используем локальные компоненты даты, а не toISOString() —
+// toISOString() конвертирует в UTC, и для часовых поясов восточнее UTC
+// (например, MSK, UTC+3) локальная полночь понедельника превращалась
+// в 21:00 предыдущего дня по UTC, из-за чего вся неделя съезжала
+// на день назад (понедельник показывался как предыдущее воскресенье).
 function toIsoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function startOfWeek(d: Date, weekStartsMonday = true): Date {
@@ -34,8 +42,16 @@ function weekDates(monday: Date): string[] {
   return Array.from({ length: 7 }, (_, i) => toIsoDate(addDays(monday, i)));
 }
 
+// Парсим 'YYYY-MM-DD' как ЛОКАЛЬНУЮ дату (не через new Date(str), которая
+// трактует такую строку как UTC-полночь и может сдвинуть день недели
+// в часовых поясах западнее UTC).
+function parseIsoLocal(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
 function isWorkday(date: string): boolean {
-  const day = new Date(date).getDay();
+  const day = parseIsoLocal(date).getDay();
   if (day === 0 || day === 6) return false;
   const settings = useSettingsStore();
   return !settings.isHoliday(date);
@@ -102,7 +118,7 @@ function computeWeekBars(rows: CachedWorklogRow[], monday: Date): DayBar[] {
   }
   return dates.map((date) => {
     const wd = isWorkday(date);
-    const dayOfWeek = new Date(date).getDay();
+    const dayOfWeek = parseIsoLocal(date).getDay();
     return {
       date,
       label: DAY_LABELS[dayOfWeek],
