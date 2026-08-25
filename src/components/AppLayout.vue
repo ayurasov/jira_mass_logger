@@ -7,6 +7,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
+import logoUrl from '../assets/logo.svg';
 
 interface NavItem {
   name: string;
@@ -49,6 +50,11 @@ onMounted(() => {
 <template>
   <div class="app-layout">
     <aside class="app-sidebar" :class="{ collapsed }">
+      <div class="sidebar-brand">
+        <img :src="logoUrl" alt="JiraTime" class="sidebar-logo" />
+        <span v-if="!collapsed" class="sidebar-brand-name">JiraTime</span>
+      </div>
+
       <button
         class="sidebar-toggle"
         :title="collapsed ? 'Развернуть меню' : 'Свернуть меню'"
@@ -100,6 +106,27 @@ onMounted(() => {
 }
 .app-sidebar.collapsed {
   width: 3.75rem;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.85rem 0.75rem 0.25rem;
+}
+
+.sidebar-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+
+.sidebar-brand-name {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--fg);
+  white-space: nowrap;
 }
 
 .sidebar-toggle {
@@ -169,6 +196,11 @@ onMounted(() => {
   font-family: 'Consolas', monospace;
   flex-shrink: 0;
   justify-self: end;
+}
+
+.app-sidebar.collapsed .sidebar-brand {
+  justify-content: center;
+  padding: 0.85rem 0.25rem 0.25rem;
 }
 
 .app-sidebar.collapsed .nav-item {
