@@ -92,7 +92,7 @@
       <div class="form-grid" style="margin-top: 0.75rem">
         <label>
           Дата
-          <input v-model="newHolidayDate" type="date" />
+          <DatePicker v-model="newHolidayDate" />
         </label>
         <label class="span-2">
           Название
@@ -301,6 +301,7 @@ import { ref, reactive, onMounted, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { isEnabled, enable, disable } from '@tauri-apps/plugin-autostart';
 import ActionIcon from '../components/ActionIcon.vue';
+import DatePicker from '../components/DatePicker.vue';
 import {
   tauriApi,
   profileToConnectionParams,

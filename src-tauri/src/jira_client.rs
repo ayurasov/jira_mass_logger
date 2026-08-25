@@ -765,6 +765,26 @@ pub async fn get_worklogs_since(
         c
     };
 
+    // Быстрый путь: если указан явный диапазон дат (date_range) и since=0 —
+    // это day/week-scoped refresh (клик по дню/неделе в дашборде, кнопка
+    // "Обновить" в календаре/worklog), а не watermark-синхронизация всей
+    // истории. В таком случае идём СРАЗУ через JQL (worklogDate >= .. AND <= ..) —
+    // Jira фильтрует по дате на своей стороне и возвращает только релевантные
+    // задачи, а не полный worklog/updated?since=0 (сканирует ВСЮ историю
+    // worklog всего инстанса — именно это и было причиной "долгого ожидания").
+    if since_epoch_millis == 0 {
+        if let Some(dr) = date_range.as_ref() {
+            return match fetch_worklogs_by_jql(&ctx, &params, &myself, dr).await {
+                Ok(jql_worklogs) => Ok(jql_worklogs),
+                Err(e) if allow_empty_range => {
+                    eprintln!("[jira_client] date-scoped JQL fast-path не удался, allow_empty_range=true: {e}");
+                    Ok(Vec::new())
+                }
+                Err(e) => Err(format!("Не удалось получить worklog за период {}..{}: {e}", dr.date_from, dr.date_to)),
+            };
+        }
+    }
+
     // Шаг 1. Bulk-путь: worklog/updated → worklog/list.
     // Поддерживается и Cloud, и Jira Server/DC 7.6.1+ (раньше здесь был ошибочный
     // комментарий, что у Server нет этого эндпоинта — это приводило к тому, что при

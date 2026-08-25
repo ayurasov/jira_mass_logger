@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { save } from '@tauri-apps/plugin-dialog';
+import DatePicker from '../components/DatePicker.vue';
 import { useBulkWizardStore } from '../store/bulkWizard';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { useAnalyticsStore } from '../store/analytics';
@@ -239,11 +240,11 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 
             <label class="field-block">
               <span>Дата начала</span>
-              <input v-model="wizard.periodFrom" class="text-input" type="date" />
+              <DatePicker v-model="wizard.periodFrom" class="text-input" />
             </label>
             <label class="field-block">
               <span>Дата окончания</span>
-              <input v-model="wizard.periodTo" class="text-input" type="date" />
+              <DatePicker v-model="wizard.periodTo" class="text-input" />
             </label>
             <label class="field-block checkbox-line mobile-full">
               <input v-model="wizard.excludeHolidays" type="checkbox" />
