@@ -1,6 +1,6 @@
 <template>
   <div class="templates-page">
-    <h1 class="page-title">&#x1F4CB; Шаблоны описаний</h1>
+    <h1 class="page-title"><ActionIcon name="folder" :size="22" /> Шаблоны описаний</h1>
     <p class="page-hint">
       Создайте шаблоны для описаний worklog. Доступные переменные:
       <code>{date}</code>, <code>{week}</code>, <code>{week_number}</code>,
@@ -8,11 +8,14 @@
     </p>
 
     <div class="toolbar">
-      <input
-        v-model="searchQuery"
-        class="search-input"
-        placeholder="&#x1F50D; Поиск..."
-      />
+      <div class="search-input-wrap">
+        <ActionIcon name="search" :size="15" class="search-input-icon" />
+        <input
+          v-model="searchQuery"
+          class="search-input"
+          placeholder="Поиск..."
+        />
+      </div>
       <button class="btn btn-primary" @click="openForm(null)">+ Новый шаблон</button>
     </div>
 
@@ -33,10 +36,10 @@
           <span class="tc-uses">исп. {{ t.useCount ?? 0 }} раз</span>
           <div class="tc-actions">
             <button class="icon-btn" :title="t.isPinned ? 'Открепить' : 'Закрепить'" @click="togglePin(t)">
-              {{ t.isPinned ? '&#x1F4CC;' : '&#x1F4CD;' }}
+              <ActionIcon :name="t.isPinned ? 'pin' : 'pin-off'" :size="15" />
             </button>
-            <button class="icon-btn" title="Редактировать" @click="openForm(t)">&#x270F;&#xFE0F;</button>
-            <button class="icon-btn danger" title="Удалить" @click="deleteTemplate(t.id)">&#x1F5D1;&#xFE0F;</button>
+            <button class="icon-btn" title="Редактировать" @click="openForm(t)"><ActionIcon name="edit" :size="15" /></button>
+            <button class="icon-btn danger" title="Удалить" @click="deleteTemplate(t.id)"><ActionIcon name="trash" :size="15" /></button>
           </div>
         </div>
         <div class="tc-body">
@@ -258,11 +261,13 @@ function insertVar(token: string) {
 
 <style scoped>
 .templates-page { padding: 1.5rem; max-width: 860px; }
-.page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: .4rem; }
+.page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: .4rem; display: flex; align-items: center; gap: .5rem; }
 .page-hint { font-size: .88rem; color: #666; margin-bottom: 1.2rem; }
 .page-hint code { background: #f0f0f0; border-radius: 3px; padding: .05rem .3rem; font-size: .82rem; }
 .toolbar { display: flex; gap: .8rem; margin-bottom: 1.2rem; align-items: center; }
-.search-input { flex: 1; padding: .4rem .75rem; border: 1px solid var(--border, #d0d5dd); border-radius: 7px; font-size: .9rem; background: var(--input-bg, #fafafa); }
+.search-input-wrap { position: relative; flex: 1; display: flex; align-items: center; }
+.search-input-icon { position: absolute; left: .6rem; color: #999; pointer-events: none; }
+.search-input { flex: 1; padding: .4rem .75rem .4rem 2rem; border: 1px solid var(--border, #d0d5dd); border-radius: 7px; font-size: .9rem; background: var(--input-bg, #fafafa); }
 .btn { padding: .4rem .9rem; border-radius: 6px; border: 1px solid var(--border, #d0d5dd); cursor: pointer; font-size: .9rem; background: var(--surface, #fff); }
 .btn-primary { background: #0052cc; color: #fff; border-color: #0052cc; }
 .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
@@ -281,7 +286,7 @@ function insertVar(token: string) {
 .tc-text { color: #333; white-space: pre-wrap; word-break: break-word; background: #f9f9f9; border-radius: 5px; padding: .45rem .6rem; font-family: monospace; font-size: .82rem; }
 .tc-preview { display: flex; gap: .4rem; font-size: .82rem; color: #555; margin-top: .2rem; }
 .tc-preview-label { color: #aaa; white-space: nowrap; }
-.icon-btn { background: none; border: none; cursor: pointer; font-size: 1rem; padding: .2rem .3rem; border-radius: 4px; }
+.icon-btn { background: none; border: none; cursor: pointer; font-size: 1rem; padding: .2rem .3rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
 .icon-btn:hover { background: #f0f0f0; }
 .icon-btn.danger:hover { background: #fee2e2; }
 

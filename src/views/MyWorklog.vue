@@ -11,11 +11,11 @@
         <span v-else class="badge badge--ok">Синхронизировано</span>
       </div>
       <div class="worklog-header__actions">
-        <button class="btn btn--ghost" @click="openAutoSyncSettings = !openAutoSyncSettings">⚡ Автосинхронизация</button>
+        <button class="btn btn--ghost" @click="openAutoSyncSettings = !openAutoSyncSettings"><ActionIcon name="bolt" :size="15" /> Автосинхронизация</button>
         <button class="btn btn--secondary" :disabled="store.loading" @click="refreshFromJira">
-          {{ store.loading ? 'Обновление…' : '↻ Обновить из Jira' }}
+          <ActionIcon name="refresh" :size="15" /> {{ store.loading ? 'Обновление…' : 'Обновить из Jira' }}
         </button>
-        <button class="btn btn--primary" @click="exportCsv">⬇ Экспорт CSV</button>
+        <button class="btn btn--primary" @click="exportCsv"><ActionIcon name="download" :size="15" /> Экспорт CSV</button>
       </div>
     </header>
 
@@ -44,7 +44,7 @@
       <input v-model="store.filters.projectKey" class="filters__input" placeholder="Проект (ABC)" />
       <input v-model="store.filters.fromDate" type="date" class="filters__input" />
       <input v-model="store.filters.toDate" type="date" class="filters__input" />
-      <input v-model="store.filters.searchText" class="filters__input filters__input--search" placeholder="🔎 Поиск в описании…" />
+      <input v-model="store.filters.searchText" class="filters__input filters__input--search" placeholder="Поиск в описании…" />
       <label class="filters__norm">
         Норма в день, ч:
         <input v-model.number="settings.workdayHours" type="number" min="1" max="24" step="0.5" />
@@ -150,8 +150,8 @@
                   <span class="status-dot" :class="'status-dot--' + row.syncStatus" :title="row.syncError || row.syncStatus"></span>
                 </td>
                 <td class="row-actions">
-                  <button class="icon-btn" title="Дублировать" @click="promptDuplicate(row)">⧉</button>
-                  <button class="icon-btn icon-btn--danger" title="Удалить" @click="confirmDelete(row)">✕</button>
+                  <button class="icon-btn" title="Дублировать" @click="promptDuplicate(row)"><ActionIcon name="duplicate" :size="15" /></button>
+                  <button class="icon-btn icon-btn--danger" title="Удалить" @click="confirmDelete(row)"><ActionIcon name="close" :size="15" /></button>
                 </td>
               </tr>
             </template>

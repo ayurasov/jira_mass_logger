@@ -3,12 +3,12 @@
     <div class="dash-card-header">
       <span class="dash-card-title">Недозаполненные дни &mdash; {{ currentMonthLabel }}</span>
       <span class="dash-badge" :data-variant="days.length === 0 ? 'success' : 'warning'">
-        {{ days.length === 0 ? 'Всё заполнено ✔' : days.length + ' дн. с дефицитом' }}
+        <template v-if="days.length === 0"><ActionIcon name="check-circle" :size="12" /> Всё заполнено</template><template v-else>{{ days.length }} дн. с дефицитом</template>
       </span>
     </div>
 
     <div v-if="days.length === 0" class="missing-empty">
-      <span>🎉 У вас нет пропущенных дней в этом месяце!</span>
+      <span class="missing-empty__inner"><ActionIcon name="sparkles" :size="14" /> У вас нет пропущенных дней в этом месяце!</span>
     </div>
 
     <ul v-else class="missing-list">
@@ -35,6 +35,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
+import ActionIcon from '../ActionIcon.vue';
 import { useAnalyticsStore } from '../../store/analytics';
 
 const store = useAnalyticsStore();

@@ -13,6 +13,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import ActionIcon, { type ActionIconName } from './ActionIcon.vue'
 
 interface SyncIndicator {
   netStatus:    'online' | 'offline' | 'syncing' | 'error'
@@ -33,13 +34,13 @@ const syncing   = ref(false)
 
 let unlisten: UnlistenFn | null = null
 
-const statusIcon = computed(() => {
+const statusIcon = computed<ActionIconName>(() => {
   switch (indicator.value.netStatus) {
-    case 'online':  return '\u25CF'   // ●
-    case 'offline': return '\u25CF'   // ●
-    case 'syncing': return '\u21BB'   // ↻
-    case 'error':   return '\u26A0'   // ⚠
-    default:        return '\u25CB'
+    case 'online':  return 'dot'
+    case 'offline': return 'dot'
+    case 'syncing': return 'refresh'
+    case 'error':   return 'warning'
+    default:        return 'dot'
   }
 })
 
@@ -114,7 +115,7 @@ async function handleWindowFocus() {
       @click="popupOpen = !popupOpen"
     >
       <span class="si-icon" :class="{ 'si-spin': indicator.netStatus === 'syncing' }">
-        {{ statusIcon }}
+        <ActionIcon :name="statusIcon" :size="15" />
       </span>
       <span v-if="indicator.pendingCount > 0" class="si-badge">
         {{ indicator.pendingCount }}
@@ -126,7 +127,7 @@ async function handleWindowFocus() {
       <div v-if="popupOpen" class="si-popup" role="dialog" aria-label="Статус синхронизации">
         <div class="si-popup-header">
           <span class="si-popup-title">Синхронизация</span>
-          <button class="si-close" @click="popupOpen = false" aria-label="Закрыть">×</button>
+          <button class="si-close" @click="popupOpen = false" aria-label="Закрыть"><ActionIcon name="close" :size="14" /></button>
         </div>
 
         <div class="si-popup-body">
@@ -158,8 +159,8 @@ async function handleWindowFocus() {
             :disabled="syncing || indicator.netStatus === 'offline'"
             @click="triggerSyncNow"
           >
-            <span v-if="syncing">↻ Синхронизация...</span>
-            <span v-else>↻ Синхронизировать сейчас</span>
+            <span v-if="syncing" class="si-sync-btn__inner"><ActionIcon name="refresh" :size="13" /> Синхронизация...</span>
+            <span v-else class="si-sync-btn__inner"><ActionIcon name="refresh" :size="13" /> Синхронизировать сейчас</span>
           </button>
         </div>
       </div>
@@ -188,6 +189,7 @@ async function handleWindowFocus() {
   line-height: 1;
   transition: background 0.15s;
 }
+.si-icon { display: inline-flex; align-items: center; }
 .si-btn:hover { background: rgba(0,0,0,0.07); }
 
 /* Цвета статусов */
@@ -248,6 +250,7 @@ async function handleWindowFocus() {
   border: none; background: none; cursor: pointer;
   font-size: 18px; line-height: 1; color: var(--color-text-muted, #64748b);
   padding: 0 2px;
+  display: inline-flex; align-items: center;
 }
 
 .si-popup-body { padding: 10px 14px; }
@@ -284,7 +287,11 @@ async function handleWindowFocus() {
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+.si-sync-btn__inner { display: inline-flex; align-items: center; gap: 5px; }
 .si-sync-btn:hover:not(:disabled) { background: var(--color-primary-hover, #0c4e54); }
 .si-sync-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 

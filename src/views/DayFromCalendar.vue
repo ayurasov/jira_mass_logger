@@ -6,6 +6,7 @@ import { tauriApi } from '../lib/tauriApi';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { useSettingsStore } from '../store/settings';
 import { useFavoriteTasksStore } from '../store/favoriteTasks';
+import ActionIcon from '../components/ActionIcon.vue';
 
 const store = useDayFromCalendarStore();
 const router = useRouter();
@@ -161,21 +162,21 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
   <div class="day-calendar">
     <!-- Header -->
     <div class="day-header">
-      <h2>📅 День из календаря</h2>
+      <h2><ActionIcon name="clock" :size="20" /> День из календаря</h2>
       <div class="day-controls">
         <div class="day-nav">
-          <button @click="navigateDay(-1)" class="nav-btn" title="Предыдущий день">◀</button>
+          <button @click="navigateDay(-1)" class="nav-btn" title="Предыдущий день"><ActionIcon name="chevron-left" :size="14" /></button>
           <button @click="goToday" class="nav-today" title="Сегодня">Сегодня</button>
-          <button @click="navigateDay(1)" class="nav-btn" title="Следующий день">▶</button>
+          <button @click="navigateDay(1)" class="nav-btn" title="Следующий день"><ActionIcon name="chevron-right" :size="14" /></button>
         </div>
         <input type="date" v-model="selectedDate"
           @change="store.loadDay(selectedDate)" class="date-picker" />
         <button @click="store.loadDay(selectedDate, true)" :disabled="store.loading" class="btn-refresh">
-          🔄 Обновить
+          <ActionIcon name="refresh" :size="14" /> Обновить
         </button>
         <button @click="refreshWeek" :disabled="weekRefreshing || store.loading" class="btn-refresh"
           title="Полностью ресинхронизировать worklog всей недели с Jira: удалённые в Jira записи и дубли в кэше пропадут">
-          {{ weekRefreshing ? '⏳ Обновление недели…' : '🔄 Обновить неделю из Jira' }}
+          <ActionIcon name="refresh" :size="14" /> {{ weekRefreshing ? 'Обновление недели…' : 'Обновить неделю из Jira' }}
         </button>
         <select
           :value="store.roundingStepMinutes"
@@ -227,10 +228,10 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
       <span>
         Покрыто: {{ fmtDuration(store.coveredSeconds) }} / {{ store.workHoursPerDay }}ч
         <template v-if="store.uncoveredSeconds > 0">
-          · ⚠️ Не залогировано ещё {{ uncoveredHours }}
+          · <ActionIcon name="warning" :size="13" /> Не залогировано ещё {{ uncoveredHours }}
         </template>
         <template v-else>
-          · ✅ Норма выполнена
+          · <ActionIcon name="check-circle" :size="13" /> Норма выполнена
         </template>
       </span>
       <button v-if="store.rows.length > 0" @click="goToBulkPreview" class="btn-bulk">
@@ -247,7 +248,7 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
     <!-- Любимые задачи: автоподбор из последних 90 дней -->
     <div v-if="favorites.has" class="fav-panel">
       <div class="fav-panel__head">
-        <span class="fav-panel__title">★ Любимые задачи</span>
+        <span class="fav-panel__title"><ActionIcon name="star" :size="14" /> Любимые задачи</span>
         <span class="fav-panel__hint">автоподбор из последних 3 мес. · нажмите, чтобы вставить в первую свободную встречу</span>
       </div>
       <div class="fav-panel__chips">
@@ -259,7 +260,7 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
           @click="applyFavorite(f.issueKey, f.issueSummary)">
           {{ f.issueKey }}
           <span class="fav-chip__summary" v-if="f.issueSummary">{{ f.issueSummary }}</span>
-          <span class="fav-chip__remove" @click.stop="favorites.remove(f.issueKey)" title="Убрать из избранного">✕</span>
+          <span class="fav-chip__remove" @click.stop="favorites.remove(f.issueKey)" title="Убрать из избранного"><ActionIcon name="close" :size="11" /></span>
         </button>
       </div>
     </div>
@@ -327,7 +328,7 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
                 :title="f.issueSummary || f.issueKey"
                 @click="selectFavorite(idx, f.issueKey, f.issueSummary)">
                 {{ f.issueKey }}
-                <span class="fav-chip__remove" @click.stop="favorites.remove(f.issueKey)" title="Убрать из избранного">✕</span>
+                <span class="fav-chip__remove" @click.stop="favorites.remove(f.issueKey)" title="Убрать из избранного"><ActionIcon name="close" :size="11" /></span>
               </button>
             </div>
             <span v-if="row.selectedIssueKey" class="issue-chip">
@@ -335,11 +336,11 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
               <span v-if="row.selectedIssueSummary" class="issue-summary">
                 {{ row.selectedIssueSummary }}
               </span>
-              <button @click="store.setIssueForRow(idx, '', null)" class="btn-clear">✕</button>
+              <button @click="store.setIssueForRow(idx, '', null)" class="btn-clear"><ActionIcon name="close" :size="12" /></button>
               <button
                 :class="['btn-star', favorites.isFavorite(row.selectedIssueKey) ? 'is-fav' : '']"
                 :title="favorites.isFavorite(row.selectedIssueKey) ? 'В избранном' : 'Добавить в избранное'"
-                @click="favorites.toggle(row.selectedIssueKey, row.selectedIssueSummary)">{{ favorites.isFavorite(row.selectedIssueKey) ? '★' : '☆' }}</button>
+                @click="favorites.toggle(row.selectedIssueKey, row.selectedIssueSummary)"><ActionIcon :name="favorites.isFavorite(row.selectedIssueKey) ? 'star' : 'star-outline'" :size="13" /></button>
             </span>
             <div class="issue-search-wrap" v-if="!row.selectedIssueKey">
               <input
@@ -367,10 +368,10 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
               @click="logSingle(idx)"
               :disabled="!row.selectedIssueKey || row.logged"
               class="btn-log">
-              {{ row.logged ? '✅ Залогировано' : '▶ В worklog' }}
+              <ActionIcon :name="row.logged ? 'check-circle' : 'play'" :size="13" /> {{ row.logged ? 'Залогировано' : 'В worklog' }}
             </button>
             <span v-if="row.logError" class="row-error">{{ row.logError }}</span>
-            <span v-else-if="row.dedupWarning" class="row-warning">⚠ {{ row.dedupWarning }}</span>
+            <span v-else-if="row.dedupWarning" class="row-warning"><ActionIcon name="warning" :size="12" /> {{ row.dedupWarning }}</span>
           </div>
         </div>
       </div>

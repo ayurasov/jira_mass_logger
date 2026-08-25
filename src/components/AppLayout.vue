@@ -1,15 +1,16 @@
 <!--
   Постоянная боковая навигация — обёртка для всех основных экранов приложения
   (кроме онбординга). Даёт единый способ переключаться между экранами:
-  клик по пункту меню, горячие клавиши (см. useHotkeys) или сворацивание
+  клик по пункту меню, горячие клавиши (см. useHotkeys) или сворачивание
   панели в компактный режим с иконками.
-  Иконки — единый монохромный SVG-набор (NavIcon.vue) взамен разноцветных emoji.
+  Иконки — единый монохромный SVG-набор (NavIcon.vue / ActionIcon.vue) взамен разноцветных emoji.
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import AppLogo from './AppLogo.vue';
 import NavIcon, { type NavIconName } from './NavIcon.vue';
+import ActionIcon from './ActionIcon.vue';
 
 interface NavItem {
   name: string;
@@ -53,18 +54,17 @@ onMounted(() => {
   <div class="app-layout">
     <aside class="app-sidebar" :class="{ collapsed }">
       <div class="sidebar-brand" :title="collapsed ? 'JiraTime' : undefined">
-        <AppLogo :size="28" />
+        <AppLogo :size="26" />
         <span v-if="!collapsed" class="sidebar-brand-name">JiraTime</span>
+        <button
+          class="sidebar-toggle"
+          :title="collapsed ? 'Развернуть меню' : 'Свернуть меню'"
+          :aria-label="collapsed ? 'Развернуть меню' : 'Свернуть меню'"
+          @click="toggleCollapsed"
+        >
+          <ActionIcon :name="collapsed ? 'chevron-right' : 'chevron-left'" :size="14" />
+        </button>
       </div>
-
-      <button
-        class="sidebar-toggle"
-        :title="collapsed ? 'Развернуть меню' : 'Свернуть меню'"
-        @click="toggleCollapsed"
-      >
-        <span v-if="collapsed">»</span>
-        <span v-else>«</span>
-      </button>
 
       <nav class="sidebar-nav" aria-label="Навигация по экранам">
         <router-link
@@ -75,7 +75,7 @@ onMounted(() => {
           :class="{ active: activeName === item.name }"
           :title="collapsed ? item.label : undefined"
         >
-          <span class="nav-icon"><NavIcon :name="item.icon" :size="20" /></span>
+          <span class="nav-icon"><NavIcon :name="item.icon" :size="19" /></span>
           <span class="nav-label">{{ item.label }}</span>
           <span v-if="item.hotkey && !collapsed" class="nav-hotkey">{{ item.hotkey }}</span>
         </router-link>
@@ -99,7 +99,7 @@ onMounted(() => {
 .app-sidebar {
   display: flex;
   flex-direction: column;
-  width: 19rem;
+  width: 17.5rem;
   flex-shrink: 0;
   background: var(--card);
   border-right: 1px solid var(--border);
@@ -107,62 +107,90 @@ onMounted(() => {
   overflow: hidden;
 }
 .app-sidebar.collapsed {
-  width: 3.75rem;
+  width: 4.25rem;
 }
 
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.9rem 0.75rem 0.25rem;
+  gap: 0.55rem;
+  padding: 0.85rem 0.6rem;
   flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.35rem;
 }
 .app-sidebar.collapsed .sidebar-brand {
   justify-content: center;
-  padding: 0.9rem 0.4rem 0.25rem;
+  padding: 0.85rem 0.35rem;
+  position: relative;
 }
+
 .sidebar-brand-name {
   font-weight: 700;
-  font-size: 1.05rem;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
   color: var(--fg);
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sidebar-toggle {
-  align-self: flex-end;
-  margin: 0.5rem 0.5rem 0.25rem;
-  width: 2rem;
-  height: 2rem;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
   border-radius: 0.5rem;
-  border: 1px solid var(--border);
-  background: var(--chip);
-  color: var(--fg);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 .sidebar-toggle:hover {
-  background: var(--border);
+  background: var(--chip);
+  color: var(--fg);
+  border-color: var(--border);
+}
+.app-sidebar.collapsed .sidebar-toggle {
+  position: absolute;
+  right: -0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.4rem;
+  height: 1.4rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  z-index: 1;
+}
+.app-sidebar.collapsed .sidebar-toggle:hover {
+  background: var(--chip);
 }
 
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.25rem 0.5rem 0.75rem;
+  gap: 0.2rem;
+  padding: 0.15rem 0.55rem 0.75rem;
   overflow-y: auto;
 }
 
 .nav-item {
-  display: grid;
-  grid-template-columns: 1.25rem minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.55rem 0.55rem;
-  border-radius: 0.75rem;
+  gap: 0.65rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.6rem;
   color: var(--fg);
+  font-size: 0.875rem;
+  line-height: 1.3;
   white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
 }
 .nav-item:hover {
   background: var(--chip);
@@ -185,6 +213,7 @@ onMounted(() => {
 
 .nav-label {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -194,16 +223,18 @@ onMounted(() => {
   color: var(--muted);
   border: 1px solid var(--border);
   border-radius: 0.3rem;
-  padding: 0.08rem 0.25rem;
+  padding: 0.08rem 0.3rem;
   font-family: 'Consolas', monospace;
   flex-shrink: 0;
-  justify-self: end;
 }
 
 .app-sidebar.collapsed .nav-item {
-  grid-template-columns: 1fr;
-  justify-items: center;
+  justify-content: center;
   padding: 0.6rem;
+}
+.app-sidebar.collapsed .nav-label,
+.app-sidebar.collapsed .nav-hotkey {
+  display: none;
 }
 
 .app-main {

@@ -11,6 +11,7 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { Window as TauriWindow } from '@tauri-apps/api/window'
+import ActionIcon, { type ActionIconName } from './ActionIcon.vue'
 
 interface SyncIndicatorData {
   netStatus: 'online' | 'offline' | 'syncing' | 'error'
@@ -29,13 +30,13 @@ const data = ref<SyncIndicatorData>({
 const showPopup = ref(false)
 let unlisten: UnlistenFn | null = null
 
-const icon = computed(() => {
+const icon = computed<ActionIconName>(() => {
   switch (data.value.netStatus) {
-    case 'online':   return '\u2705'  // ✅
-    case 'syncing':  return '\uD83D\uDD04'  // 🔄
-    case 'offline':  return '\uD83D\uDFE5'  // 🟥
-    case 'error':    return '\u26A0\uFE0F'  // ⚠️
-    default:         return '\u25CF'
+    case 'online':   return 'check-circle'
+    case 'syncing':  return 'refresh'
+    case 'offline':  return 'x-circle'
+    case 'error':    return 'warning'
+    default:         return 'dot'
   }
 })
 
@@ -81,7 +82,7 @@ onUnmounted(() => {
 
 <template>
   <div class="sync-indicator" @click="showPopup = !showPopup">
-    <span class="sync-icon" :title="label">{{ icon }}</span>
+    <span class="sync-icon" :class="'sync-icon--' + data.netStatus" :title="label"><ActionIcon :name="icon" :size="15" /></span>
     <span class="sync-label">{{ label }}</span>
     <span v-if="data.pendingCount > 0" class="sync-badge">{{ data.pendingCount }}</span>
 
@@ -112,7 +113,11 @@ onUnmounted(() => {
   transition: background 0.15s;
 }
 .sync-indicator:hover { background: var(--color-surface-offset, rgba(0,0,0,.06)); }
-.sync-icon { font-size: 16px; line-height: 1; }
+.sync-icon { display: inline-flex; align-items: center; line-height: 1; }
+.sync-icon--online { color: #15803d; }
+.sync-icon--syncing { color: #0891b2; }
+.sync-icon--offline { color: #c92a2a; }
+.sync-icon--error { color: #d97706; }
 .sync-label { font-size: 12px; color: var(--color-text-muted, #666); }
 .sync-badge {
   font-size: 10px;

@@ -7,6 +7,7 @@ import WorklogHeatmap from '../components/dashboard/WorklogHeatmap.vue';
 import MissingDaysList from '../components/dashboard/MissingDaysList.vue';
 import BulkSavingMetric from '../components/dashboard/BulkSavingMetric.vue';
 import TopTasksList from '../components/dashboard/TopTasksList.vue';
+import ActionIcon from '../components/ActionIcon.vue';
 
 const store = useAnalyticsStore();
 
@@ -32,7 +33,7 @@ onMounted(async () => {
     <div class="analytics-header">
       <h1>Аналитика</h1>
       <span class="muted-text">Обновлено: {{ lastRefresh }}</span>
-      <button class="ghost-btn" title="Обновить" @click="refresh">↻ Обновить</button>
+      <button class="ghost-btn" title="Обновить" @click="refresh"><ActionIcon name="refresh" :size="14" /> Обновить</button>
     </div>
 
     <!-- ─── Skeleton ─── -->
@@ -73,7 +74,7 @@ onMounted(async () => {
 
     <!-- ─── Глобальная ошибка ─── -->
     <div v-if="store.error" class="global-error">
-      <span>⚠️ {{ store.error }}</span>
+      <span class="err-inline"><ActionIcon name="warning" :size="14" /> {{ store.error }}</span>
       <button class="ghost-btn" @click="refresh">Повторить</button>
     </div>
   </div>
