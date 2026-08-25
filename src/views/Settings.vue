@@ -25,6 +25,90 @@
       </p>
     </section>
 
+    <!-- ──────────── Производственный календарь РФ ──────────── -->
+    <section class="settings-card">
+      <div class="card-header">
+        <h3>Производственный календарь</h3>
+      </div>
+      <p class="hint">
+        Праздничные дни РФ на 2026&ndash;2027 годы (с учётом переносов выходных)
+        учитываются как нерабочие: они не отображаются как «незаполненное» время
+        в дашборде и в списке недозаполненных дней worklog.
+      </p>
+
+      <div class="holidays-year-tabs">
+        <button
+          v-for="y in holidayYears"
+          :key="y"
+          class="btn btn--ghost btn--sm"
+          :class="{ 'btn--active': holidayYearFilter === y }"
+          @click="holidayYearFilter = y"
+        >{{ y }}</button>
+      </div>
+
+      <table class="holidays-table">
+        <thead>
+          <tr>
+            <th>Дата</th>
+            <th>Праздник</th>
+            <th>Учитывать как выходной</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="h in filteredHolidays" :key="h.date">
+            <td class="holidays-table__date">{{ formatHolidayDate(h.date) }}</td>
+            <td>{{ h.title }}</td>
+            <td>
+              <label class="checkbox-row-inline">
+                <input
+                  type="checkbox"
+                  :checked="!isBaseHolidayDisabled(h.date)"
+                  @change="onToggleHoliday(h.date, ($event.target as HTMLInputElement).checked)"
+                />
+              </label>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="card-header" style="margin-top: 1rem">
+        <h3 style="font-size: 0.95rem">Дополнительные выходные</h3>
+      </div>
+      <p v-if="customHolidays.length === 0" class="muted" style="margin-top: 0">
+        Нет добавленных вручную выходных дней.
+      </p>
+      <table v-else class="holidays-table">
+        <tbody>
+          <tr v-for="h in customHolidays" :key="h.date">
+            <td class="holidays-table__date">{{ formatHolidayDate(h.date) }}</td>
+            <td>{{ h.title }}</td>
+            <td>
+              <button class="btn btn--ghost btn--sm" @click="settingsStore.removeCustomHoliday(h.date)">Удалить</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="form-grid" style="margin-top: 0.75rem">
+        <label>
+          Дата
+          <input v-model="newHolidayDate" type="date" />
+        </label>
+        <label class="span-2">
+          Название
+          <input v-model="newHolidayTitle" placeholder="Например, корпоративный выходной" />
+        </label>
+      </div>
+      <div class="actions-row">
+        <button class="btn btn--secondary btn--sm" :disabled="!newHolidayDate" @click="addCustomHoliday">
+          + Добавить выходной
+        </button>
+        <button class="btn btn--ghost btn--sm" @click="settingsStore.resetHolidayOverrides()">
+          Сбросить к производственному календарю по умолчанию
+        </button>
+      </div>
+    </section>
+
     <!-- ──────────── Exchange profiles list ──────────── -->
     <section class="settings-card">
       <div class="card-header">
@@ -213,7 +297,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, onMounted, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { isEnabled, enable, disable } from '@tauri-apps/plugin-autostart';
 import ActionIcon from '../components/ActionIcon.vue';
@@ -223,6 +307,7 @@ import {
   type ExchangeProfileDto,
 } from '../lib/tauriApi';
 import { useSettingsStore } from '../store/settings';
+import { RU_HOLIDAYS_DEFAULT } from '../lib/ruHolidays';
 
 const settingsStore = useSettingsStore();
 
@@ -273,6 +358,39 @@ async function onToggleAutostart(checked: boolean) {
   } finally {
     autostartBusy.value = false;
   }
+}
+
+// ──────────── Производственный календарь РФ ────────────
+const holidayYears = ['2026', '2027'];
+const holidayYearFilter = ref<string>('2026');
+
+const filteredHolidays = computed(() =>
+  RU_HOLIDAYS_DEFAULT.filter((h) => h.date.startsWith(holidayYearFilter.value)),
+);
+
+const customHolidays = computed(() => settingsStore.holidays.filter((h) => !RU_HOLIDAYS_DEFAULT.some((b) => b.date === h.date)));
+
+function isBaseHolidayDisabled(dateIso: string): boolean {
+  return !settingsStore.isHoliday(dateIso);
+}
+
+function onToggleHoliday(dateIso: string, enabled: boolean) {
+  settingsStore.toggleBaseHoliday(dateIso, enabled);
+}
+
+function formatHolidayDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+}
+
+const newHolidayDate = ref('');
+const newHolidayTitle = ref('');
+
+function addCustomHoliday() {
+  if (!newHolidayDate.value) return;
+  settingsStore.addCustomHoliday(newHolidayDate.value, newHolidayTitle.value.trim());
+  newHolidayDate.value = '';
+  newHolidayTitle.value = '';
 }
 
 const profiles = ref<ExchangeProfileDto[]>([]);
@@ -506,6 +624,28 @@ async function resetAppData() {
 
 .profiles-table th { font-weight: 600; color: var(--color-text-muted, #6b7280); }
 .row--active { background: var(--color-surface-alt, #f0f5ff); }
+
+.holidays-year-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+.btn--active { background: var(--color-primary, #3366ff); color: #fff; text-decoration: none; }
+
+.holidays-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  margin-bottom: 0.5rem;
+}
+.holidays-table th,
+.holidays-table td {
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-light, #f1f2f4);
+}
+.holidays-table th { font-weight: 600; color: var(--color-text-muted, #6b7280); }
+.holidays-table__date { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--color-text-muted, #6b7280); }
 
 .actions-cell {
   display: flex;
