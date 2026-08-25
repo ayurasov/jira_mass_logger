@@ -2,6 +2,7 @@
 import { onMounted } from 'vue';
 import { useSettingsStore } from './store/settings';
 import SyncStatusIndicator from './components/SyncStatusIndicator.vue';
+import AboutBadge from './components/AboutBadge.vue';
 import { usePowerEvents } from './composables/usePowerEvents';
 import { useHotkeys } from './composables/useHotkeys';
 import { useUpdater } from './composables/useUpdater';
@@ -14,7 +15,7 @@ onMounted(() => {
 });
 
 // Пробуждение Windows / sleep-wake цикл
-usePowerEvents();
+ usePowerEvents();
 
 // Глобальные горячие клавиши: Ctrl+N, Ctrl+L, Ctrl+M
 useHotkeys();
@@ -28,6 +29,8 @@ useUpdater();
     <!-- Индикатор сети/синхронизации — фиксирован в правом верхнем углу поверх навигации -->
     <SyncStatusIndicator class="app-sync-indicator" />
     <router-view />
+    <!-- Блок "О программе" — фиксирован в правом нижнем углу над всеми экранами -->
+    <AboutBadge />
   </div>
 </template>
 
