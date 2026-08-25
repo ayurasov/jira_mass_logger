@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, watch, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { RU_HOLIDAYS_DEFAULT, type RuHoliday } from '../lib/ruHolidays';
 
 export type Theme = 'light' | 'dark' | 'system';
 
@@ -97,6 +98,79 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+
+  // --- Производственный календарь РФ (праздники/выходные) ---
+  // Базовый список праздников 2026-2027 годов + пользовательские дни, отключённые
+  // праздники (если пользователь считает день рабочим) и добавленные вручную дни.
+  const HOLIDAYS_STORAGE_KEY = 'jiratime-holidays-overrides';
+
+  interface HolidayOverrides {
+    disabled: string[]; // даты из базового списка, которые пользователь считает рабочими
+    custom: RuHoliday[]; // дополнительные выходные, добавленные пользователем
+  }
+
+  function loadHolidayOverrides(): HolidayOverrides {
+    try {
+      const raw = localStorage.getItem(HOLIDAYS_STORAGE_KEY);
+      if (raw) return JSON.parse(raw) as HolidayOverrides;
+    } catch {
+      // игнорируем повреждённые данные
+    }
+    return { disabled: [], custom: [] };
+  }
+
+  const _holidayOverrides = ref<HolidayOverrides>(loadHolidayOverrides());
+
+  function persistHolidayOverrides() {
+    localStorage.setItem(HOLIDAYS_STORAGE_KEY, JSON.stringify(_holidayOverrides.value));
+  }
+
+  // Итоговый список праздников: базовый набор минус отключённые пользователем,
+  // плюс пользовательские дополнительные дни.
+  const holidays = computed<RuHoliday[]>(() => {
+    const disabledSet = new Set(_holidayOverrides.value.disabled);
+    const base = RU_HOLIDAYS_DEFAULT.filter((h) => !disabledSet.has(h.date));
+    const customDates = new Set(_holidayOverrides.value.custom.map((h) => h.date));
+    return [...base, ..._holidayOverrides.value.custom].sort((a, b) => a.date.localeCompare(b.date))
+      .filter((h, i, arr) => i === 0 || arr[i - 1].date !== h.date || customDates.has(h.date));
+  });
+
+  const holidaysMap = computed<Map<string, string>>(() => {
+    const m = new Map<string, string>();
+    for (const h of holidays.value) m.set(h.date, h.title);
+    return m;
+  });
+
+  function isHoliday(dateIso: string): boolean {
+    return holidaysMap.value.has(dateIso);
+  }
+
+  function toggleBaseHoliday(dateIso: string, enabled: boolean) {
+    const set = new Set(_holidayOverrides.value.disabled);
+    if (enabled) set.delete(dateIso);
+    else set.add(dateIso);
+    _holidayOverrides.value = { ..._holidayOverrides.value, disabled: Array.from(set) };
+    persistHolidayOverrides();
+  }
+
+  function addCustomHoliday(dateIso: string, title: string) {
+    const custom = _holidayOverrides.value.custom.filter((h) => h.date !== dateIso);
+    custom.push({ date: dateIso, title: title || 'Выходной день' });
+    _holidayOverrides.value = { ..._holidayOverrides.value, custom };
+    persistHolidayOverrides();
+  }
+
+  function removeCustomHoliday(dateIso: string) {
+    const custom = _holidayOverrides.value.custom.filter((h) => h.date !== dateIso);
+    _holidayOverrides.value = { ..._holidayOverrides.value, custom };
+    persistHolidayOverrides();
+  }
+
+  function resetHolidayOverrides() {
+    _holidayOverrides.value = { disabled: [], custom: [] };
+    persistHolidayOverrides();
+  }
+
   return {
     theme,
     loadTheme,
@@ -111,5 +185,13 @@ export const useSettingsStore = defineStore('settings', () => {
     autoSyncEnabled,
     autoSyncIntervalMinutes,
     setAutoSync,
+    holidays,
+    holidaysMap,
+    isHoliday,
+    toggleBaseHoliday,
+    addCustomHoliday,
+    removeCustomHoliday,
+    resetHolidayOverrides,
+    RU_HOLIDAYS_DEFAULT,
   };
 });

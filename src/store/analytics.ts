@@ -36,7 +36,9 @@ function weekDates(monday: Date): string[] {
 
 function isWorkday(date: string): boolean {
   const day = new Date(date).getDay();
-  return day !== 0 && day !== 6;
+  if (day === 0 || day === 6) return false;
+  const settings = useSettingsStore();
+  return !settings.isHoliday(date);
 }
 
 // ────────────────────────────────────────────
@@ -183,19 +185,27 @@ export const useAnalyticsStore = defineStore('analytics', {
         .slice(0, 5);
     },
 
-    // ── Виджет 3: heatmap за 3 месяца ────────────────────────
+    // ── Виджет 3: heatmap за ~3 месяца, только полными неделями ─────
+    // Диапазон: от понедельника недели, начавшейся ~3 месяца назад, до
+    // воскресенья текущей (уже идущей) недели — включая её ещё не
+    // прошедший «остаток». Это гарантирует, что в гриде нет обрезанных
+    // недель/месяцев и окраска месяца строится по видимой части.
     heatmapCells(): HeatmapCell[] {
       const today = new Date();
-      const start = addDays(today, -90);
+      const rangeStart = startOfWeek(addDays(today, -90));
+      const rangeEnd = addDays(startOfWeek(today), 6); // воскресенье текущей недели
       const hoursByDate = new Map<string, number>();
       for (const r of this._rows) {
         const d = r.started.slice(0, 10);
-        if (d < toIsoDate(start) || d > toIsoDate(today)) continue;
+        if (d < toIsoDate(rangeStart) || d > toIsoDate(rangeEnd)) continue;
         hoursByDate.set(d, (hoursByDate.get(d) ?? 0) + (r.timeSpentSeconds ?? 0) / 3600);
       }
       const cells: HeatmapCell[] = [];
-      for (let i = 0; i <= 90; i++) {
-        const d = toIsoDate(addDays(start, i));
+      const totalDays = Math.round((rangeEnd.getTime() - rangeStart.getTime()) / 86400000);
+      const todayIso = toIsoDate(today);
+      for (let i = 0; i <= totalDays; i++) {
+        const d = toIsoDate(addDays(rangeStart, i));
+        if (d > todayIso) break; // не показываем будущие дни ещё не начавшейся части недели
         const h = hoursByDate.get(d) ?? 0;
         const wd = isWorkday(d);
         cells.push({ date: d, hours: Math.round(h * 100) / 100, level: toLevel(h, wd) });

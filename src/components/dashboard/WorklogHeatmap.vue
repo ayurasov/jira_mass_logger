@@ -41,7 +41,7 @@
                 v-for="(cell, ci) in week"
                 :key="cell ? cell.date : wi + '-' + ci"
                 class="heatmap-cell"
-                :class="{ 'heatmap-cell--clickable': !!cell, 'heatmap-cell--weekend': cell && isWeekend(cell.date) }"
+                :class="{ 'heatmap-cell--clickable': !!cell, 'heatmap-cell--weekend': cell && !isWorkingDay(cell.date) }"
                 :data-level="cell ? cell.level : -1"
                 :title="cell ? `${cell.date}: ${cell.hours} ч — открыть в worklog` : ''"
                 @click="cell ? goToWorklog(cell.date) : null"
@@ -58,8 +58,10 @@
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAnalyticsStore, type HeatmapCell } from '../../store/analytics';
+import { useSettingsStore } from '../../store/settings';
 
 const store = useAnalyticsStore();
+const settings = useSettingsStore();
 const router = useRouter();
 
 function goToWorklog(date: string) {
@@ -75,6 +77,11 @@ const weekdayLabels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 function isWeekend(dateIso: string): boolean {
   const d = new Date(dateIso).getDay();
   return d === 0 || d === 6;
+}
+
+// Рабочий день = не выходной и не праздник (по производственному календарю РФ)
+function isWorkingDay(dateIso: string): boolean {
+  return !isWeekend(dateIso) && !settings.isHoliday(dateIso);
 }
 
 // Группируем ячейки по неделям (вертикальные колонки), как в GitHub contribution graph
@@ -107,9 +114,13 @@ const weeks = computed(() => {
 
 // Метаданные по каждой колонке-неделе: номер недели (ISO), диапазон дат,
 // суммарные часы и уровень заполнения (0..4) для окраски шапки.
+const normPerDay = 8;
+
+// Целевые часы недели/месяца считаем только по видимой части и только по
+// фактическим рабочим дням (не выходные, не праздники производственного
+// календаря РФ) — так индикация цветом всегда отталкивается от того, что
+// реально видно в виджете, без «недозаполненности» за праздники.
 const weekMeta = computed(() => {
-  const normPerDay = 8;
-  const target = normPerDay * 5;
   return weeks.value.map((week) => {
     const present = week.filter(Boolean) as HeatmapCell[];
     const first = present[0];
@@ -118,10 +129,11 @@ const weekMeta = computed(() => {
     const last = present[present.length - 1];
     const to = last ? last.date : from;
     const hours = present.reduce((s, c) => s + c.hours, 0);
+    const target = present.filter((c) => isWorkingDay(c.date)).length * normPerDay;
     // ISO-номер недели из первой ячейки
     const iso = first.date.slice(0, 4) + '-W' + isoWeekNum(first.date);
-    const ratio = hours / target;
-    const level: 0 | 1 | 2 | 3 | 4 = hours <= 0 ? 0 : ratio < 0.5 ? 1 : ratio < 0.8 ? 2 : ratio < 1.0 ? 3 : 4;
+    const ratio = target > 0 ? hours / target : (hours > 0 ? 1 : 0);
+    const level: 0 | 1 | 2 | 3 | 4 = target <= 0 ? (hours > 0 ? 4 : 0) : hours <= 0 ? 0 : ratio < 0.5 ? 1 : ratio < 0.8 ? 2 : ratio < 1.0 ? 3 : 4;
     return { label: iso, short: 'w' + iso.split('-W')[1], from, to, hours, level };
   });
 });
@@ -132,6 +144,7 @@ const weekMeta = computed(() => {
 const months = computed(() => {
   const out: { label: string; weeks: number; from: string; to: string; hours: number; target: number; level: 0 | 1 | 2 | 3 | 4 }[] = [];
   const meta = weekMeta.value;
+  const cells = weeks.value;
   let cur: { label: string; weeks: number; from: string; to: string; hours: number; target: number } | null = null;
   const fmt = new Intl.DateTimeFormat('ru-RU', { month: 'short' });
   for (let i = 0; i < meta.length; i++) {
@@ -142,18 +155,21 @@ const months = computed(() => {
       if (cur) out.push(finalizeMonth(cur));
       cur = { label: fmt.format(new Date(w.from)).replace('.', ''), weeks: 0, from: w.from, to: w.to, hours: 0, target: 0 };
     }
+    // считаем целевые часы месяца только по видимым в этой неделе рабочим дням
+    const present = (cells[i] ?? []).filter(Boolean) as HeatmapCell[];
+    const weekTarget = present.filter((c) => isWorkingDay(c.date)).length * normPerDay;
     cur.weeks++;
     cur.to = w.to;
     cur.hours += w.hours;
-    cur.target += 40; // 5 раб.дн × 8ч
+    cur.target += weekTarget;
   }
   if (cur) out.push(finalizeMonth(cur));
   return out;
 });
 
 function finalizeMonth(m: { label: string; weeks: number; from: string; to: string; hours: number; target: number }) {
-  const ratio = m.target > 0 ? m.hours / m.target : 0;
-  const level: 0 | 1 | 2 | 3 | 4 = m.hours <= 0 ? 0 : ratio < 0.5 ? 1 : ratio < 0.8 ? 2 : ratio < 1.0 ? 3 : 4;
+  const ratio = m.target > 0 ? m.hours / m.target : (m.hours > 0 ? 1 : 0);
+  const level: 0 | 1 | 2 | 3 | 4 = m.target <= 0 ? (m.hours > 0 ? 4 : 0) : m.hours <= 0 ? 0 : ratio < 0.5 ? 1 : ratio < 0.8 ? 2 : ratio < 1.0 ? 3 : 4;
   return { ...m, level };
 }
 

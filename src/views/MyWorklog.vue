@@ -61,12 +61,12 @@
         <colgroup>
           <col style="width: 7rem" />
           <col style="width: 3rem" />
-          <col style="min-width: 12rem" />
+          <col style="width: 26%" />
           <col style="width: 5rem" />
-          <col style="min-width: 10rem" />
+          <col style="width: 34%" />
           <col style="width: 6rem" />
           <col style="width: 5rem" />
-          <col style="width: 4rem" />
+          <col style="width: 4.5rem" />
         </colgroup>
         <thead>
           <tr>
