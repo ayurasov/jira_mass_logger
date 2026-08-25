@@ -150,6 +150,7 @@
                   <span class="status-dot" :class="'status-dot--' + row.syncStatus" :title="row.syncError || row.syncStatus"></span>
                 </td>
                 <td class="row-actions">
+                  <button class="icon-btn" title="Изменить" @click="openRowEditor(row)"><ActionIcon name="edit" :size="15" /></button>
                   <button class="icon-btn" title="Дублировать" @click="promptDuplicate(row)"><ActionIcon name="duplicate" :size="15" /></button>
                   <button class="icon-btn icon-btn--danger" title="Удалить" @click="confirmDelete(row)"><ActionIcon name="close" :size="15" /></button>
                 </td>
@@ -186,10 +187,67 @@
       </div>
     </div>
 
+    <div v-if="editTarget" class="modal-overlay">
+      <div class="modal">
+        <h2>Изменить запись</h2>
+        <div class="edit-form">
+          <label>
+            Задача
+            <input :value="editTarget.issueKey" type="text" disabled />
+          </label>
+          <label>
+            Дата
+            <input v-model="editForm.date" type="date" />
+          </label>
+          <label>
+            Время начала
+            <input v-model="editForm.time" type="time" />
+          </label>
+          <label>
+            Часы
+            <input v-model.number="editForm.hours" type="number" step="0.25" min="0.01" />
+          </label>
+          <label class="span-2">
+            Описание
+            <textarea v-model="editForm.comment" rows="3"></textarea>
+          </label>
+        </div>
+        <p v-if="editFormError" class="status-text status-text--error">{{ editFormError }}</p>
+        <div class="modal-actions">
+          <button class="btn btn--secondary" @click="closeRowEditor">Отмена</button>
+          <button class="btn btn--primary" :disabled="editFormSaving" @click="submitRowEditor">
+            {{ editFormSaving ? 'Сохранение…' : 'Сохранить и отправить в Jira' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="duplicateTarget" class="modal-overlay">
       <div class="modal">
         <h2>Дублировать запись</h2>
-        <label>Новая дата: <input v-model="duplicateDate" type="date" /></label>
+        <div class="edit-form">
+          <label>
+            Задача
+            <input :value="duplicateTarget.issueKey" type="text" disabled />
+          </label>
+          <label>
+            Новая дата
+            <input v-model="duplicateForm.date" type="date" />
+          </label>
+          <label>
+            Время начала
+            <input v-model="duplicateForm.time" type="time" />
+          </label>
+          <label>
+            Часы
+            <input v-model.number="duplicateForm.hours" type="number" step="0.25" min="0.01" />
+          </label>
+          <label class="span-2">
+            Описание
+            <textarea v-model="duplicateForm.comment" rows="3"></textarea>
+          </label>
+        </div>
+        <p v-if="duplicateFormError" class="status-text status-text--error">{{ duplicateFormError }}</p>
         <div class="modal-actions">
           <button class="btn btn--secondary" @click="duplicateTarget = null">Отмена</button>
           <button class="btn btn--primary" @click="confirmDuplicate">Дублировать</button>
@@ -231,8 +289,14 @@ const openAutoSyncSettings = ref(false);
 const scrollContainer = ref<HTMLElement | null>(null);
 const editingCell = ref<{ rowKey: string; field: 'hours' | 'comment' | 'started' } | null>(null);
 const editBuffer = ref<string | number>('');
+const editTarget = ref<WorklogRow | null>(null);
+const editForm = ref<{ date: string; time: string; hours: number; comment: string }>({ date: '', time: '', hours: 0, comment: '' });
+const editFormError = ref('');
+const editFormSaving = ref(false);
+
 const duplicateTarget = ref<WorklogRow | null>(null);
-const duplicateDate = ref('');
+const duplicateForm = ref<{ date: string; time: string; hours: number; comment: string }>({ date: '', time: '', hours: 0, comment: '' });
+const duplicateFormError = ref('');
 const deleteTarget = ref<WorklogRow | null>(null);
 
 let unlistenResume: (() => void) | null = null;
@@ -373,13 +437,73 @@ async function commitEdit(row: WorklogRow, field: 'hours' | 'comment' | 'started
   }
 }
 
+function openRowEditor(row: WorklogRow) {
+  editTarget.value = row;
+  editForm.value = {
+    date: row.date,
+    time: formatTime(row.started),
+    hours: row.hours,
+    comment: row.comment || '',
+  };
+  editFormError.value = '';
+}
+function closeRowEditor() {
+  editTarget.value = null;
+}
+async function submitRowEditor() {
+  if (!editTarget.value) return;
+  editFormError.value = '';
+  const { date, time, hours, comment } = editForm.value;
+  if (!date) { editFormError.value = 'Укажите дату.'; return; }
+  const [hh, mm] = String(time || '09:00').split(':').map(Number);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) { editFormError.value = 'Некорректное время начала.'; return; }
+  if (!hours || Number.isNaN(hours) || hours <= 0) { editFormError.value = 'Часы должны быть больше нуля.'; return; }
+
+  const row = editTarget.value;
+  const tzSuffix = row.started.slice(-5); // сохраняем исходное смещение TZ записи, например +0300
+  const started = `${date}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00.000${tzSuffix}`;
+
+  const patch: Partial<Pick<WorklogRow, 'hours' | 'comment' | 'started'>> = {};
+  if (started !== row.started) patch.started = started;
+  if (hours !== row.hours) patch.hours = hours;
+  if (comment !== (row.comment || '')) patch.comment = comment;
+
+  if (Object.keys(patch).length === 0) {
+    editTarget.value = null;
+    return;
+  }
+
+  editFormSaving.value = true;
+  try {
+    await store.editRow(row.rowKey, patch);
+    const refreshed = store.rows.find((r) => r.rowKey === row.rowKey);
+    if (refreshed?.syncStatus === 'error') {
+      editFormError.value = refreshed.syncError || 'Не удалось отправить изменения в Jira.';
+      return;
+    }
+    editTarget.value = null;
+  } finally {
+    editFormSaving.value = false;
+  }
+}
+
 function promptDuplicate(row: WorklogRow) {
   duplicateTarget.value = row;
-  duplicateDate.value = row.date;
+  duplicateForm.value = {
+    date: row.date,
+    time: formatTime(row.started),
+    hours: row.hours,
+    comment: row.comment || '',
+  };
+  duplicateFormError.value = '';
 }
 async function confirmDuplicate() {
   if (!duplicateTarget.value) return;
-  await store.duplicateRow(duplicateTarget.value.rowKey, duplicateDate.value);
+  duplicateFormError.value = '';
+  const { date, time, hours, comment } = duplicateForm.value;
+  if (!date) { duplicateFormError.value = 'Укажите дату.'; return; }
+  if (!hours || Number.isNaN(hours) || hours <= 0) { duplicateFormError.value = 'Часы должны быть больше нуля.'; return; }
+  await store.duplicateRow(duplicateTarget.value.rowKey, date, { hours, comment, time });
   duplicateTarget.value = null;
 }
 

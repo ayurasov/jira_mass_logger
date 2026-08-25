@@ -147,6 +147,13 @@
 .conflict-diff__col { background: var(--color-surface-alt, #f7f8fa); border-radius: 0.5rem; padding: 0.75rem; }
 .conflict-diff__col h3 { margin: 0 0 0.5rem; font-size: 0.9375rem; }
 
+.edit-form { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin: 0.25rem 0 0.5rem; }
+.edit-form label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8125rem; font-weight: 500; color: var(--color-text-muted, #6b7280); }
+.edit-form label.span-2 { grid-column: 1 / -1; }
+.edit-form input,
+.edit-form textarea { font: inherit; padding: 0.45rem 0.6rem; border: 1px solid var(--color-border, #d7dae0); border-radius: 0.4rem; color: var(--color-text, #1f2430); resize: vertical; }
+.edit-form input:disabled { background: var(--color-surface-alt, #f2f3f5); color: var(--color-text-muted, #6b7280); }
+
 @media (max-width: 56rem) {
   .filters__norm { margin-left: 0; }
   .conflict-diff { grid-template-columns: 1fr; }

@@ -200,7 +200,10 @@ export const useMyWorklogStore = defineStore('myWorklog', {
               issueFilter: this.filters.issueKey || undefined,
             }
           : undefined;
-        const dtos = await tauriApi.getWorklogsSince(params, since, issueKeysForFallback, dateRange);
+        // allowEmptyRange=true, когда диапазон дат указан явно (клик по дню/неделе,
+        // выходной или праздник) — Jira вернувшая 0 worklog в таком случае это ВАЛИДНЫЙ
+        // результат ('0 часов'), а не ошибка, и не должна показываться как сбой сети/auth.
+        const dtos = await tauriApi.getWorklogsSince(params, since, issueKeysForFallback, dateRange, !!dateRange);
         if (!Array.isArray(dtos)) {
           throw new Error('Jira вернула некорректный ответ при загрузке worklog.');
         }
@@ -309,10 +312,16 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       }
     },
 
-    async duplicateRow(rowKey: string, newDate: string) {
+    async duplicateRow(rowKey: string, newDate: string, overrides?: { hours?: number; comment?: string; time?: string }) {
       const row = this.rows.find((r) => r.rowKey === rowKey);
       if (!row) return;
-      const newStarted = row.started.replace(row.date, newDate);
+      let newStarted = row.started.replace(row.date, newDate);
+      if (overrides?.time) {
+        const [hh, mm] = overrides.time.split(':').map(Number);
+        if (!Number.isNaN(hh) && !Number.isNaN(mm)) {
+          newStarted = newStarted.replace(/T\d{2}:\d{2}:\d{2}/, `T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`);
+        }
+      }
       const newRow: WorklogRow = {
         ...row,
         rowKey: rowKeyOf(null, row.issueKey, newStarted),
@@ -321,6 +330,8 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         weekday: new Date(newStarted).getDay(),
         isoWeek: getIsoWeek(newDate),
         started: newStarted,
+        hours: overrides?.hours !== undefined && overrides.hours > 0 ? overrides.hours : row.hours,
+        comment: overrides?.comment !== undefined ? overrides.comment : row.comment,
         syncStatus: 'pending',
       };
       this.rows.push(newRow);
