@@ -3,28 +3,30 @@
   (кроме онбординга). Даёт единый способ переключаться между экранами:
   клик по пункту меню, горячие клавиши (см. useHotkeys) или сворацивание
   панели в компактный режим с иконками.
+  Иконки — единый монохромный SVG-набор (NavIcon.vue) взамен разноцветных emoji.
 -->
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import AppLogo from './AppLogo.vue';
+import NavIcon, { type NavIconName } from './NavIcon.vue';
 
 interface NavItem {
   name: string;
   label: string;
-  icon: string;
+  icon: NavIconName;
   hotkey?: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { name: 'dashboard', label: 'Дашборд', icon: '📊' },
-  { name: 'worklog', label: 'Мой worklog', icon: '🗒️', hotkey: 'Ctrl+L' },
-  { name: 'bulk', label: 'Массовое логирование', icon: '⚡', hotkey: 'Ctrl+N' },
-  { name: 'calendar', label: 'Календарь → Jira', icon: '📅', hotkey: 'Ctrl+K' },
-  { name: 'templates', label: 'Шаблоны', icon: '📐' },
-  { name: 'profiles', label: 'Профили', icon: '🔗' },
-  { name: 'logs', label: 'Логи', icon: '🧾', hotkey: 'F1' },
-  { name: 'settings', label: 'Настройки', icon: '⚙️', hotkey: 'Ctrl+,' },
+  { name: 'dashboard', label: 'Дашборд', icon: 'dashboard' },
+  { name: 'worklog', label: 'Мой worklog', icon: 'worklog', hotkey: 'Ctrl+L' },
+  { name: 'bulk', label: 'Массовое логирование', icon: 'bulk', hotkey: 'Ctrl+N' },
+  { name: 'calendar', label: 'Календарь → Jira', icon: 'calendar', hotkey: 'Ctrl+K' },
+  { name: 'templates', label: 'Шаблоны', icon: 'templates' },
+  { name: 'profiles', label: 'Профили', icon: 'profiles' },
+  { name: 'logs', label: 'Логи', icon: 'logs', hotkey: 'F1' },
+  { name: 'settings', label: 'Настройки', icon: 'settings', hotkey: 'Ctrl+,' },
 ];
 
 const route = useRoute();
@@ -73,7 +75,7 @@ onMounted(() => {
           :class="{ active: activeName === item.name }"
           :title="collapsed ? item.label : undefined"
         >
-          <span class="nav-icon">{{ item.icon }}</span>
+          <span class="nav-icon"><NavIcon :name="item.icon" :size="20" /></span>
           <span class="nav-label">{{ item.label }}</span>
           <span v-if="item.hotkey && !collapsed" class="nav-hotkey">{{ item.hotkey }}</span>
         </router-link>
@@ -172,10 +174,13 @@ onMounted(() => {
 }
 
 .nav-icon {
-  font-size: 1.1rem;
   width: 1.25rem;
-  text-align: center;
+  height: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  color: inherit;
 }
 
 .nav-label {
