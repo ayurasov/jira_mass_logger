@@ -31,7 +31,8 @@ export type ActionIconName =
   | 'dashboard'
   | 'bell'
   | 'sparkles'
-  | 'arrow-right';
+  | 'arrow-right'
+  | 'info';
 
 const props = withDefaults(defineProps<{ name: ActionIconName; size?: number }>(), { size: 16 });
 </script>
@@ -172,6 +173,12 @@ const props = withDefaults(defineProps<{ name: ActionIconName; size?: number }>(
 
     <g v-else-if="name === 'arrow-right'">
       <path d="M4 12h16M14 6l6 6-6 6" />
+    </g>
+
+    <g v-else-if="name === 'info'">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5.5" />
+      <path d="M12 7.5h.01" />
     </g>
   </svg>
 </template>
