@@ -74,8 +74,9 @@ const isLast = () => current.value === tourSteps.length - 1;
 </template>
 
 <style scoped>
+/* Только tour-специфичные стили; остальное наследуется из OnboardingWizard.vue */
 .tour-card {
-  background: var(--color-surface-2);
+  background: var(--color-surface-2, var(--color-surface-offset));
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: var(--space-8);
@@ -87,18 +88,30 @@ const isLast = () => current.value === tourSteps.length - 1;
   gap: var(--space-3);
 }
 
-.tour-icon { font-size: 3rem; }
+.tour-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: var(--radius-lg);
+  background: var(--color-primary-highlight);
+  color: var(--color-primary);
+}
 
 .tour-card-title {
+  margin: 0;
   font-size: var(--text-lg);
   font-weight: 600;
   color: var(--color-text);
 }
 
 .tour-card-text {
+  margin: 0;
   font-size: var(--text-base);
   color: var(--color-text-muted);
   max-width: 40ch;
+  line-height: 1.6;
 }
 
 .tour-dots {
@@ -112,6 +125,9 @@ const isLast = () => current.value === tourSteps.length - 1;
   height: 8px;
   border-radius: var(--radius-full);
   background: var(--color-border);
+  border: none;
+  padding: 0;
+  cursor: pointer;
   transition: all var(--transition-interactive);
 }
 
