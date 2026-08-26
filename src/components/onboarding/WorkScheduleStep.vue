@@ -7,7 +7,7 @@ const settings = useSettingsStore();
 
 const form = reactive({
   workdayHours: settings.workdayHours ?? 8,
-  workdays: settings.workdays ?? [1, 2, 3, 4, 5], // Пн–Пт
+  workdays: settings.workdays ? [...settings.workdays] : [1, 2, 3, 4, 5],
   timezone: settings.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
 });
 
@@ -42,9 +42,10 @@ function save() {
     <h2 class="step-title">Рабочий график</h2>
     <p class="step-desc">Используется для расчёта плановой нормы часов на дашборде.</p>
 
-    <form class="step-form" @submit.prevent="save">
+    <form class="step-form" @submit.prevent="save" novalidate>
+
       <label class="field-label">
-        Часов в рабочем дне
+        <span class="field-name">Часов в рабочем дне</span>
         <input
           v-model.number="form.workdayHours"
           type="number"
@@ -54,8 +55,8 @@ function save() {
         />
       </label>
 
-      <fieldset class="field-label">
-        <legend>Рабочие дни</legend>
+      <div class="field-label">
+        <span class="field-name">Рабочие дни</span>
         <div class="day-toggles">
           <button
             v-for="day in DAYS"
@@ -68,10 +69,10 @@ function save() {
             {{ day.label }}
           </button>
         </div>
-      </fieldset>
+      </div>
 
       <label class="field-label">
-        Часовой пояс
+        <span class="field-name">Часовой пояс</span>
         <input
           v-model="form.timezone"
           type="text"
@@ -84,6 +85,7 @@ function save() {
       <div class="step-actions">
         <button type="submit" class="btn btn-primary">Сохранить и продолжить</button>
       </div>
+
     </form>
   </section>
 </template>
