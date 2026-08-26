@@ -7,6 +7,12 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
+    watch: {
+      // Prevent Vite/chokidar from watching Rust build artifacts.
+      // On Windows, jiratime.exe is locked by the OS during linking or while
+      // the process is running, causing EBUSY errors.
+      ignored: ['**/src-tauri/**'],
+    },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
