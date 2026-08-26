@@ -207,14 +207,10 @@ export const useAnalyticsStore = defineStore('analytics', {
     },
 
     // ── Виджет 3: heatmap за ~3 месяца, только полными неделями ─────
-    // Диапазон: от понедельника недели, начавшейся ~3 месяца назад, до
-    // воскресенья текущей (уже идущей) недели — включая её ещё не
-    // прошедший «остаток». Это гарантирует, что в гриде нет обрезанных
-    // недель/месяцев и окраска месяца строится по видимой части.
     heatmapCells(): HeatmapCell[] {
       const today = new Date();
       const rangeStart = startOfWeek(addDays(today, -90));
-      const rangeEnd = addDays(startOfWeek(today), 6); // воскресенье текущей недели
+      const rangeEnd = addDays(startOfWeek(today), 6);
       const hoursByDate = new Map<string, number>();
       for (const r of this._rows) {
         const d = r.started.slice(0, 10);
@@ -226,7 +222,7 @@ export const useAnalyticsStore = defineStore('analytics', {
       const todayIso = toIsoDate(today);
       for (let i = 0; i <= totalDays; i++) {
         const d = toIsoDate(addDays(rangeStart, i));
-        if (d > todayIso) break; // не показываем будущие дни ещё не начавшейся части недели
+        if (d > todayIso) break;
         const h = hoursByDate.get(d) ?? 0;
         const wd = isWorkday(d);
         cells.push({ date: d, hours: Math.round(h * 100) / 100, level: toLevel(h, wd) });
@@ -306,14 +302,25 @@ export const useAnalyticsStore = defineStore('analytics', {
     },
 
     /**
-     * Запрашивает у Jira worklogs за последние 3 месяца, сохраняет в локальный
-     * кэш, затем перечитывает кэш (`fetchAll`) — дашборд обновляется со свежими данными.
+     * Синхронизирует worklogs из Jira за последние 3 месяца.
+     *
+     * Порядок выполнения:
+     *  1. fetchAll()  — немедленно показываем данные из кэша (дашборд не пустой)
+     *  2. Запрос к Jira — получаем свежие worklogs
+     *  3. replaceCachedWorklogsRange — обновляем кэш
+     *  4. fetchAll() снова — дашборд перерисовывается с актуальными данными
      *
      * @param force  true → всегда синхронизировать; false (по умолчанию) →
-     *               пропустить если уже синхронизировали в этом сеансе (lastSynced != null).
+     *               пропустить шаги 2-4 если уже синхронизировали в этом сеансе.
      */
     async syncFromJira(force = false) {
-      // Избегаем повторного запроса при навигации назад/вперёд по дашборду,
+      // Шаг 1: всегда показываем кэш немедленно, чтобы дашборд не был пустым
+      // во время ожидания ответа от Jira.
+      if (!this.lastFetched) {
+        await this.fetchAll();
+      }
+
+      // Избегаем повторного запроса к Jira при навигации назад/вперёд,
       // если данные уже были подгружены в текущем сеансе.
       if (!force && this.lastSynced !== null) return;
 
@@ -332,9 +339,7 @@ export const useAnalyticsStore = defineStore('analytics', {
         const from = toIsoDate(addDays(today, -95)); // ~3 месяца с запасом
         const to   = toIsoDate(today);
 
-        // Получаем worklogs из Jira за нужный диапазон.
-        // sinceEpochMillis = 0 означает «без ограничения по дате изменения»,
-        // dateRange ограничивает диапазон полей started у worklog'а.
+        // Шаг 2: получаем worklogs из Jira за нужный диапазон.
         const rawWorklogs = await tauriApi.getWorklogsSince(
           params,
           0,
@@ -343,7 +348,7 @@ export const useAnalyticsStore = defineStore('analytics', {
           true, // allowEmptyRange
         );
 
-        // Конвертируем WorklogDto → CachedWorklogRow и заменяем диапазон в кэше.
+        // Шаг 3: конвертируем и атомарно заменяем кэш.
         const rows: CachedWorklogRow[] = rawWorklogs.map((w) => ({
           rowKey: `jira:${w.id}`,
           worklogId: w.id,
@@ -360,11 +365,11 @@ export const useAnalyticsStore = defineStore('analytics', {
         await tauriApi.replaceCachedWorklogsRange(from, to, rows);
         this.lastSynced = Date.now();
       } catch (e) {
-        // Ошибка синхронизации не блокирует дашборд — просто запоминаем
+        // Ошибка синхронизации не блокирует дашборд — кэш уже показан на шаге 1
         this.syncError = e instanceof Error ? e.message : 'Ошибка синхронизации с Jira';
       } finally {
         this.syncing = false;
-        // Перечитываем кэш независимо от результата синхронизации
+        // Шаг 4: перечитываем кэш с обновлёнными данными из Jira
         await this.fetchAll();
       }
     },
