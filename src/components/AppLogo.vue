@@ -15,27 +15,60 @@
       </linearGradient>
     </defs>
 
-    <!-- Фон-карточка -->
+    <!-- Фон-карточка: ровный отступ 2px со всех сторон -->
     <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#jt-grad)" />
 
-    <!-- Циферблат часов (смещён вверх-влево, чтобы дать место бейджу) -->
-    <circle cx="29" cy="30" r="17" fill="none" stroke="#ffffff" stroke-width="3.5" />
-
-    <!-- Стрелки часов: 12→3 (вертикаль вверх + горизонталь вправо) -->
-    <line x1="29" y1="22" x2="29" y2="30" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" />
-    <line x1="29" y1="30" x2="37" y2="35" stroke="#ffffff" stroke-width="3" stroke-linecap="round" />
+    <!--
+      Циферблат: СТРОГО по центру viewBox.
+      cx=32 cy=32 — математический центр 64×64.
+      r=18 → диаметр 36px, оставляет поле для бейджа в правом нижнем углу.
+    -->
+    <circle
+      cx="32" cy="32" r="18"
+      fill="none"
+      stroke="#ffffff"
+      stroke-width="3.5"
+    />
 
     <!-- Засечка 12 часов -->
-    <line x1="29" y1="14.5" x2="29" y2="17.5" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" />
+    <line
+      x1="32" y1="15" x2="32" y2="18.5"
+      stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"
+    />
 
-    <!-- Бейдж с галочкой — правый нижний угол, поверх фона -->
-    <!-- Белый круг-фон бейджа -->
-    <circle cx="47" cy="47" r="10" fill="#ffffff" />
-    <!-- Галочка внутри бейджа (teal) -->
+    <!--
+      Стрелки: показываем ~10:10 — классическое «улыбающееся» время.
+      Минутная: вверх-влево (к 10 часам) → (32,32) → (22.5, 22.5)
+      Часовая:  вверх-вправо (к 2 часам)  → (32,32) → (41.5, 22.5)
+    -->
+    <!-- Минутная стрелка (длиннее) -->
+    <line
+      x1="32" y1="32" x2="23" y2="23"
+      stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"
+    />
+    <!-- Часовая стрелка (короче) -->
+    <line
+      x1="32" y1="32" x2="41" y2="23"
+      stroke="#ffffff" stroke-width="3" stroke-linecap="round"
+    />
+
+    <!-- Центральная точка -->
+    <circle cx="32" cy="32" r="2.5" fill="#ffffff" />
+
+    <!--
+      Бейдж с галочкой — правый нижний угол.
+      cx=47 cy=47, r=11.
+      Галочка: тёмный зелёный #0d5a46 (хорошо виден на белом фоне и на тёмном taskbar Windows).
+    -->
+    <!-- Тень бейджа -->
+    <circle cx="47" cy="47.5" r="11" fill="rgba(0,0,0,0.18)" />
+    <!-- Белый круг -->
+    <circle cx="47" cy="47" r="11" fill="#ffffff" />
+    <!-- Галочка: три точки образуют ✓ симметрично внутри круга -->
     <polyline
       points="41,47 45.5,52 53,41"
       fill="none"
-      stroke="#22c1a1"
+      stroke="#0d5a46"
       stroke-width="3"
       stroke-linecap="round"
       stroke-linejoin="round"
@@ -46,6 +79,7 @@
 <script setup lang="ts">
 /**
  * Логотип приложения JiraTime — часы с бейджем-галочкой.
+ * Циферблат строго по центру viewBox (cx=32 cy=32).
  * Используется в сайдбаре (AppLayout.vue) и в блоке «О программе» (AboutPanel.vue).
  */
 withDefaults(defineProps<{ size?: number }>(), { size: 32 });
