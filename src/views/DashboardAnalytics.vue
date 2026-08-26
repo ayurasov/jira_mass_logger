@@ -19,11 +19,15 @@ const lastRefresh = computed(() => {
 const weekMode = ref<'current' | 'previous'>('current');
 
 async function refresh() {
-  await store.fetchAll();
+  // Принудительная синхронизация с Jira + обновление кэша
+  await store.syncFromJira(true);
 }
 
 onMounted(async () => {
-  await store.fetchAll();
+  // При открытии дашборда: сначала показываем кэш (fetchAll),
+  // затем тихо подтягиваем свежие данные из Jira за 3 месяца (syncFromJira).
+  // syncFromJira вызывает fetchAll внутри себя, поэтому двойного запроса нет.
+  await store.syncFromJira();
 });
 </script>
 
@@ -33,11 +37,16 @@ onMounted(async () => {
     <div class="analytics-header">
       <h1>Аналитика</h1>
       <span class="muted-text">Обновлено: {{ lastRefresh }}</span>
-      <button class="ghost-btn" title="Обновить" @click="refresh"><ActionIcon name="refresh" :size="14" /> Обновить</button>
+      <span v-if="store.syncing" class="muted-text sync-hint">
+        <ActionIcon name="refresh" :size="12" class="spin" /> Синхронизация с Jira…
+      </span>
+      <button class="ghost-btn" :disabled="store.loading || store.syncing" title="Обновить данные из Jira" @click="refresh">
+        <ActionIcon name="refresh" :size="14" /> Обновить
+      </button>
     </div>
 
-    <!-- ─── Skeleton ─── -->
-    <template v-if="store.loading">
+    <!-- ─── Skeleton (первичная загрузка кэша) ─── -->
+    <template v-if="store.loading && !store.lastFetched">
       <div class="analytics-skeleton">
         <div class="skeleton skeleton-card" />
         <div class="skeleton skeleton-card" />
@@ -72,8 +81,14 @@ onMounted(async () => {
       </div>
     </template>
 
-    <!-- ─── Глобальная ошибка ─── -->
-    <div v-if="store.error" class="global-error">
+    <!-- ─── Ошибка синхронизации с Jira (не блокирует дашборд) ─── -->
+    <div v-if="store.syncError" class="global-error sync-error-banner">
+      <span class="err-inline"><ActionIcon name="warning" :size="14" /> {{ store.syncError }}</span>
+      <button class="ghost-btn" @click="refresh">Повторить</button>
+    </div>
+
+    <!-- ─── Глобальная ошибка кэша ─── -->
+    <div v-else-if="store.error" class="global-error">
       <span class="err-inline"><ActionIcon name="warning" :size="14" /> {{ store.error }}</span>
       <button class="ghost-btn" @click="refresh">Повторить</button>
     </div>
@@ -101,5 +116,26 @@ onMounted(async () => {
   color: var(--warning);
   font-size: 0.9rem;
   margin-top: 0.5rem;
+}
+
+.sync-error-banner {
+  background: color-mix(in srgb, var(--warning) 8%, var(--card));
+}
+
+.sync-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+  display: inline-block;
 }
 </style>
