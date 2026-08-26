@@ -17,7 +17,7 @@ const currentStep = ref(0);
 
 const steps: { id: string; title: string; icon: ActionIconName }[] = [
   { id: 'jira',     title: 'Подключение к Jira',        icon: 'link' },
-  { id: 'exchange', title: 'Подключение к Exchange',     icon: 'clock' },
+  { id: 'exchange', title: 'Подключение к Exchange',     icon: 'bell' },
   { id: 'schedule', title: 'Рабочий график',             icon: 'clock' },
   { id: 'tour',     title: 'Быстрый тур',                icon: 'bolt' },
 ];
@@ -177,10 +177,306 @@ function goToStep(idx: number) {
   transform: translateX(-24px);
 }
 
-/* Масштабирование Windows 125-200%: используем em-единицы */
 @media (min-resolution: 120dpi) {
   .onboarding-card {
     width: min(600px, 90vw);
   }
+}
+</style>
+
+<!-- Общие стили для всех step-компонентов (non-scoped, доступны дочерним) -->
+<style>
+/* ── Секция шага ── */
+.step-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.step-title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.step-desc {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+/* ── Форма шага ── */
+.step-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ── Строка полей ── */
+.field-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
+.field-grow { flex: 1 1 0; min-width: 0; }
+.field-auth { flex: 0 0 200px; }
+
+/* ── Поля ── */
+.field-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.field-name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.field-input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-offset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  transition: border-color var(--transition-interactive),
+              box-shadow var(--transition-interactive);
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-highlight);
+}
+
+select.field-input {
+  cursor: pointer;
+  appearance: auto;
+}
+
+.field-input--narrow { max-width: 8rem; }
+
+/* ── Чекбокс-строка ── */
+.field-checkbox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.field-checkbox input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* ── Подсказки ── */
+.step-hint {
+  font-size: var(--text-xs);
+  color: var(--color-warning);
+  background: var(--color-warning-highlight);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.hint-text {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--space-1);
+}
+
+/* ── Статусы ── */
+.step-error,
+.step-success {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+.step-error {
+  background: var(--color-error-highlight);
+  color: var(--color-error);
+}
+
+.step-success {
+  background: var(--color-success-highlight);
+  color: var(--color-success);
+}
+
+.status-icon { flex-shrink: 0; }
+
+/* ── Кнопки ── */
+.step-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background var(--transition-interactive),
+              opacity var(--transition-interactive);
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+  border-color: var(--color-primary);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--color-surface-offset);
+  color: var(--color-text);
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  text-underline-offset: 2px;
+  text-decoration: underline;
+}
+
+.btn-link:hover { color: var(--color-primary-hover); }
+
+/* ── Ссылка ── */
+.link {
+  color: var(--color-primary);
+  text-underline-offset: 2px;
+}
+.link:hover { color: var(--color-primary-hover); }
+
+/* ── Табы (Exchange) ── */
+.type-tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: var(--space-2);
+}
+
+.tab-btn {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-offset);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-interactive);
+}
+
+.tab-btn.active {
+  background: var(--color-primary-highlight);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.tab-btn:hover:not(.active) {
+  background: var(--color-surface-offset);
+  color: var(--color-text);
+}
+
+/* ── Дни недели (WorkSchedule) ── */
+.day-toggles {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+
+.day-btn {
+  min-width: 2.5rem;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-offset);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-interactive);
+}
+
+.day-btn.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-text-inverse);
+  font-weight: 600;
+}
+
+.day-btn:hover:not(.active) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* ── Спиннер ── */
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: ob-spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+@keyframes ob-spin { to { transform: rotate(360deg); } }
+
+/* ── Fade-анимация ── */
+.fade-enter-active, .fade-leave-active { transition: opacity 200ms ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+/* ── Адаптация под узкий экран ── */
+@media (max-width: 480px) {
+  .field-row { flex-direction: column; }
+  .field-auth { flex: 1 1 auto; }
 }
 </style>
