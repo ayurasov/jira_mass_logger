@@ -3,7 +3,7 @@ import { ref, reactive, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import ActionIcon from '../ActionIcon.vue';
 
-const emit = defineEmits<{ done: [] }>();
+const emit = defineEmits<{ done: []; skip: [] }>();
 
 const form = reactive({
   url: '',
@@ -45,23 +45,23 @@ async function testAndSave() {
 
     const iType = instanceType();
     const params = {
-      base_url: form.url.replace(/\/$/, ''),
+      baseUrl: form.url.replace(/\/$/, ''),
       email: form.email,
-      secret_ref: secretRef,
-      instance_type: iType,
-      extra_root_ca_pem_path: null,
-      accept_invalid_certs: form.acceptInvalidCerts,
+      secretRef,
+      instanceType: iType,
+      extraRootCaPemPath: null,
+      acceptInvalidCerts: form.acceptInvalidCerts,
       proxy: null,
-      user_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
 
     console.debug('[JiraConnectionStep] test_connection params:', {
-      base_url: params.base_url,
+      baseUrl: params.baseUrl,
       email: params.email,
-      instance_type: params.instance_type,
-      accept_invalid_certs: params.accept_invalid_certs,
-      has_proxy: params.proxy !== null,
-      user_timezone: params.user_timezone,
+      instanceType: params.instanceType,
+      acceptInvalidCerts: params.acceptInvalidCerts,
+      hasProxy: params.proxy !== null,
+      userTimezone: params.userTimezone,
     });
 
     await invoke('test_connection', { params });
@@ -72,7 +72,7 @@ async function testAndSave() {
         name: 'Default',
         instanceType: iType,
         authType: iType === 'cloud' ? 'token' : (iType === 'server_basic' ? 'server_basic' : 'pat'),
-        baseUrl: params.base_url,
+        baseUrl: params.baseUrl,
         email: form.email,
         token: form.token,
         isActive: true,
@@ -189,6 +189,9 @@ async function testAndSave() {
         <button type="submit" class="btn btn-primary" :disabled="testing">
           <span v-if="testing" class="spinner" aria-hidden="true"></span>
           {{ testing ? 'Проверка…' : 'Проверить и продолжить' }}
+        </button>
+        <button type="button" class="btn btn-ghost" @click="emit('skip')">
+          Пропустить
         </button>
       </div>
 

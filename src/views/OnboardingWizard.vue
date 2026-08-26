@@ -29,8 +29,8 @@ function next() {
   else currentStep.value++;
 }
 
-function skip() {
-  if (currentStep.value === 1) currentStep.value = 2;
+function skipStep() {
+  if (currentStep.value < steps.length - 1) currentStep.value++;
 }
 
 function finish() {
@@ -66,8 +66,8 @@ function goToStep(idx: number) {
       <!-- Шаги -->
       <div class="onboarding-body">
         <Transition name="slide-step" mode="out-in">
-          <JiraConnectionStep     v-if="currentStep === 0" key="jira"     @done="next" />
-          <ExchangeConnectionStep v-else-if="currentStep === 1" key="exchange" @done="next" @skip="skip" />
+          <JiraConnectionStep     v-if="currentStep === 0" key="jira"     @done="next" @skip="skipStep" />
+          <ExchangeConnectionStep v-else-if="currentStep === 1" key="exchange" @done="next" @skip="skipStep" />
           <WorkScheduleStep       v-else-if="currentStep === 2" key="schedule" @done="next" />
           <TourStep               v-else-if="currentStep === 3" key="tour"     @done="finish" />
         </Transition>
