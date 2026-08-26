@@ -19,24 +19,17 @@ const success = ref(false);
 
 const isBasic = computed(() => form.authType === 'Basic');
 
-// Маппинг пользовательского authType -> instance_type в Rust-схеме
 function instanceType() {
   if (form.authType === 'Basic') return 'server_basic';
-  // Bearer — определяем по URL: *.atlassian.net = cloud, иначе = server
   return form.url.includes('atlassian.net') ? 'cloud' : 'server';
 }
 
-/**
- * Tauri invoke отдаёт ошибку как строку (Rust String -> IPC),
- * а не как объект с .message. Извлекаем текст универсально.
- */
 function extractError(e: unknown): string {
   if (typeof e === 'string') return e;
   if (e instanceof Error) return e.message;
   if (e && typeof e === 'object') {
     const obj = e as Record<string, unknown>;
     if (typeof obj['message'] === 'string') return obj['message'];
-    // Tauri v2 иногда кладёт текст в .error
     if (typeof obj['error'] === 'string') return obj['error'];
     try { return JSON.stringify(e); } catch { /* ignore */ }
   }
@@ -47,11 +40,9 @@ async function testAndSave() {
   error.value = '';
   testing.value = true;
   try {
-    // 1. Сохраняем секрет в OS keychain
     const secretRef = `jira-onboarding-${Date.now()}`;
     await invoke('save_secret', { secretRef, value: form.token });
 
-    // 2. Проверяем подключение
     const iType = instanceType();
     const params = {
       base_url: form.url.replace(/\/$/, ''),
@@ -75,9 +66,6 @@ async function testAndSave() {
 
     await invoke('test_connection', { params });
 
-    // 3. Сохраняем профиль через единую Rust-команду save_jira_profile
-    // (тот же путь данных, который используют Profiles.vue и jiraProfiles store).
-    // Не пишем в SQLite напрямую через plugin-sql — была отдельная и несогласованная с backend база данных.
     await invoke('save_jira_profile', {
       profile: {
         id: null,
@@ -179,6 +167,12 @@ async function testAndSave() {
         <ActionIcon name="warning" :size="13" /> Basic Auth передаёт пароль в base64. Используйте только по HTTPS.
       </p>
 
+      <!-- TLS опция -->
+      <label class="field-label field-checkbox">
+        <input type="checkbox" v-model="form.acceptInvalidCerts" />
+        <span>Не проверять TLS-сертификат сервера (для самоподписанных/корпоративных)</span>
+      </label>
+
       <!-- Статус -->
       <transition name="fade">
         <div v-if="error" class="step-error" role="alert">
@@ -192,14 +186,7 @@ async function testAndSave() {
       </transition>
 
       <div class="step-actions">
-  
-      <!-- TLS опция для корпоративных серверов с самоподписанным сертификатом -->
-      <label class="field-label field-checkbox" style="margin-top:0.25rem">
-        <input type="checkbox" v-model="form.acceptInvalidCerts" />
-        <span>Не проверять TLS-сертификат сервера (для самоподписанных/корпоративных)</span>
-      </label>
-
-      <button type="submit" class="btn btn-primary" :disabled="testing">
+        <button type="submit" class="btn btn-primary" :disabled="testing">
           <span v-if="testing" class="spinner" aria-hidden="true"></span>
           {{ testing ? 'Проверка…' : 'Проверить и продолжить' }}
         </button>
@@ -208,158 +195,3 @@ async function testAndSave() {
     </form>
   </section>
 </template>
-
-<style scoped>
-/* Макет формы */
-.step-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-/* Два поля в ряд */
-.field-row {
-  display: flex;
-  gap: var(--space-3);
-  align-items: flex-end;
-}
-
-.field-grow {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.field-auth {
-  flex: 0 0 200px;
-}
-
-.field-label {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.field-name {
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--color-text-muted);
-}
-
-.field-input {
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-surface-offset);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  color: var(--color-text);
-  font-size: var(--text-sm);
-  transition: border-color var(--transition-interactive),
-              box-shadow var(--transition-interactive);
-}
-
-.field-input:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-highlight);
-}
-
-select.field-input {
-  cursor: pointer;
-  appearance: auto;
-}
-
-/* Подсказка */
-.step-hint {
-  font-size: var(--text-xs);
-  color: var(--color-warning);
-  background: var(--color-warning-highlight);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-3);
-}
-
-/* Ошибка / успех */
-.step-error,
-.step-success {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-}
-.step-error {
-  background: var(--color-error-highlight);
-  color: var(--color-error);
-}
-.step-success {
-  background: var(--color-success-highlight);
-  color: var(--color-success);
-}
-.status-icon {
-  flex-shrink: 0;
-}
-
-/* Кнопка */
-.step-actions {
-  padding-top: var(--space-2);
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-6);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--transition-interactive),
-              opacity var(--transition-interactive);
-}
-.btn-primary {
-  background: var(--color-primary);
-  color: var(--color-text-inverse);
-  border: none;
-}
-.btn-primary:hover:not(:disabled) {
-  background: var(--color-primary-hover);
-}
-.btn-primary:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-/* Спиннер */
-.spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-  display: inline-block;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* Ссылка */
-.link {
-  color: var(--color-primary);
-  text-underline-offset: 2px;
-}
-.link:hover {
-  color: var(--color-primary-hover);
-}
-
-/* Плавное появление/исчезновение статусов */
-.fade-enter-active, .fade-leave-active { transition: opacity 200ms ease; } 
-.fade-enter-from, .fade-leave-to { opacity: 0; }
-
-/* Адаптация под узкий экран */
-@media (max-width: 480px) {
-  .field-row {
-    flex-direction: column;
-  }
-  .field-auth {
-    flex: 1 1 auto;
-  }
-}
-</style>
