@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import ActionIcon from '../ActionIcon.vue';
 
 const emit = defineEmits<{ done: []; skip: [] }>();
 
@@ -54,47 +55,87 @@ async function save() {
     <div class="type-tabs">
       <button
         :class="['tab-btn', { active: form.type === 'graph' }]"
+        type="button"
         @click="form.type = 'graph'"
       >Microsoft Graph (M365)</button>
       <button
         :class="['tab-btn', { active: form.type === 'ews' }]"
+        type="button"
         @click="form.type = 'ews'"
       >Exchange On-Premise (EWS)</button>
     </div>
 
-    <form class="step-form" @submit.prevent="save">
+    <form class="step-form" @submit.prevent="save" novalidate>
       <template v-if="form.type === 'graph'">
         <label class="field-label">
-          Tenant ID (Directory ID)
-          <input v-model="form.tenantId" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required class="field-input" />
+          <span class="field-name">Tenant ID (Directory ID)</span>
+          <input
+            v-model="form.tenantId"
+            type="text"
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            required
+            class="field-input"
+          />
         </label>
         <label class="field-label">
-          Client ID (Application ID)
-          <input v-model="form.clientId" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required class="field-input" />
+          <span class="field-name">Client ID (Application ID)</span>
+          <input
+            v-model="form.clientId"
+            type="text"
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            required
+            class="field-input"
+          />
         </label>
-        <p class="hint-text">Redirect URI для Azure AD: <code>http://localhost:37842/oauth/callback</code></p>
+        <p class="hint-text">
+          Redirect URI для Azure AD:
+          <code>http://localhost:37842/oauth/callback</code>
+        </p>
       </template>
 
       <template v-else>
         <label class="field-label">
-          EWS URL
-          <input v-model="form.ewsUrl" type="url" placeholder="https://mail.corp.ru/EWS/Exchange.asmx" required class="field-input" />
+          <span class="field-name">EWS URL</span>
+          <input
+            v-model="form.ewsUrl"
+            type="url"
+            placeholder="https://mail.corp.ru/EWS/Exchange.asmx"
+            required
+            class="field-input"
+          />
         </label>
         <label class="field-label">
-          Логин (domain\user или UPN)
-          <input v-model="form.ewsLogin" type="text" required class="field-input" />
+          <span class="field-name">Логин (domain\user или UPN)</span>
+          <input
+            v-model="form.ewsLogin"
+            type="text"
+            required
+            autocomplete="username"
+            class="field-input"
+          />
         </label>
         <label class="field-label">
-          Пароль
-          <input v-model="form.ewsPassword" type="password" required class="field-input" />
+          <span class="field-name">Пароль</span>
+          <input
+            v-model="form.ewsPassword"
+            type="password"
+            required
+            autocomplete="current-password"
+            class="field-input"
+          />
         </label>
       </template>
 
-      <div v-if="error" class="step-error" role="alert">{{ error }}</div>
+      <transition name="fade">
+        <div v-if="error" class="step-error" role="alert">
+          <span class="status-icon"><ActionIcon name="warning" :size="14" /></span> {{ error }}
+        </div>
+      </transition>
 
       <div class="step-actions">
         <button type="button" class="btn btn-ghost" @click="emit('skip')">Пропустить</button>
         <button type="submit" class="btn btn-primary" :disabled="saving">
+          <span v-if="saving" class="spinner" aria-hidden="true"></span>
           {{ saving ? 'Подключение…' : 'Подключить и продолжить' }}
         </button>
       </div>
