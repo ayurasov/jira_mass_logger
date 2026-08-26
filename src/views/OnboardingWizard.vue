@@ -2,7 +2,6 @@
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useSettingsStore } from '../store/settings';
-import { useJiraProfilesStore } from '../store/jiraProfiles';
 import JiraConnectionStep from '../components/onboarding/JiraConnectionStep.vue';
 import ExchangeConnectionStep from '../components/onboarding/ExchangeConnectionStep.vue';
 import WorkScheduleStep from '../components/onboarding/WorkScheduleStep.vue';
@@ -11,7 +10,6 @@ import ActionIcon, { type ActionIconName } from '../components/ActionIcon.vue';
 
 const router = useRouter();
 const settings = useSettingsStore();
-const jiraProfiles = useJiraProfilesStore();
 
 const currentStep = ref(0);
 
@@ -47,7 +45,6 @@ function goToStep(idx: number) {
   <div class="onboarding-overlay">
     <div class="onboarding-card" role="dialog" aria-modal="true" aria-label="Мастер первоначальной настройки">
 
-      <!-- Прогресс -->
       <nav class="onboarding-steps" aria-label="Шаги настройки">
         <button
           v-for="(step, idx) in steps"
@@ -63,7 +60,6 @@ function goToStep(idx: number) {
         </button>
       </nav>
 
-      <!-- Шаги -->
       <div class="onboarding-body">
         <Transition name="slide-step" mode="out-in">
           <JiraConnectionStep     v-if="currentStep === 0" key="jira"     @done="next" @skip="skipStep" />
@@ -80,7 +76,7 @@ function goToStep(idx: number) {
 .onboarding-overlay {
   position: fixed;
   inset: 0;
-  background: oklch(from var(--color-bg) l c h / 0.88);
+  background: oklch(from var(--color-bg, #f7f6f2) l c h / 0.88);
   backdrop-filter: blur(10px);
   display: flex;
   align-items: center;
@@ -89,24 +85,22 @@ function goToStep(idx: number) {
 }
 
 .onboarding-card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  background: var(--color-surface, var(--card, #ffffff));
+  border: 1px solid var(--color-border, var(--border, #d8deea));
+  border-radius: var(--radius-xl, 1rem);
+  box-shadow: var(--shadow-lg, 0 0.75rem 2rem rgba(42,59,88,0.08));
   width: min(660px, 94vw);
   max-height: 90vh;
   overflow-y: auto;
-  padding: var(--space-8);
+  padding: var(--space-8, 2rem);
   display: flex;
   flex-direction: column;
-  gap: var(--space-7);
+  gap: var(--space-7, 1.75rem);
 }
 
-/* ─── Шашки навигации ─── */
 .onboarding-steps {
   display: flex;
-  gap: var(--space-2);
-  /* Принудительно выравниваем шашки по высоте */
+  gap: var(--space-2, 0.5rem);
   align-items: stretch;
 }
 
@@ -114,40 +108,39 @@ function goToStep(idx: number) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;   /* центрируем содержимое вертикально */
-  gap: var(--space-1);
+  justify-content: center;
+  gap: var(--space-1, 0.25rem);
   flex: 1;
   min-width: 0;
-  /* Фиксированная высота = все шашки одинаковы */
   min-height: 72px;
-  padding: var(--space-3) var(--space-2);
-  border-radius: var(--radius-lg);
-  border: 1.5px solid var(--color-border);
-  background: var(--color-surface-offset, #f7f8fa);
-  color: var(--color-text-muted);
-  font-size: var(--text-xs);
+  padding: var(--space-3, 0.75rem) var(--space-2, 0.5rem);
+  border-radius: var(--radius-lg, 0.75rem);
+  border: 1.5px solid var(--color-border, var(--border, #d8deea));
+  background: var(--color-surface-offset, var(--card, #f7f8fa));
+  color: var(--color-text-muted, var(--muted, #5d6475));
+  font-size: var(--text-xs, 0.75rem);
   line-height: 1.3;
   cursor: default;
-  transition: all var(--transition-interactive);
-  white-space: pre-line;   /* позволяем \n в step.title */
+  transition: all var(--transition-interactive, 180ms ease);
+  white-space: pre-line;
   text-align: center;
 }
 
 .step-dot.done {
-  color: var(--color-primary);
+  color: var(--color-primary, var(--primary, #2a62ff));
   cursor: pointer;
-  border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary, var(--primary, #2a62ff)) 30%, transparent);
 }
 
 .step-dot.active {
-  background: var(--color-primary-highlight);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  background: var(--color-primary-highlight, var(--chip, #eef3ff));
+  border-color: var(--color-primary, var(--primary, #2a62ff));
+  color: var(--color-primary, var(--primary, #2a62ff));
   font-weight: 600;
 }
 
 .step-dot:not(.active):hover.done {
-  background: var(--color-primary-highlight);
+  background: var(--color-primary-highlight, var(--chip, #eef3ff));
 }
 
 .step-icon {
@@ -164,118 +157,104 @@ function goToStep(idx: number) {
   display: block;
   white-space: pre-line;
   text-align: center;
-  font-size: var(--text-xs);
+  font-size: var(--text-xs, 0.75rem);
   line-height: 1.35;
 }
 
-/* ─── Анимация переходов ─── */
 .slide-step-enter-active,
 .slide-step-leave-active { transition: opacity 180ms ease, transform 180ms ease; }
 .slide-step-enter-from   { opacity: 0; transform: translateX(20px); }
 .slide-step-leave-to     { opacity: 0; transform: translateX(-20px); }
-
-@media (min-resolution: 120dpi) {
-  .onboarding-card { width: min(620px, 92vw); }
-}
 </style>
 
-<!-- Общие стили для всех step-компонентов (non-scoped, доступны дочерним) -->
+<!-- Общие стили для всех step-компонентов (non-scoped) -->
 <style>
-/* ── Секция шага ── */
 .step-section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: var(--space-5, 1.25rem);
 }
 
 .step-title {
   margin: 0;
-  font-size: var(--text-xl);
+  font-size: var(--text-xl, 1.5rem);
   font-weight: 700;
-  color: var(--color-text);
+  color: var(--color-text, var(--fg, #1a1a1a));
   letter-spacing: -0.01em;
 }
 
 .step-desc {
-  margin: -var(--space-2) 0 0;
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
+  margin: 0;
+  font-size: var(--text-sm, 0.875rem);
+  color: var(--color-text-muted, var(--muted, #5d6475));
   line-height: 1.55;
 }
 
-/* ── Форма шага ── */
 .step-form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-4, 1rem);
 }
 
-/* ── Строка полей ── */
 .field-row {
   display: flex;
-  gap: var(--space-4);
+  gap: var(--space-4, 1rem);
   align-items: flex-end;
 }
 
 .field-grow { flex: 1 1 0; min-width: 0; }
 .field-auth { flex: 0 0 210px; }
 
-/* ── Поля ── */
 .field-label {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-1, 0.25rem);
 }
 
 .field-name {
-  font-size: var(--text-xs);
+  font-size: var(--text-xs, 0.75rem);
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  color: var(--color-text-muted);
+  color: var(--color-text-muted, var(--muted, #5d6475));
 }
 
 .field-input {
   width: 100%;
-  padding: 0.55rem var(--space-3);
-  /* Видимый фон: чуть темнее поверхности карточки */
-  background: color-mix(in srgb, var(--color-border) 18%, var(--color-surface));
-  border: 1.5px solid var(--color-border);
-  border-radius: var(--radius-md);
-  color: var(--color-text);
-  font-size: var(--text-sm);
-  transition: border-color var(--transition-interactive),
-              background var(--transition-interactive),
-              box-shadow var(--transition-interactive);
+  padding: 0.55rem var(--space-3, 0.75rem);
+  background: color-mix(in srgb, var(--border, #d8deea) 18%, var(--card, #fff));
+  border: 1.5px solid var(--color-border, var(--border, #d8deea));
+  border-radius: var(--radius-md, 0.5rem);
+  color: var(--color-text, var(--fg, #1a1a1a));
+  font-size: var(--text-sm, 0.875rem);
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
 
-.field-input::placeholder { color: var(--color-text-muted); opacity: 0.6; }
+.field-input::placeholder { color: var(--color-text-muted, var(--muted, #5d6475)); opacity: 0.6; }
 
 .field-input:hover:not(:focus) {
-  border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
+  border-color: color-mix(in srgb, var(--primary, #2a62ff) 40%, var(--border, #d8deea));
 }
 
 .field-input:focus {
   outline: none;
-  background: var(--color-surface);
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-highlight);
+  background: var(--card, #fff);
+  border-color: var(--color-primary, var(--primary, #2a62ff));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary, #2a62ff) 18%, transparent);
 }
 
 select.field-input { cursor: pointer; appearance: auto; }
-
 .field-input--narrow { max-width: 8rem; }
 
-/* ── Чекбокс-строка ── */
 .field-checkbox {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
+  gap: var(--space-2, 0.5rem);
+  font-size: var(--text-sm, 0.875rem);
+  color: var(--color-text-muted, var(--muted, #5d6475));
   cursor: pointer;
-  padding: var(--space-1) 0;
+  padding: var(--space-1, 0.25rem) 0;
 }
 
 .field-checkbox input[type="checkbox"] {
@@ -283,49 +262,45 @@ select.field-input { cursor: pointer; appearance: auto; }
   height: 1rem;
   flex-shrink: 0;
   cursor: pointer;
-  accent-color: var(--color-primary);
+  accent-color: var(--color-primary, var(--primary, #2a62ff));
 }
 
-/* ── Подсказки ── */
 .step-hint {
-  font-size: var(--text-xs);
-  color: var(--color-warning);
-  background: var(--color-warning-highlight);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--color-warning, var(--warning, #b97900));
+  background: color-mix(in srgb, var(--warning, #b97900) 12%, var(--card, #fff));
+  border-radius: var(--radius-sm, 0.375rem);
+  padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-1, 0.25rem);
 }
 
 .hint-text {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  margin-top: var(--space-1);
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--color-text-muted, var(--muted, #5d6475));
+  margin-top: var(--space-1, 0.25rem);
 }
 
-/* ── Статусы ── */
 .step-error,
 .step-success {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
+  gap: var(--space-2, 0.5rem);
+  padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+  border-radius: var(--radius-md, 0.5rem);
+  font-size: var(--text-sm, 0.875rem);
 }
 
-.step-error   { background: var(--color-error-highlight);   color: var(--color-error); }
-.step-success { background: var(--color-success-highlight); color: var(--color-success); }
+.step-error   { background: color-mix(in srgb, var(--danger, #cb2b2b) 10%, var(--card, #fff)); color: var(--color-error, var(--danger, #cb2b2b)); }
+.step-success { background: color-mix(in srgb, var(--success, #1c8c4e) 10%, var(--card, #fff)); color: var(--color-success, var(--success, #1c8c4e)); }
 .status-icon  { flex-shrink: 0; }
 
-/* ── Кнопки ── */
 .step-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding-top: var(--space-3);
-  /* кнопка не растягивается на всю ширину */
+  gap: var(--space-3, 0.75rem);
+  padding-top: var(--space-3, 0.75rem);
   flex-wrap: wrap;
 }
 
@@ -333,31 +308,27 @@ select.field-input { cursor: pointer; appearance: auto; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
-  padding: 0.55rem var(--space-6);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
+  gap: var(--space-2, 0.5rem);
+  padding: 0.55rem var(--space-6, 1.5rem);
+  border-radius: var(--radius-md, 0.5rem);
+  font-size: var(--text-sm, 0.875rem);
   font-weight: 600;
   cursor: pointer;
   border: 1.5px solid transparent;
   white-space: nowrap;
-  transition: background var(--transition-interactive),
-              border-color var(--transition-interactive),
-              opacity var(--transition-interactive),
-              box-shadow var(--transition-interactive);
+  transition: background 180ms ease, border-color 180ms ease, opacity 180ms ease, box-shadow 180ms ease;
 }
 
 .btn-primary {
-  background: var(--color-primary);
-  color: var(--color-text-inverse);
-  border-color: var(--color-primary);
-  box-shadow: 0 1px 4px color-mix(in srgb, var(--color-primary) 35%, transparent);
+  background: var(--color-primary, var(--primary, #2a62ff));
+  color: #ffffff;
+  border-color: var(--color-primary, var(--primary, #2a62ff));
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--primary, #2a62ff) 35%, transparent);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--color-primary-hover);
-  border-color: var(--color-primary-hover);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 45%, transparent);
+  background: var(--color-primary-hover, var(--primary-strong, #1f4fd3));
+  border-color: var(--color-primary-hover, var(--primary-strong, #1f4fd3));
 }
 
 .btn-primary:active:not(:disabled) {
@@ -369,121 +340,107 @@ select.field-input { cursor: pointer; appearance: auto; }
 
 .btn-ghost {
   background: transparent;
-  color: var(--color-text-muted);
-  border-color: var(--color-border);
+  color: var(--color-text-muted, var(--muted, #5d6475));
+  border-color: var(--color-border, var(--border, #d8deea));
 }
 
 .btn-ghost:hover:not(:disabled) {
-  background: var(--color-surface-offset);
-  color: var(--color-text);
-  border-color: color-mix(in srgb, var(--color-border) 60%, var(--color-text));
+  background: var(--color-surface-offset, var(--chip, #eef3ff));
+  color: var(--color-text, var(--fg, #1a1a1a));
 }
 
 .btn-link {
   background: none;
   border: none;
   padding: 0;
-  color: var(--color-primary);
-  font-size: var(--text-sm);
+  color: var(--color-primary, var(--primary, #2a62ff));
+  font-size: var(--text-sm, 0.875rem);
   font-weight: 500;
   cursor: pointer;
   text-underline-offset: 2px;
   text-decoration: underline;
 }
 
-.btn-link:hover { color: var(--color-primary-hover); }
+.btn-link:hover { color: var(--color-primary-hover, var(--primary-strong, #1f4fd3)); }
 
-/* ── Ссылка ── */
-.link { color: var(--color-primary); text-underline-offset: 2px; }
-.link:hover { color: var(--color-primary-hover); }
+.link { color: var(--color-primary, var(--primary, #2a62ff)); text-underline-offset: 2px; }
+.link:hover { color: var(--color-primary-hover, var(--primary-strong, #1f4fd3)); }
 
-/* ── Табы (Exchange) ── */
+/* Табы (Exchange) */
 .type-tabs {
   display: flex;
-  gap: var(--space-2);
-  border-bottom: 1.5px solid var(--color-border);
-  padding-bottom: var(--space-2);
+  gap: var(--space-2, 0.5rem);
+  border-bottom: 1.5px solid var(--color-border, var(--border, #d8deea));
+  padding-bottom: var(--space-2, 0.5rem);
 }
 
 .tab-btn {
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-md);
-  border: 1.5px solid var(--color-border);
-  background: var(--color-surface-offset);
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  border-radius: var(--radius-md, 0.5rem);
+  border: 1.5px solid var(--color-border, var(--border, #d8deea));
+  background: var(--color-surface-offset, var(--card, #fff));
+  color: var(--color-text-muted, var(--muted, #5d6475));
+  font-size: var(--text-sm, 0.875rem);
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition-interactive);
+  transition: all 180ms ease;
 }
 
 .tab-btn.active {
-  background: var(--color-primary-highlight);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  background: var(--color-primary-highlight, var(--chip, #eef3ff));
+  border-color: var(--color-primary, var(--primary, #2a62ff));
+  color: var(--color-primary, var(--primary, #2a62ff));
   font-weight: 600;
 }
 
 .tab-btn:hover:not(.active) {
-  color: var(--color-text);
-  border-color: color-mix(in srgb, var(--color-border) 60%, var(--color-text));
+  color: var(--color-text, var(--fg, #1a1a1a));
+  background: var(--chip, #eef3ff);
 }
 
-/* ── Дни недели (WorkSchedule) ── */
+/* Дни недели (WorkSchedule) */
 .day-toggles {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-2, 0.5rem);
   flex-wrap: wrap;
-  margin-top: var(--space-2);
+  margin-top: var(--space-2, 0.5rem);
 }
 
 .day-btn {
   min-width: 2.75rem;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  border: 1.5px solid var(--color-border);
-  background: var(--color-surface-offset);
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-md, 0.5rem);
+  border: 1.5px solid var(--color-border, var(--border, #d8deea));
+  background: var(--color-surface-offset, var(--card, #ffffff));
+  color: var(--color-text-muted, var(--muted, #5d6475));
+  font-size: var(--text-sm, 0.875rem);
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition-interactive);
+  transition: all 180ms ease;
+  text-align: center;
 }
 
 .day-btn.active {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--color-text-inverse);
-  font-weight: 600;
+  background: var(--color-primary-highlight, var(--chip, #eef3ff));
+  border-color: var(--color-primary, var(--primary, #2a62ff));
+  color: var(--color-primary, var(--primary, #2a62ff));
+  font-weight: 700;
 }
 
 .day-btn:hover:not(.active) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  background: var(--chip, #eef3ff);
+  color: var(--color-text, var(--fg, #1a1a1a));
 }
 
-/* ── Спиннер ── */
+/* Спиннер */
 .spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
+  width: 0.875rem;
+  height: 0.875rem;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: #fff;
   border-radius: 50%;
-  animation: ob-spin 0.7s linear infinite;
-  display: inline-block;
+  animation: spin 0.6s linear infinite;
   flex-shrink: 0;
 }
-
-@keyframes ob-spin { to { transform: rotate(360deg); } }
-
-/* ── Fade-анимация ── */
-.fade-enter-active, .fade-leave-active { transition: opacity 200ms ease; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
-
-/* ── Адаптация под узкий экран ── */
-@media (max-width: 480px) {
-  .field-row  { flex-direction: column; }
-  .field-auth { flex: 1 1 auto; }
-  .onboarding-card { padding: var(--space-5); }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
