@@ -1,5 +1,5 @@
 // Pinia-стор аналитики дашборда.
-// Агрегирует данные из кэша worklog’ов и вычисляет метрики для 5 виджетов:
+// Агрегирует данные из кэша worklog'ов и вычисляет метрики для 5 виджетов:
 //  1. Диаграмма часов по дням за текущую/прошлую неделю (план vs факт)
 //  2. Разбивка по задачам/проектам за выбранный период (donut / stacked bar)
 //  3. Calendar heatmap за последние 3 месяца
@@ -148,6 +148,11 @@ export const useAnalyticsStore = defineStore('analytics', {
 
     // map projectKey → projectName, для подписей в разбивке по проектам
     _projectNames: new Map<string, string>(),
+
+    // флаг и статус синхронизации с Jira
+    syncing: false,
+    syncError: null as string | null,
+    lastSynced: null as number | null,
   }),
 
   getters: {
@@ -297,6 +302,70 @@ export const useAnalyticsStore = defineStore('analytics', {
         this.error = e instanceof Error ? e.message : 'Не удалось загрузить данные';
       } finally {
         this.loading = false;
+      }
+    },
+
+    /**
+     * Запрашивает у Jira worklogs за последние 3 месяца, сохраняет в локальный
+     * кэш, затем перечитывает кэш (`fetchAll`) — дашборд обновляется со свежими данными.
+     *
+     * @param force  true → всегда синхронизировать; false (по умолчанию) →
+     *               пропустить если уже синхронизировали в этом сеансе (lastSynced != null).
+     */
+    async syncFromJira(force = false) {
+      // Избегаем повторного запроса при навигации назад/вперёд по дашборду,
+      // если данные уже были подгружены в текущем сеансе.
+      if (!force && this.lastSynced !== null) return;
+
+      this.syncing = true;
+      this.syncError = null;
+      try {
+        const profiles = (await import('./jiraProfiles')).useJiraProfilesStore();
+        await profiles.ensureLoaded();
+        const params = profiles.activeConnectionParams;
+        if (!params) {
+          // Jira не настроена — тихо выходим, дашборд покажет кэш
+          return;
+        }
+
+        const today = new Date();
+        const from = toIsoDate(addDays(today, -95)); // ~3 месяца с запасом
+        const to   = toIsoDate(today);
+
+        // Получаем worklogs из Jira за нужный диапазон.
+        // sinceEpochMillis = 0 означает «без ограничения по дате изменения»,
+        // dateRange ограничивает диапазон полей started у worklog'а.
+        const rawWorklogs = await tauriApi.getWorklogsSince(
+          params,
+          0,
+          undefined,
+          { dateFrom: from, dateTo: to },
+          true, // allowEmptyRange
+        );
+
+        // Конвертируем WorklogDto → CachedWorklogRow и заменяем диапазон в кэше.
+        const rows: CachedWorklogRow[] = rawWorklogs.map((w) => ({
+          rowKey: `jira:${w.id}`,
+          worklogId: w.id,
+          issueKey: w.issueKey ?? '',
+          issueSummary: null,
+          projectKey: w.issueKey ? w.issueKey.split('-')[0] : null,
+          started: w.started.slice(0, 10),
+          timeSpentSeconds: w.timeSpentSeconds,
+          comment: w.comment ?? null,
+          updated: w.updated ?? null,
+          syncedAt: new Date().toISOString(),
+        }));
+
+        await tauriApi.replaceCachedWorklogsRange(from, to, rows);
+        this.lastSynced = Date.now();
+      } catch (e) {
+        // Ошибка синхронизации не блокирует дашборд — просто запоминаем
+        this.syncError = e instanceof Error ? e.message : 'Ошибка синхронизации с Jira';
+      } finally {
+        this.syncing = false;
+        // Перечитываем кэш независимо от результата синхронизации
+        await this.fetchAll();
       }
     },
 

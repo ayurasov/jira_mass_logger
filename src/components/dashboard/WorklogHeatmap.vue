@@ -2,10 +2,37 @@
   <div class="dash-card">
     <div class="dash-card-header">
       <span class="dash-card-title">Заполненность worklog &mdash; 3 месяца</span>
-      <div class="heatmap-legend">
-        <span class="legend-label">проблема</span>
-        <span v-for="l in [0,1,2,3,4]" :key="l" class="legend-cell" :data-level="l"></span>
-        <span class="legend-label">норма</span>
+      <div class="heatmap-header-right">
+        <div class="heatmap-legend">
+          <span class="legend-label">проблема</span>
+          <span v-for="l in [0,1,2,3,4]" :key="l" class="legend-cell" :data-level="l"></span>
+          <span class="legend-label">норма</span>
+        </div>
+        <button
+          class="heatmap-refresh-btn"
+          :disabled="analyticsStore.syncing"
+          :title="analyticsStore.syncing ? 'Синхронизация…' : 'Обновить данные из Jira'"
+          @click="handleRefresh"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            :class="{ 'spin': analyticsStore.syncing }"
+          >
+            <path d="M21 2v6h-6"/>
+            <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+            <path d="M3 22v-6h6"/>
+            <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+          </svg>
+          {{ analyticsStore.syncing ? 'Обновление…' : 'Обновить' }}
+        </button>
       </div>
     </div>
     <div class="heatmap-scroll-wrap">
@@ -71,9 +98,14 @@ function parseIsoLocal(iso: string): Date {
   return new Date(y, m - 1, d);
 }
 
-const store = useAnalyticsStore();
+const analyticsStore = useAnalyticsStore();
+const store = analyticsStore; // алиас для обратной совместимости вычисляемых свойств
 const settings = useSettingsStore();
 const router = useRouter();
+
+async function handleRefresh() {
+  await analyticsStore.syncFromJira(true);
+}
 
 function goToWorklog(date: string) {
   router.push({ name: 'worklog', query: { from: date, to: date } });
@@ -325,6 +357,40 @@ function isoWeekNum(dateIso: string): string {
 .heatmap-cell--clickable { cursor: pointer; }
 .heatmap-cell--clickable:hover { outline: 1.5px solid var(--primary); outline-offset: 1px; opacity: 1; }
 
+/* Правая часть заголовка: легенда + кнопка обновить */
+.heatmap-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.heatmap-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted, #888);
+  background: transparent;
+  border: 1px solid var(--border, rgba(0,0,0,0.12));
+  border-radius: 4px;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.heatmap-refresh-btn:hover:not(:disabled) {
+  color: var(--primary, #01696f);
+  border-color: var(--primary, #01696f);
+  background: color-mix(in srgb, var(--primary, #01696f) 6%, transparent);
+}
+
+.heatmap-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .heatmap-legend {
   display: flex;
   align-items: center;
@@ -346,4 +412,13 @@ function isoWeekNum(dateIso: string): string {
 .legend-cell[data-level="2"] { background: var(--heatmap-2); }
 .legend-cell[data-level="3"] { background: var(--heatmap-3); }
 .legend-cell[data-level="4"] { background: var(--heatmap-4); }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.spin {
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
 </style>
