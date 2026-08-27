@@ -12,6 +12,7 @@ mod meeting_rules;
 mod network;
 mod logger;
 mod logger_noop;
+mod license;
 
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, Emitter, tray::TrayIconBuilder, menu::{Menu, MenuItem}};
@@ -38,20 +39,31 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             db::init_db(app.handle())?;
+
+            // ── LicenseDb state ────────────────────────────────────────────────────────────
+            {
+                let app_data_dir = app.path().app_data_dir()
+                    .expect("failed to get app data dir");
+                let db_path = app_data_dir.join("jiratime.db");
+                let lic_conn = rusqlite::Connection::open(&db_path)
+                    .expect("failed to open license db");
+                app.manage(license::LicenseDb(Arc::new(Mutex::new(lic_conn))));
+            }
+
             bulk_wizard::setup(app.handle())?;
 
-            // ── Подсистема логирования ──────────────────────────────────────
+            // ── Подсистема логирования ──────────────────────────────────────────────
             let app_logger = Arc::new(
                 AppLogger::new(app.handle())
                     .expect("failed to init AppLogger"),
             );
             app.manage(app_logger.clone());
 
-            // ── WakeSignal для воркера очереди ───────────────────────────
+            // ── WakeSignal для воркера очереди ─────────────────────────────────────────
             let wake: WakeSignal = Arc::new(tokio::sync::Notify::new());
             app.manage(wake.clone());
 
-            // ── Монитор сети ────────────────────────────────────────────
+            // ── Монитор сети ───────────────────────────────────────────────────────────
             let net_monitor = Arc::new(NetworkMonitor::new());
             app.manage(net_monitor.clone());
 
@@ -62,16 +74,16 @@ fn main() {
                 app_logger.clone(),
             );
 
-            // ── Воркер очереди синхронизации ──────────────────────
+            // ── Воркер очереди синхронизации ───────────────────────────────────────
             let wizard_db = app.state::<bulk_wizard::WizardDb>();
             let db_arc: Arc<Mutex<rusqlite::Connection>> = wizard_db.0.clone();
             sync_queue::start_worker(db_arc, wake.clone(), app_logger.clone());
 
-            // ── Планировщик (напоминания, автосинхронизация) ───────────
+            // ── Планировщик (напоминания, автосинхронизация) ───────────────────────
             let sched_state = scheduler::init_scheduler(app.handle(), &wizard_db);
             app.manage(sched_state);
 
-            // ── Системный трей ─────────────────────────────────────────
+            // ── Системный трей ───────────────────────────────────────────────────────────
             let log_today = MenuItem::with_id(app, "log_today", "Залогировать сегодня", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&log_today, &quit])?;
@@ -172,6 +184,9 @@ fn main() {
             scheduler::get_scheduler_settings,
             scheduler::save_scheduler_settings,
             scheduler::trigger_sync_now,
+            // License (офлайн коды активации)
+            license::get_license_status,
+            license::activate_license_code,
         ])
         .run(tauri::generate_context!())
         .expect("error while running JiraTime");
