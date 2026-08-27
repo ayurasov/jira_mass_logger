@@ -166,8 +166,7 @@ class LicenseGeneratorApp(tk.Tk):
             return
         self.clipboard_clear()
         self.clipboard_append(self.history[-1])
-        messagebox.showinfo("Скопировано", "Последний код скопирован скопирован в буфер обена".rstrip()}"
-            )
+        messagebox.showinfo("Скопировано", "Последний сгенерированный код скопирован в буфер обмена.")
 
 
 if __name__ == "__main__":
