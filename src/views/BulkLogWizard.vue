@@ -9,11 +9,13 @@ import ActionIcon from '../components/ActionIcon.vue';
 import { useSettingsStore } from '../store/settings';
 import { tauriApi } from '../lib/tauriApi';
 import { DATE_RANGE_PRESETS } from '../utils/dateRange';
+import { useLicenseStore } from '../store/license';
 
 const wizard = useBulkWizardStore();
 const jiraProfiles = useJiraProfilesStore();
 const analyticsStore = useAnalyticsStore();
 const settings = useSettingsStore();
+const license = useLicenseStore();
 
 const templateName = ref('');
 const holidayJson = ref('');
@@ -42,12 +44,14 @@ function selectIssue(key: string, summary?: string | null) {
 }
 
 async function buildPreviewAndNext() {
+  if (!license.guardWrite()) return;
   if (!jiraParams.value) return;
   await wizard.generatePreview(jiraParams.value);
   wizard.nextStep();
 }
 
 async function submitWizard() {
+  if (!license.guardWrite()) return;
   if (!jiraParams.value) return;
   await wizard.submit(jiraParams.value);
 
@@ -181,6 +185,13 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
       </div>
 
       <template v-else>
+        <!-- Баннер режима просмотра -->
+        <div v-if="!license.isActive" class="license-banner">
+          <ActionIcon name="warning" :size="15" />
+          Работаете в <strong>режиме просмотра</strong> — отправка в Jira недоступна.
+          <button class="license-banner__btn" @click="license.openActivation">Активировать</button>
+        </div>
+
         <section v-show="wizard.step === 1" class="wizard-step-panel">
           <div class="panel-header">
             <h2>Шаг 1. Выбор задачи Jira</h2>
@@ -445,7 +456,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
           </div>
 
           <div class="inline-actions preview-actions">
-            <button class="primary-btn" @click="submitWizard" :disabled="wizard.sending">{{ wizard.sending ? 'Отправка…' : 'Подтвердить и отправить' }}</button>
+            <button class="primary-btn" @click="submitWizard" :disabled="wizard.sending || !license.isActive">{{ wizard.sending ? 'Отправка…' : 'Подтвердить и отправить' }}</button>
             <button class="secondary-btn" @click="exportLog" :disabled="wizard.statusLogLines.length === 0">Экспортировать лог</button>
             <button class="secondary-btn" @click="startNewSession">+ Новая сессия</button>
           </div>
@@ -495,4 +506,29 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   color: var(--color-error, #dc2626);
   font-size: 0.75rem;
 }
+
+.license-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 0.5rem;
+  font-size: 0.87rem;
+  color: #7a5400;
+  margin-bottom: 0.5rem;
+}
+.license-banner__btn {
+  margin-left: auto;
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.4rem;
+  border: 1px solid #f59e0b;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.license-banner__btn:hover { background: #fde68a; }
 </style>
