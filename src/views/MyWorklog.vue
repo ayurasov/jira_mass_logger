@@ -276,6 +276,7 @@ import { useRoute } from 'vue-router';
 import { useMyWorklogStore, type WorklogRow } from '../store/myWorklog';
 import { useSettingsStore } from '../store/settings';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
+import { useLicenseStore } from '../store/license';
 import { tauriApi } from '../lib/tauriApi';
 import { WEEKDAY_RU_SHORT } from '../utils/dateRange';
 import ActionIcon from '../components/ActionIcon.vue';
@@ -284,6 +285,7 @@ import DatePicker from '../components/DatePicker.vue';
 const store = useMyWorklogStore();
 const settings = useSettingsStore();
 const jiraProfiles = useJiraProfilesStore();
+const license = useLicenseStore();
 const route = useRoute();
 
 const openAutoSyncSettings = ref(false);
@@ -410,6 +412,7 @@ function isEditing(rowKey: string, field: string) {
   return editingCell.value?.rowKey === rowKey && editingCell.value?.field === field;
 }
 function startEdit(rowKey: string, field: 'hours' | 'comment' | 'started') {
+  if (!license.guardWrite()) return;
   const row = store.rows.find((r) => r.rowKey === rowKey);
   if (!row) return;
   editingCell.value = { rowKey, field };
@@ -439,6 +442,7 @@ async function commitEdit(row: WorklogRow, field: 'hours' | 'comment' | 'started
 }
 
 function openRowEditor(row: WorklogRow) {
+  if (!license.guardWrite()) return;
   editTarget.value = row;
   editForm.value = {
     date: row.date,
@@ -461,7 +465,7 @@ async function submitRowEditor() {
   if (!hours || Number.isNaN(hours) || hours <= 0) { editFormError.value = 'Часы должны быть больше нуля.'; return; }
 
   const row = editTarget.value;
-  const tzSuffix = row.started.slice(-5); // сохраняем исходное смещение TZ записи, например +0300
+  const tzSuffix = row.started.slice(-5);
   const started = `${date}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00.000${tzSuffix}`;
 
   const patch: Partial<Pick<WorklogRow, 'hours' | 'comment' | 'started'>> = {};
@@ -489,6 +493,7 @@ async function submitRowEditor() {
 }
 
 function promptDuplicate(row: WorklogRow) {
+  if (!license.guardWrite()) return;
   duplicateTarget.value = row;
   duplicateForm.value = {
     date: row.date,
@@ -518,9 +523,6 @@ async function doDelete() {
 }
 
 async function refreshFromJira() {
-  // Быстрая инкрементальная синхронизация (по watermark, как при переходе
-  // с дашборда по клику на день/неделю) — а не полная ресинхронизация всего
-  // диапазона с нуля, которая уходила в долгое ожидание на больших периодах.
   await store.refreshFromJira();
 }
 
