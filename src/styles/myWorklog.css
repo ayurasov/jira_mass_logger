@@ -53,19 +53,21 @@
   border-radius: 0.375rem;
   font-size: 0.875rem;
   min-width: 8rem;
-  /* Не растягивать обычные инпуты сверх нужного */
   flex: 0 0 auto;
 }
 .filters__input--search { min-width: 14rem; flex: 1 1 14rem; }
 .filters__norm { display: flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; margin-left: auto; }
 .filters__norm input { width: 3.5rem; padding: 0.25rem 0.375rem; }
 
-/* DatePicker внутри фильтров — строго inline, фиксированная ширина */
-.filters__input.dp,
+/* DatePicker в фильтрах — inline, без собственной рамки (рамку рисует .dp-trigger внутри) */
 .filters .dp {
   flex: 0 0 auto !important;
   width: 9rem !important;
   min-width: 9rem !important;
+  border: none !important;
+  padding: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .worklog-table-wrap {

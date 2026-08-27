@@ -27,7 +27,6 @@ onMounted(async () => {
 });
 
 const activeProfile = computed(() => jiraProfiles.activeProfile);
-
 const jiraParams = computed(() => jiraProfiles.activeConnectionParams);
 
 async function searchIssues() {
@@ -51,11 +50,8 @@ async function submitWizard() {
   if (!license.guardWrite()) return;
   if (!jiraParams.value) return;
   await wizard.submit(jiraParams.value);
-
   const successCount = wizard.previewRows.filter(r => r.status === 'success').length;
-  if (successCount > 0) {
-    analyticsStore.trackBulkEntries(successCount);
-  }
+  if (successCount > 0) analyticsStore.trackBulkEntries(successCount);
 }
 
 async function saveTemplate() {
@@ -83,21 +79,19 @@ function startNewSession() {
 }
 
 function fmtStartedAt24h(iso: string): string {
-  const dt = new Date(iso);
   return new Intl.DateTimeFormat('ru-RU', {
     timeZone: settings.timezone,
     hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(dt);
+  }).format(new Date(iso));
 }
 
 function toDatetimeLocalValue(iso: string): string {
-  const dt = new Date(iso);
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('en-CA', {
       timeZone: settings.timezone,
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', hour12: false,
-    }).formatToParts(dt).map((p) => [p.type, p.value]),
+    }).formatToParts(new Date(iso)).map((p) => [p.type, p.value]),
   );
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
@@ -153,9 +147,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
         </div>
       </div>
 
-      <div v-if="jiraProfiles.loading" class="empty-state">
-        <h2>Загрузка профилей…</h2>
-      </div>
+      <div v-if="jiraProfiles.loading" class="empty-state"><h2>Загрузка профилей…</h2></div>
 
       <div v-else-if="!activeProfile" class="empty-state">
         <h2>Нет профиля Jira</h2>
@@ -165,70 +157,56 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
       </div>
 
       <template v-else>
-        <!-- Баннер режима просмотра -->
         <div v-if="!license.isActive" class="license-banner">
           <ActionIcon name="warning" :size="15" />
           Работаете в <strong>режиме просмотра</strong> — отправка в Jira недоступна.
           <button class="license-banner__btn" @click="license.openActivation">Активировать</button>
         </div>
 
+        <!-- Шаг 1 -->
         <section v-show="wizard.step === 1" class="wizard-step-panel">
           <div class="panel-header">
             <h2>Шаг 1. Выбор задачи Jira</h2>
             <p>Введите ключ задачи (например ABC-123), ссылку или часть текста — мастер найдёт её в Jira.</p>
           </div>
-
           <div class="grid two-col">
             <label class="field-block span-2">
               <span>Поиск задачи / ссылка / ключ / текст</span>
-              <input
-                v-model="issueInput"
-                class="text-input"
-                type="text"
+              <input v-model="issueInput" class="text-input" type="text"
                 placeholder="Например: ABC-123, https://jira.example.com/browse/ABC-123 или текст задачи"
-                @input="searchIssues"
-                @blur="wizard.selectIssue(issueInput)"
-              />
+                @input="searchIssues" @blur="wizard.selectIssue(issueInput)" />
             </label>
-
             <div class="autocomplete-panel span-2">
               <div class="autocomplete-header">
                 <strong>Подсказки</strong>
                 <span v-if="wizard.loading">Поиск…</span>
               </div>
               <button v-for="option in wizard.issueOptions" :key="option.key" class="issue-option" @click="selectIssue(option.key, option.summary)">
-                <div>
-                  <strong>{{ option.key }}</strong>
-                  <span v-if="option.summary"> — {{ option.summary }}</span>
-                </div>
+                <div><strong>{{ option.key }}</strong><span v-if="option.summary"> — {{ option.summary }}</span></div>
                 <small v-if="option.isFavorite" class="fav-inline"><ActionIcon name="star" :size="11" /> Избранное</small>
                 <small v-else>{{ option.source === 'recent' ? 'Недавняя' : 'Найдено в Jira' }}</small>
               </button>
             </div>
-
             <div class="summary-card span-2" v-if="wizard.issueKey">
-              <div>
-                <strong>Выбрано:</strong> {{ wizard.issueKey }}
-                <span v-if="wizard.issueSummary"> — {{ wizard.issueSummary }}</span>
-              </div>
+              <div><strong>Выбрано:</strong> {{ wizard.issueKey }}<span v-if="wizard.issueSummary"> — {{ wizard.issueSummary }}</span></div>
               <p>Можно вставить прямую ссылку, ключ задачи или её текст — мастер распознает issue key автоматически.</p>
             </div>
           </div>
         </section>
 
+        <!-- Шаг 2 -->
         <section v-show="wizard.step === 2" class="wizard-step-panel">
           <div class="panel-header">
             <h2>Шаг 2. Выбор периода</h2>
             <p>Date-range picker, пресеты, фильтр по дням недели и исключение праздников/нерабочих дней.</p>
           </div>
-
           <div class="grid three-col">
             <div class="preset-list span-3">
-              <button v-for="preset in DATE_RANGE_PRESETS" :key="preset.id" class="preset-btn" :class="{ active: wizard.selectedPresetId === preset.id }" @click="wizard.applyPreset(preset.id)">
+              <button v-for="preset in DATE_RANGE_PRESETS" :key="preset.id" class="preset-btn"
+                :class="{ active: wizard.selectedPresetId === preset.id }" @click="wizard.applyPreset(preset.id)">
                 {{ preset.label }}
               </button>
             </div>
-
             <div class="field-block field-block--datepicker">
               <span class="field-block__label">Дата начала</span>
               <DatePicker v-model="wizard.periodFrom" />
@@ -241,21 +219,15 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
               <input v-model="wizard.excludeHolidays" type="checkbox" />
               <span>Исключить праздники / нерабочие дни</span>
             </label>
-
             <div class="field-block span-3">
               <span>Дни недели</span>
               <div class="weekday-chips">
                 <label
                   v-for="item in [['mon', 'Пн'], ['tue', 'Вт'], ['wed', 'Ср'], ['thu', 'Чт'], ['fri', 'Пт'], ['sat', 'Сб'], ['sun', 'Вс']]"
-                  :key="item[0]"
-                  class="weekday-chip"
-                  :class="{ 'weekday-chip--active': wizard.weekdayFilter[item[0] as 'mon'|'tue'|'wed'|'thu'|'fri'|'sat'|'sun'] }"
-                >
-                  <input
-                    v-model="wizard.weekdayFilter[item[0] as 'mon'|'tue'|'wed'|'thu'|'fri'|'sat'|'sun']"
-                    type="checkbox"
-                    class="weekday-chip__input"
-                  />
+                  :key="item[0]" class="weekday-chip"
+                  :class="{ 'weekday-chip--active': wizard.weekdayFilter[item[0] as 'mon'|'tue'|'wed'|'thu'|'fri'|'sat'|'sun'] }">
+                  <input v-model="wizard.weekdayFilter[item[0] as 'mon'|'tue'|'wed'|'thu'|'fri'|'sat'|'sun']"
+                    type="checkbox" class="weekday-chip__input" />
                   <span>{{ item[1] }}</span>
                 </label>
               </div>
@@ -263,12 +235,12 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
           </div>
         </section>
 
+        <!-- Шаг 3 -->
         <section v-show="wizard.step === 3" class="wizard-step-panel">
           <div class="panel-header">
             <h2>Шаг 3. Параметры записи</h2>
             <p>Часы в день, шаблон комментария, переменные и конкретное время начала работы в течение дня (24-часовой формат).</p>
           </div>
-
           <div class="grid three-col">
             <label class="field-block">
               <span>Часы в день</span>
@@ -283,19 +255,15 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 
             <label class="field-block span-2">
               <span>Описание worklog</span>
-              <textarea v-model="wizard.descriptionTemplate" class="text-area" rows="4" placeholder="Например: Работа по задаче {issue} за {date}" />
+              <textarea v-model="wizard.descriptionTemplate" class="text-area" rows="4"
+                placeholder="Например: Работа по задаче {issue} за {date}" />
               <small>Доступные переменные: <code>{date}</code>, <code>{week}</code>, <code>{issue}</code></small>
             </label>
             <div class="field-block">
               <span>Сохранённые шаблоны текста</span>
               <div v-if="wizard.textTemplates.length" class="text-template-list">
-                <button
-                  v-for="tpl in wizard.textTemplates"
-                  :key="tpl.id ?? tpl.name"
-                  class="text-template-tag"
-                  :title="tpl.text"
-                  @click="wizard.applyTextTemplate(tpl)"
-                >
+                <button v-for="tpl in wizard.textTemplates" :key="tpl.id ?? tpl.name"
+                  class="text-template-tag" :title="tpl.text" @click="wizard.applyTextTemplate(tpl)">
                   {{ tpl.name }}
                 </button>
               </div>
@@ -304,16 +272,10 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 
             <label class="field-block">
               <span>Время начала (24ч, ЧЧ:ММ)</span>
-              <input
-                :value="wizard.startTime"
-                class="text-input"
-                type="text"
-                inputmode="numeric"
-                placeholder="09:00"
-                maxlength="5"
+              <input :value="wizard.startTime" class="text-input" type="text" inputmode="numeric"
+                placeholder="09:00" maxlength="5"
                 @input="onStartTimeInput(($event.target as HTMLInputElement).value)"
-                @blur="validateStartTime"
-              />
+                @blur="validateStartTime" />
               <small v-if="startTimeError" class="field-error">{{ startTimeError }}</small>
             </label>
             <div class="field-block span-2 save-template-card">
@@ -327,7 +289,8 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
             <div class="field-block span-3" v-if="wizard.templates.length">
               <span>Повторное применение шаблона мастера</span>
               <div class="text-template-list">
-                <button v-for="tpl in wizard.templates" :key="tpl.id || tpl.name" class="text-template-tag text-template-tag--master" @click="wizard.applyTemplate(tpl)">
+                <button v-for="tpl in wizard.templates" :key="tpl.id || tpl.name"
+                  class="text-template-tag text-template-tag--master" @click="wizard.applyTemplate(tpl)">
                   {{ tpl.name }}
                 </button>
               </div>
@@ -335,40 +298,28 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
           </div>
         </section>
 
+        <!-- Шаг 4 -->
         <section v-show="wizard.step === 4" class="wizard-step-panel">
           <div class="panel-header">
             <h2>Шаг 4. Предпросмотр и подтверждение</h2>
-            <p>Перед отправкой можно убрать или подправить любую строку и увидеть конфликты по дате+задаче. Время указано в 24-часовом формате — именно так, как оно попадёт в Jira.</p>
+            <p>Перед отправкой можно убрать или подправить любую строку и увидеть конфликты по дате+задаче.</p>
           </div>
-
           <div class="preview-summary">
             <div class="summary-pill">Строк: {{ wizard.previewRows.filter((r) => !r.skipped).length }}</div>
             <div class="summary-pill">Сумма часов: {{ wizard.totalHours }}</div>
             <div class="summary-pill warning" v-if="wizard.conflictsCount > 0">Конфликтов: {{ wizard.conflictsCount }}</div>
           </div>
-
           <div class="preview-table-wrap">
             <table class="preview-table">
               <colgroup>
-                <col style="width: 7rem" />
-                <col style="width: 4rem" />
-                <col style="width: 6rem" />
-                <col style="width: 22rem" />
-                <col style="width: 11rem" />
-                <col style="width: 9rem" />
-                <col style="width: 7rem" />
-                <col style="width: 6rem" />
+                <col style="width: 7rem" /><col style="width: 4rem" /><col style="width: 6rem" />
+                <col style="width: 22rem" /><col style="width: 11rem" /><col style="width: 9rem" />
+                <col style="width: 7rem" /><col style="width: 6rem" />
               </colgroup>
               <thead>
                 <tr>
-                  <th>Дата</th>
-                  <th>День</th>
-                  <th>Часы</th>
-                  <th>Описание</th>
-                  <th>Старт (24ч)</th>
-                  <th>Конфликт</th>
-                  <th>Статус</th>
-                  <th></th>
+                  <th>Дата</th><th>День</th><th>Часы</th><th>Описание</th>
+                  <th>Старт (24ч)</th><th>Конфликт</th><th>Статус</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -376,30 +327,16 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
                   <td>{{ row.date }}</td>
                   <td>{{ row.weekday }}</td>
                   <td>
-                    <input
-                      class="table-input"
-                      type="number"
-                      min="0.5"
-                      step="0.5"
-                      :value="row.hours"
-                      @input="wizard.updatePreviewRow(row.id, { hours: Number(($event.target as HTMLInputElement).value) })"
-                    />
+                    <input class="table-input" type="number" min="0.5" step="0.5" :value="row.hours"
+                      @input="wizard.updatePreviewRow(row.id, { hours: Number(($event.target as HTMLInputElement).value) })" />
                   </td>
                   <td>
-                    <textarea
-                      class="table-textarea"
-                      rows="2"
-                      :value="row.description"
-                      @input="wizard.updatePreviewRow(row.id, { description: ($event.target as HTMLTextAreaElement).value })"
-                    />
+                    <textarea class="table-textarea" rows="2" :value="row.description"
+                      @input="wizard.updatePreviewRow(row.id, { description: ($event.target as HTMLTextAreaElement).value })" />
                   </td>
                   <td>
-                    <input
-                      class="table-input"
-                      type="datetime-local"
-                      :value="toDatetimeLocalValue(row.startedAt)"
-                      @input="wizard.setPreviewRowStartedAtLocal(row.id, ($event.target as HTMLInputElement).value)"
-                    />
+                    <input class="table-input" type="datetime-local" :value="toDatetimeLocalValue(row.startedAt)"
+                      @input="wizard.setPreviewRowStartedAtLocal(row.id, ($event.target as HTMLInputElement).value)" />
                     <small class="started-hint">{{ fmtStartedAt24h(row.startedAt) }}</small>
                   </td>
                   <td>
@@ -420,14 +357,14 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
               </tbody>
             </table>
           </div>
-
           <div class="status-log" v-if="wizard.statusLogLines.length">
             <h3>Ход отправки</h3>
             <pre>{{ wizard.statusLogLines.join('\n') }}</pre>
           </div>
-
           <div class="inline-actions preview-actions">
-            <button class="primary-btn" @click="submitWizard" :disabled="wizard.sending || !license.isActive">{{ wizard.sending ? 'Отправка…' : 'Подтвердить и отправить' }}</button>
+            <button class="primary-btn" @click="submitWizard" :disabled="wizard.sending || !license.isActive">
+              {{ wizard.sending ? 'Отправка…' : 'Подтвердить и отправить' }}
+            </button>
             <button class="secondary-btn" @click="exportLog" :disabled="wizard.statusLogLines.length === 0">Экспортировать лог</button>
             <button class="secondary-btn" @click="startNewSession">+ Новая сессия</button>
           </div>
@@ -453,36 +390,19 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
-.header-actions {
-  display: flex;
-  gap: 0.5rem;
-}
+.header-actions { display: flex; gap: 0.5rem; }
 .empty-state {
   padding: 3rem 1.5rem;
   text-align: center;
   border: 1px dashed var(--color-border, #d0d5dd);
   border-radius: 12px;
 }
-.empty-state-error {
-  color: var(--color-error, #dc2626);
-  font-size: 0.85rem;
-}
-.started-hint {
-  display: block;
-  color: var(--text-muted, #888);
-  font-size: 0.75rem;
-  margin-top: 2px;
-}
-.field-error {
-  color: var(--color-error, #dc2626);
-  font-size: 0.75rem;
-}
-.muted-hint {
-  color: var(--color-text-muted, #9ca3af);
-  font-size: 0.82rem;
-}
+.empty-state-error { color: var(--color-error, #dc2626); font-size: 0.85rem; }
+.started-hint { display: block; color: var(--text-muted, #888); font-size: 0.75rem; margin-top: 2px; }
+.field-error { color: var(--color-error, #dc2626); font-size: 0.75rem; }
+.muted-hint { color: var(--color-text-muted, #9ca3af); font-size: 0.82rem; }
 
-/* ── Поля дат: убираем рамку с обёртки, рамку рисует DatePicker внутри ── */
+/* ── Поля дат ── */
 .field-block--datepicker {
   border: none !important;
   background: transparent !important;
@@ -492,7 +412,6 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   flex-direction: column;
   gap: 0.3rem;
 }
-
 .field-block--datepicker .field-block__label {
   font-size: 0.82rem;
   font-weight: 500;
@@ -500,14 +419,8 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   margin-bottom: 0.1rem;
 }
 
-/* ── Дни недели: пилюли без обводок ── */
-.weekday-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.35rem;
-}
-
+/* ── Дни недели ── */
+.weekday-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
 .weekday-chip {
   display: inline-flex;
   align-items: center;
@@ -523,35 +436,19 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   transition: background 120ms, color 120ms;
   border: none;
 }
-
 .weekday-chip--active {
   background: var(--color-primary-highlight, #cedcd8);
   color: var(--color-primary, #01696f);
   font-weight: 600;
 }
+.weekday-chip__input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.weekday-chip:hover { background: var(--color-surface-dynamic, #e6e4df); color: var(--color-text, #28251d); }
+.weekday-chip--active:hover { background: var(--color-primary-highlight, #cedcd8); color: var(--color-primary-hover, #0c4e54); }
 
-.weekday-chip__input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-}
-
-.weekday-chip:hover {
-  background: var(--color-surface-dynamic, #e6e4df);
-  color: var(--color-text, #28251d);
-}
-
-.weekday-chip--active:hover {
-  background: var(--color-primary-highlight, #cedcd8);
-  color: var(--color-primary-hover, #0c4e54);
-}
-
-/* ── Теги шаблонов текста — тонкие пилюли в колонку ── */
+/* ── Теги шаблонов — 2 колонки через grid ── */
 .text-template-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 0.3rem;
   margin-top: 0.4rem;
   max-height: 10rem;
@@ -559,7 +456,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 }
 
 .text-template-tag {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   padding: 0.22rem 0.6rem;
   border-radius: var(--radius-full, 9999px);
@@ -567,7 +464,6 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   font-weight: 500;
   cursor: pointer;
   user-select: none;
-  /* Такой же стиль, как weekday-chip — без заливки, без рамки */
   background: var(--color-surface-offset, #f0f0ee);
   color: var(--color-text-muted, #6b7280);
   border: none;
@@ -576,25 +472,16 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-align: left;
+  min-width: 0;
 }
+.text-template-tag:hover { background: var(--color-surface-dynamic, #e6e4df); color: var(--color-text, #28251d); }
+.text-template-tag:active { opacity: 0.75; }
 
-.text-template-tag:hover {
-  background: var(--color-surface-dynamic, #e6e4df);
-  color: var(--color-text, #28251d);
-}
-
-.text-template-tag:active {
-  opacity: 0.75;
-}
-
-/* Шаблоны мастера — слегка выделены активным цветом */
 .text-template-tag--master {
   background: var(--color-primary-highlight, #cedcd8);
   color: var(--color-primary, #01696f);
   font-weight: 600;
 }
-
 .text-template-tag--master:hover {
   background: color-mix(in srgb, var(--color-primary, #01696f) 16%, var(--color-surface, #fff));
   color: var(--color-primary-hover, #0c4e54);
