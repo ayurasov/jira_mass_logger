@@ -29,8 +29,6 @@ onMounted(async () => {
 
 const activeProfile = computed(() => jiraProfiles.activeProfile);
 
-// Используем общий геттер из jiraProfiles store (уже корректно мапит authType==='server_basic'
-// на instanceType:'server_basic' — локальная копия этой логики раньше игнорировала server_basic).
 const jiraParams = computed(() => jiraProfiles.activeConnectionParams);
 
 async function searchIssues() {
@@ -55,8 +53,6 @@ async function submitWizard() {
   if (!jiraParams.value) return;
   await wizard.submit(jiraParams.value);
 
-  // Передаём количество успешно отправленных записей в аналитику
-  // для расчёта метрики "экономия времени".
   const successCount = wizard.previewRows.filter(r => r.status === 'success').length;
   if (successCount > 0) {
     analyticsStore.trackBulkEntries(successCount);
@@ -86,8 +82,6 @@ async function exportLog() {
   await tauriApi.writeExportFile(logPath, wizard.buildExportLog());
 }
 
-/** "Новая сессия": полный сброс мастера к начальным значениям с подтверждением,
- *  если пользователь уже что-то заполнил (чтобы не потерять данные случайно). */
 function startNewSession() {
   const hasProgress = !!wizard.issueKey || wizard.previewRows.length > 0 || wizard.statusLogLines.length > 0;
   if (hasProgress && !confirm('Начать новую сессию? Все текущие поля будут сброшены.')) return;
@@ -96,7 +90,6 @@ function startNewSession() {
   templateName.value = '';
 }
 
-/** Отображает время в формате ЧЧ:ММ (24ч), как оно попадёт в Jira, в локальной таймзоне пользователя. */
 function fmtStartedAt24h(iso: string): string {
   const dt = new Date(iso);
   return new Intl.DateTimeFormat('ru-RU', {
@@ -105,7 +98,6 @@ function fmtStartedAt24h(iso: string): string {
   }).format(dt);
 }
 
-/** Значение для <input type="datetime-local"> в локальной таймзоне (24ч), без Z/оффсета. */
 function toDatetimeLocalValue(iso: string): string {
   const dt = new Date(iso);
   const parts = Object.fromEntries(
@@ -118,10 +110,6 @@ function toDatetimeLocalValue(iso: string): string {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
-// Нативный <input type="time"> рисует свой попап (12ч AM/PM) по локали ОС браузера,
-// а не по locale/hour12 в JS-форматировании — это неуправляемо из кода на большинстве
-// систем Windows. Поэтому вместо type="time" используем обычный текстовый ввод
-// с валидацией и маской ЧЧ:ММ — гарантированно 24-часовой формат везде.
 const startTimeError = ref('');
 function onStartTimeInput(raw: string) {
   let digits = raw.replace(/\D/g, '').slice(0, 4);
@@ -264,13 +252,18 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 
             <div class="field-block span-3">
               <span>Дни недели</span>
-              <div class="weekday-grid">
+              <div class="weekday-chips">
                 <label
                   v-for="item in [['mon', 'Пн'], ['tue', 'Вт'], ['wed', 'Ср'], ['thu', 'Чт'], ['fri', 'Пт'], ['sat', 'Сб'], ['sun', 'Вс']]"
                   :key="item[0]"
-                  class="weekday-item"
+                  class="weekday-chip"
+                  :class="{ 'weekday-chip--active': wizard.weekdayFilter[item[0] as 'mon'|'tue'|'wed'|'thu'|'fri'|'sat'|'sun'] }"
                 >
-                  <input v-model="wizard.weekdayFilter[item[0] as 'mon'|'tue'|'wed'|'thu'|'fri'|'sat'|'sun']" type="checkbox" />
+                  <input
+                    v-model="wizard.weekdayFilter[item[0] as 'mon'|'tue'|'wed'|'thu'|'fri'|'sat'|'sun']"
+                    type="checkbox"
+                    class="weekday-chip__input"
+                  />
                   <span>{{ item[1] }}</span>
                 </label>
               </div>
@@ -505,6 +498,54 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 .field-error {
   color: var(--color-error, #dc2626);
   font-size: 0.75rem;
+}
+
+/* ── Дни недели: чипы без обводок ── */
+.weekday-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.weekday-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-full, 9999px);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  background: var(--color-surface-offset, #f0f0ee);
+  color: var(--color-text-muted, #6b7280);
+  transition: background 120ms, color 120ms;
+  border: none;
+}
+
+.weekday-chip--active {
+  background: var(--color-primary-highlight, #cedcd8);
+  color: var(--color-primary, #01696f);
+  font-weight: 600;
+}
+
+.weekday-chip__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.weekday-chip:hover {
+  background: var(--color-surface-dynamic, #e6e4df);
+  color: var(--color-text, #28251d);
+}
+
+.weekday-chip--active:hover {
+  background: var(--color-primary-highlight, #cedcd8);
+  color: var(--color-primary-hover, #0c4e54);
 }
 
 .license-banner {

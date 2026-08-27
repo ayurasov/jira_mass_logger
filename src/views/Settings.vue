@@ -109,165 +109,6 @@
       </div>
     </section>
 
-    <!-- ──────────── Exchange profiles list ──────────── -->
-    <section class="settings-card">
-      <div class="card-header">
-        <h3>Профили Exchange / Outlook</h3>
-        <button class="btn btn--primary btn--sm" @click="startCreate">+ Добавить профиль</button>
-      </div>
-
-      <p v-if="profiles.length === 0" class="muted">
-        Нет сохранённых профилей. Нажмите «Добавить профиль» для настройки доступа к календарю.
-      </p>
-
-      <table v-else class="profiles-table">
-        <thead>
-          <tr>
-            <th>Название</th>
-            <th>Режим</th>
-            <th>Логин</th>
-            <th>Активный</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in profiles" :key="p.id ?? -1" :class="{ 'row--active': p.isActive }">
-            <td>{{ p.name }}</td>
-            <td>{{ p.authMode === 'graph' ? 'Microsoft Graph' : 'EWS' }}</td>
-            <td>{{ p.username }}</td>
-            <td>
-              <span v-if="p.isActive" class="badge badge--ok"><ActionIcon name="check-circle" :size="12" /> Активный</span>
-              <button v-else class="btn btn--ghost btn--sm" :disabled="busy" @click="setActive(p)">
-                Сделать активным
-              </button>
-            </td>
-            <td class="actions-cell">
-              <button class="btn btn--ghost btn--sm" :disabled="busy" @click="startEdit(p)">Изменить</button>
-              <button class="btn btn--danger btn--sm" :disabled="busy" @click="confirmDelete(p)">Удалить</button>
-              <button
-                v-if="p.authMode === 'graph'"
-                class="btn btn--secondary btn--sm"
-                :disabled="busy"
-                @click="connectGraph(p)"
-              >
-                OAuth↗
-              </button>
-              <button class="btn btn--secondary btn--sm" :disabled="busy" @click="testProfile(p)">
-                Тест
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <!-- ──────────── Edit / create form ──────────── -->
-    <section v-if="editing" class="settings-card">
-      <h3>{{ form.id == null ? 'Новый профиль' : 'Редактировать профиль' }}</h3>
-
-      <div class="form-grid">
-        <label class="span-2">
-          Название профиля
-          <input v-model="form.name" placeholder="Рабочий Exchange" />
-        </label>
-
-        <label>
-          тип подключения
-          <select v-model="form.authMode">
-            <option value="graph">Microsoft Graph (рекомендуется)</option>
-            <option value="ews">EWS / On-Prem Exchange</option>
-          </select>
-        </label>
-
-        <label>
-          Логин / UPN
-          <input v-model="form.username" placeholder="user@company.com" />
-        </label>
-
-        <!-- Graph fields -->
-        <template v-if="form.authMode === 'graph'">
-          <label>
-            Tenant ID
-            <input v-model="form.tenantId" placeholder="common или GUID tenant" />
-          </label>
-
-          <label>
-            Client ID
-            <input v-model="form.clientId" placeholder="Azure App Registration Client ID" />
-          </label>
-
-          <label>
-            Secret ref (для хранения refresh token)
-            <input v-model="form.refreshTokenSecretRef" placeholder="exchange-graph-refresh-token" />
-            <span class="hint">Ключ в системном keyring — не сам токен.</span>
-          </label>
-
-          <label>
-            Secret ref (пустой — для Graph не нужен, оставьте любой)
-            <input v-model="form.secretRef" placeholder="exchange-graph-placeholder" />
-          </label>
-        </template>
-
-        <!-- EWS fields -->
-        <template v-else>
-          <label>
-            EWS URL
-            <input v-model="form.ewsUrl" placeholder="https://mail.company.local/EWS/Exchange.asmx" />
-          </label>
-
-          <label>
-            тип авторизации EWS
-            <select v-model="form.ewsAuthType">
-              <option value="basic">Basic</option>
-              <option value="ntlm">NTLM (полный handshake через SSPI)</option>
-            </select>
-          </label>
-
-          <label>
-            Secret ref для пароля
-            <input v-model="form.secretRef" placeholder="exchange-ews-password" />
-            <span class="hint">Ключ в системном keyring/Credential Manager — не сам пароль.</span>
-          </label>
-        </template>
-
-        <label>
-          Минимальная длительность встречи, мин
-          <input v-model.number="form.minEventMinutes" type="number" min="0" />
-        </label>
-
-        <label class="checkbox-row">
-          <input v-model="form.excludeDeclined" type="checkbox" />
-          Исключать отклонённые встречи
-        </label>
-
-        <label class="checkbox-row">
-          <input v-model="form.excludeFreeBusy" type="checkbox" />
-          Исключать free / OOF / пустые фоновые события
-        </label>
-
-        <label class="checkbox-row">
-          <input v-model="form.isActive" type="checkbox" />
-          Сделать активным (заменит текущий активный профиль)
-        </label>
-      </div>
-
-      <div class="actions-row">
-        <button class="btn btn--primary" :disabled="busy" @click="saveProfile">
-          {{ busy ? 'Сохранение…' : (form.id == null ? 'Создать' : 'Сохранить изменения') }}
-        </button>
-        <button class="btn btn--secondary" :disabled="busy" @click="cancelEdit">Отмена</button>
-      </div>
-
-      <p v-if="message" :class="['status-text', success ? 'status-text--ok' : 'status-text--error']">
-        {{ message }}
-      </p>
-    </section>
-
-    <!-- ──────────── Global status (test / OAuth) ──────────── -->
-    <p v-if="!editing && message" :class="['status-text', success ? 'status-text--ok' : 'status-text--error']" style="padding: 0 1.5rem">
-      {{ message }}
-    </p>
-
     <!-- ──────────── Danger zone: сброс настроек ──────────── -->
     <section class="settings-card danger-zone">
       <div class="card-header">
@@ -297,32 +138,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { isEnabled, enable, disable } from '@tauri-apps/plugin-autostart';
-import ActionIcon from '../components/ActionIcon.vue';
 import DatePicker from '../components/DatePicker.vue';
-import {
-  tauriApi,
-  profileToConnectionParams,
-  type ExchangeProfileDto,
-} from '../lib/tauriApi';
 import { useSettingsStore } from '../store/settings';
 import { RU_HOLIDAYS_DEFAULT } from '../lib/ruHolidays';
 
 const settingsStore = useSettingsStore();
 
-const busy = ref(false);
-const message = ref('');
-const success = ref(false);
-const editing = ref(false);
-
 const resetting = ref(false);
 const resetMessage = ref('');
 const resetSuccess = ref(false);
 
-// ──────────── Автозапуск при старте Windows (tauri-plugin-autostart) ────────────
-// Использует HKCU\Software\Microsoft\Windows\CurrentVersion\Run — без прав администратора.
+// ──────────── Автозапуск при старте Windows ────────────
 const autostartEnabled = ref(false);
 const autostartBusy = ref(false);
 const autostartMessage = ref('');
@@ -354,7 +183,6 @@ async function onToggleAutostart(checked: boolean) {
   } catch (err) {
     autostartSuccess.value = false;
     autostartMessage.value = `Ошибка изменения автозапуска: ${err}`;
-    // Возвращаем чекбокс в исходное состояние, если операция не удалась
     await loadAutostartState();
   } finally {
     autostartBusy.value = false;
@@ -394,162 +222,8 @@ function addCustomHoliday() {
   newHolidayTitle.value = '';
 }
 
-const profiles = ref<ExchangeProfileDto[]>([]);
-
-function makeBlankForm(): ExchangeProfileDto {
-  return {
-    id: null,
-    name: '',
-    authMode: 'graph',
-    username: '',
-    secretRef: 'exchange-graph-placeholder',
-    tenantId: 'common',
-    clientId: '',
-    refreshTokenSecretRef: 'exchange-graph-refresh-token',
-    ewsUrl: '',
-    ewsAuthType: 'basic',
-    minEventMinutes: 0,
-    excludeDeclined: true,
-    excludeFreeBusy: true,
-    isActive: false,
-  };
-}
-
-const form = reactive<ExchangeProfileDto>(makeBlankForm());
-
-async function loadProfiles() {
-  try {
-    profiles.value = await tauriApi.listExchangeProfiles();
-  } catch (err) {
-    message.value = `Ошибка загрузки профилей: ${err}`;
-    success.value = false;
-  }
-}
-
-onMounted(() => {
-  loadProfiles();
-  loadAutostartState();
-});
-
-function startCreate() {
-  Object.assign(form, makeBlankForm());
-  message.value = '';
-  editing.value = true;
-}
-
-function startEdit(p: ExchangeProfileDto) {
-  Object.assign(form, { ...p });
-  message.value = '';
-  editing.value = true;
-}
-
-function cancelEdit() {
-  editing.value = false;
-  message.value = '';
-}
-
-async function saveProfile() {
-  if (!form.name.trim()) {
-    message.value = 'Укажите название профиля.';
-    success.value = false;
-    return;
-  }
-  if (!form.username.trim()) {
-    message.value = 'Укажите логин / UPN.';
-    success.value = false;
-    return;
-  }
-  busy.value = true;
-  message.value = '';
-  try {
-    const id = await tauriApi.saveExchangeProfile({ ...form });
-    message.value = `Профиль сохранён (id=${id}).`;
-    success.value = true;
-    editing.value = false;
-    await loadProfiles();
-  } catch (err) {
-    message.value = String(err);
-    success.value = false;
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function confirmDelete(p: ExchangeProfileDto) {
-  if (!p.id) return;
-  if (!confirm(`Удалить профиль «${p.name}»?`)) return;
-  busy.value = true;
-  message.value = '';
-  try {
-    await tauriApi.deleteExchangeProfile(p.id);
-    message.value = `Профиль «${p.name}» удалён.`;
-    success.value = true;
-    await loadProfiles();
-  } catch (err) {
-    message.value = String(err);
-    success.value = false;
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function setActive(p: ExchangeProfileDto) {
-  if (!p.id) return;
-  busy.value = true;
-  message.value = '';
-  try {
-    await tauriApi.saveExchangeProfile({ ...p, isActive: true });
-    message.value = `Профиль «${p.name}» выбран активным.`;
-    success.value = true;
-    await loadProfiles();
-  } catch (err) {
-    message.value = String(err);
-    success.value = false;
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function connectGraph(p: ExchangeProfileDto) {
-  busy.value = true;
-  success.value = false;
-  message.value = '';
-  try {
-    await tauriApi.startGraphOauthEmbedded(profileToConnectionParams(p));
-    const result = await tauriApi.completeGraphOauthLoopback();
-    success.value = result.ok;
-    message.value = result.message;
-  } catch (err) {
-    success.value = false;
-    message.value = String(err);
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function testProfile(p: ExchangeProfileDto) {
-  busy.value = true;
-  success.value = false;
-  message.value = '';
-  try {
-    const ok = await tauriApi.testExchangeConnection(profileToConnectionParams(p));
-    success.value = ok;
-    message.value = ok
-      ? `Профиль «${p.name}»: доступ к календарю подтверждён.`
-      : `Профиль «${p.name}»: проверка не прошла.`;
-  } catch (err) {
-    success.value = false;
-    message.value = String(err);
-  } finally {
-    busy.value = false;
-  }
-}
-
 /**
- * Полный сброс локальных данных: вызывает Rust-команду `reset_app_data`
- * (удаляет профили Jira/Exchange, settings и связанные секреты в OS keychain),
- * сбрасывает флаг onboardingDone и перезагружает окно, чтобы мастер
- * онбординга заработал с чистого листа.
+ * Полный сброс локальных данных
  */
 async function resetAppData() {
   if (!confirm('Удалить все профили и настройки и пройти онбординг заново? Отменить нельзя.')) return;
@@ -570,6 +244,10 @@ async function resetAppData() {
     resetting.value = false;
   }
 }
+
+onMounted(() => {
+  loadAutostartState();
+});
 </script>
 
 <style scoped>
@@ -610,22 +288,6 @@ async function resetAppData() {
   font-weight: 500;
 }
 
-.profiles-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
-
-.profiles-table th,
-.profiles-table td {
-  padding: 0.55rem 0.75rem;
-  text-align: left;
-  border-bottom: 1px solid var(--color-border, #e5e7eb);
-}
-
-.profiles-table th { font-weight: 600; color: var(--color-text-muted, #6b7280); }
-.row--active { background: var(--color-surface-alt, #f0f5ff); }
-
 .holidays-year-tabs {
   display: flex;
   gap: 0.4rem;
@@ -647,22 +309,6 @@ async function resetAppData() {
 }
 .holidays-table th { font-weight: 600; color: var(--color-text-muted, #6b7280); }
 .holidays-table__date { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--color-text-muted, #6b7280); }
-
-.actions-cell {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.2rem 0.55rem;
-  border-radius: 9999px;
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.badge--ok { background: #d1fae5; color: #065f46; }
 
 .form-grid {
   display: grid;
@@ -692,13 +338,6 @@ async function resetAppData() {
   line-height: 1.35;
 }
 
-.checkbox-row {
-  flex-direction: row !important;
-  align-items: center;
-  gap: 0.5rem !important;
-  padding-top: 1.75rem;
-}
-
 .actions-row {
   display: flex;
   gap: 0.75rem;
@@ -721,7 +360,6 @@ async function resetAppData() {
 .btn--secondary { background: var(--color-surface-alt, #eef2f7); color: var(--color-text, #111827); }
 .btn--ghost { background: transparent; color: var(--color-primary, #3366ff); text-decoration: underline; padding-left: 0; padding-right: 0; }
 .btn--danger { background: #c92a2a; color: #fff; align-self: flex-start; }
-.btn--danger.btn--sm { background: transparent; color: #c92a2a; text-decoration: underline; padding-left: 0; padding-right: 0; }
 
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
