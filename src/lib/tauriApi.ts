@@ -155,7 +155,7 @@ export interface CachedWorklogRow {
   syncedAt?: string | null;
 }
 
-// ─── Промпт 6: meeting_rules типы ────────────────────────────────────────────
+// ─── Промпт 6: meeting_rules типы ──────────────────────────────────────────────
 
 export interface MeetingMatchRule {
   id?: number | null;
@@ -184,7 +184,7 @@ export interface MatchSuggestion {
   matchedRuleName?: string | null;
 }
 
-// ─── License types ───────────────────────────────────────────────────────────
+// ─── License types ───────────────────────────────────────────────────────────────
 
 export interface LicenseStatus {
   active: boolean;
@@ -205,28 +205,6 @@ export function parseConflictError(error: unknown): WorklogDto | null {
     return JSON.parse(error.slice('CONFLICT:'.length)) as WorklogDto;
   } catch {
     return null;
-  }
-}
-
-/**
- * Оборачивает mutating invoke-вызовы к Jira.
- * При ошибке LICENSE_REQUIRED показывает диалог и диспатчит событие открытия панели лицензии.
- */
-async function guardedInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  try {
-    return await invoke<T>(cmd, args);
-  } catch (err) {
-    if (typeof err === 'string' && err.includes('LICENSE_REQUIRED')) {
-      const goToLicense = window.confirm(
-        'Лицензия JiraTime истекла или не активирована.\n\n' +
-        'Нажмите OK, чтобы ввести код активации.\n' +
-        'Нажмите Отмена, чтобы продолжить в режиме просмотра.'
-      );
-      if (goToLicense) {
-        window.dispatchEvent(new CustomEvent('license:open-panel'));
-      }
-    }
-    throw err;
   }
 }
 
@@ -276,9 +254,8 @@ export const tauriApi = {
       params, sinceEpochMillis, issueKeysForFallback, dateRange, allowEmptyRange,
     });
   },
-  // guarded — проверяет лицензию на бэкенде; при ошибке LICENSE_REQUIRED показывает диалог
   addWorklog(params: JiraConnectionParams, issueKey: string, startedAt: string, timeSpentSeconds: number, comment?: string | null) {
-    return guardedInvoke<string>('add_worklog', { params, issueKey, startedAt, timeSpentSeconds, comment });
+    return invoke<string>('add_worklog', { params, issueKey, startedAt, timeSpentSeconds, comment });
   },
   updateWorklog(
     params: JiraConnectionParams,
@@ -286,7 +263,7 @@ export const tauriApi = {
     worklogId: string,
     opts: { startedAt?: string | null; timeSpentSeconds?: number | null; comment?: string | null; expectedUpdated?: string | null },
   ) {
-    return guardedInvoke<void>('update_worklog', {
+    return invoke<void>('update_worklog', {
       params,
       issueKey,
       worklogId,
@@ -297,10 +274,10 @@ export const tauriApi = {
     });
   },
   deleteWorklog(params: JiraConnectionParams, issueKey: string, worklogId: string, expectedUpdated?: string | null) {
-    return guardedInvoke<void>('delete_worklog', { params, issueKey, worklogId, expectedUpdated: expectedUpdated ?? null });
+    return invoke<void>('delete_worklog', { params, issueKey, worklogId, expectedUpdated: expectedUpdated ?? null });
   },
   bulkAddWorklogs(params: JiraConnectionParams, entries: NewWorklogEntry[]) {
-    return guardedInvoke<BulkResultItem[]>('bulk_add_worklogs', { params, entries });
+    return invoke<BulkResultItem[]>('bulk_add_worklogs', { params, entries });
   },
 
   // --- Bulk wizard вспомогательные ---
