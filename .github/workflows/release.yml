@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g. 1.0.0) — creates tag release/v{version}'
+        description: 'Version to release (e.g. 1.0.0) — creates tag release/v{version} and bumps version in code'
         required: true
 
 permissions:
@@ -21,10 +21,72 @@ env:
 
 jobs:
   # ─────────────────────────────────────────────
+  # Только для ручного запуска: проставляем версию в package.json,
+  # src-tauri/tauri.conf.json и src-tauri/Cargo.toml, коммитим в main.
+  # Сборочные жобы чекаутят именно этот коммит.
+  # При запуске по тегу версия в коде уже должна быть проставлена вручную — шаг пропускается.
+  # ─────────────────────────────────────────────
+  bump-version:
+    name: Bump version in code
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update version in package.json, tauri.conf.json, Cargo.toml
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ github.event.inputs.version }}"
+
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            p.version = '$VERSION';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+            p.version = '$VERSION';
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+          sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"$VERSION\"/" src-tauri/Cargo.toml
+
+          echo "--- package.json ---"; grep '"version"' package.json
+          echo "--- tauri.conf.json ---"; grep '"version"' src-tauri/tauri.conf.json
+          echo "--- Cargo.toml ---"; grep -m1 '^version' src-tauri/Cargo.toml
+
+      - name: Commit and push
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          if git diff --cached --quiet; then
+            echo "No version changes to commit"
+          else
+            git commit -m "chore: bump version to ${{ github.event.inputs.version }}"
+            git push origin HEAD:main
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────
   # Windows x64 + arm64
   # ─────────────────────────────────────────────
   build-windows:
     name: Build Windows (${{ matrix.arch }})
+    needs: [bump-version]
+    if: always() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped')
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -38,6 +100,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-version.outputs.sha || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -104,6 +168,8 @@ jobs:
   # ─────────────────────────────────────────────
   build-macos:
     name: Build macOS (${{ matrix.arch }})
+    needs: [bump-version]
+    if: always() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped')
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -117,6 +183,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-version.outputs.sha || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
