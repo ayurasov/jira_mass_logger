@@ -88,13 +88,13 @@ const license = useLicenseStore();
 
 .lic-modal {
   position: relative;
-  width: 37.5rem; /* 600px */
+  width: 45rem; /* было 37.5rem, +20% */
   max-width: calc(100vw - 2rem);
   background: var(--card, #ffffff);
   border: 1px solid var(--border, #d8deea);
   border-radius: 1.1rem;
   box-shadow: 0 1.5rem 3.5rem rgba(20, 28, 46, 0.28);
-  padding: 2.5rem 2.5rem 2rem;
+  padding: 2.5rem 3rem 2rem;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -139,12 +139,12 @@ const license = useLicenseStore();
   color: var(--muted, #5d6475);
   line-height: 1.55;
   margin: 0 0 1.25rem;
-  max-width: 26rem;
+  max-width: 30rem;
 }
 
 .lic-limits {
   list-style: none;
-  padding: 0;
+  padding: 0.85rem 1.4rem;
   margin: 0 0 1.5rem;
   width: 100%;
   display: flex;
@@ -153,7 +153,6 @@ const license = useLicenseStore();
   background: var(--chip, #f5f7fb);
   border: 1px solid var(--border, #e2e6ef);
   border-radius: 0.65rem;
-  padding: 0.85rem 1.1rem;
 }
 
 .lic-limits li {
