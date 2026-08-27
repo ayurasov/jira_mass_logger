@@ -7,15 +7,24 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g. 1.0.0)'
+        description: 'Version to release (e.g. 1.0.0) — creates tag release/v{version}'
         required: true
 
 permissions:
   contents: write
 
+# При ручном запуске ref_name = 'main', поэтому тег и имя берём из inputs.
+# При пуше тега ref_name = 'v1.2.3' — используем его напрямую.
+env:
+  TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && format('release/v{0}', github.event.inputs.version) || github.ref_name }}
+  RELEASE_NAME: ${{ github.event_name == 'workflow_dispatch' && format('JiraTime v{0}', github.event.inputs.version) || format('JiraTime {0}', github.ref_name) }}
+
 jobs:
+  # ─────────────────────────────────────────────
+  # Windows x64 + arm64
+  # ─────────────────────────────────────────────
   build-windows:
-    name: Build Windows (${{ matrix.target }})
+    name: Build Windows (${{ matrix.arch }})
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -55,9 +64,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
-      # Код-сайнинг: PFX-сертификат хранится в GitHub Secrets
-      # CODESIGN_PFX_BASE64 — base64(путь/к файлу.pfx)
-      # CODESIGN_PFX_PASSWORD — пароль от pfx
       - name: Decode codesign certificate
         if: env.CODESIGN_PFX_BASE64 != ''
         shell: pwsh
@@ -69,83 +75,99 @@ jobs:
         env:
           CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
 
-      # Генерация ключа автообновления tauri-updater
-      # TAURI_SIGNING_PRIVATE_KEY + TAURI_SIGNING_PRIVATE_KEY_PASSWORD — в Secrets
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN:                    ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY:       ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          CODESIGN_PFX_PASSWORD:           ${{ secrets.CODESIGN_PFX_PASSWORD }}
+          CODESIGN_PFX_PASSWORD: ${{ secrets.CODESIGN_PFX_PASSWORD }}
           RUST_BACKTRACE: 1
         with:
-          tagName:      ${{ github.ref_name }}
-          releaseName:  'JiraTime ${{ github.ref_name }}'
-          releaseBody:  'See CHANGELOG.md for details.'
+          tagName: ${{ env.TAG_NAME }}
+          releaseName: ${{ env.RELEASE_NAME }}
+          releaseBody: 'See CHANGELOG.md for details.'
           releaseDraft: false
-          prerelease:   false
-          args:         --target ${{ matrix.target }}
+          prerelease: false
+          args: --target ${{ matrix.target }}
 
       - name: Upload artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs-${{ matrix.arch }}
+          name: build-logs-windows-${{ matrix.arch }}
           path: src-tauri/target/${{ matrix.target }}/release/bundle/
           retention-days: 5
 
-  # Генерация latest.json для tauri-plugin-updater
-  publish-updater-manifest:
-    name: Publish updater manifest
-    needs: build-windows
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: write
+  # ─────────────────────────────────────────────
+  # macOS arm64 + x64
+  # ─────────────────────────────────────────────
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            arch: x64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download release assets
-        uses: robinraju/release-downloader@v1.9
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          tag: ${{ github.ref_name }}
-          fileName: '*.sig'
-          out-file-path: dist_sigs/
+          node-version: '20'
+          cache: 'npm'
 
-      - name: Generate latest.json
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          REPO="$GITHUB_REPOSITORY"
-          BASE_URL="https://github.com/$REPO/releases/download/$GITHUB_REF_NAME"
+      - name: Install frontend dependencies
+        run: npm ci
 
-          SIG_X64=$(cat dist_sigs/JiraTime_${VERSION}_x64-setup.nsis.zip.sig 2>/dev/null || echo "")
-          SIG_ARM=$(cat dist_sigs/JiraTime_${VERSION}_arm64-setup.nsis.zip.sig 2>/dev/null || echo "")
-
-          cat > latest.json <<EOF
-          {
-            "version": "$VERSION",
-            "notes": "See https://github.com/$REPO/releases/tag/$GITHUB_REF_NAME",
-            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "platforms": {
-              "windows-x86_64": {
-                "signature": "$SIG_X64",
-                "url": "$BASE_URL/JiraTime_${VERSION}_x64-setup.nsis.zip"
-              },
-              "windows-aarch64": {
-                "signature": "$SIG_ARM",
-                "url": "$BASE_URL/JiraTime_${VERSION}_arm64-setup.nsis.zip"
-              }
-            }
-          }
-          EOF
-
-      - name: Upload latest.json to release
-        uses: softprops/action-gh-release@v2
+      - name: Install Rust toolchain + target
+        uses: dtolnay/rust-toolchain@stable
         with:
-          files: latest.json
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build Tauri app (unsigned)
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          RUST_BACKTRACE: 1
+        with:
+          tagName: ${{ env.TAG_NAME }}
+          releaseName: ${{ env.RELEASE_NAME }}
+          releaseBody: 'See CHANGELOG.md for details.'
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-macos-${{ matrix.arch }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/
+          retention-days: 5
