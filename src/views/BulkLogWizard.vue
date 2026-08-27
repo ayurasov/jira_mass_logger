@@ -229,7 +229,6 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
               </button>
             </div>
 
-            <!-- Поля дат: обёртка без рамки, рамку рисует сам DatePicker -->
             <div class="field-block field-block--datepicker">
               <span class="field-block__label">Дата начала</span>
               <DatePicker v-model="wizard.periodFrom" />
@@ -549,58 +548,56 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   color: var(--color-primary-hover, #0c4e54);
 }
 
-/* ── Теги шаблонов текста — элегантный минималистичный стиль ── */
+/* ── Теги шаблонов текста — тонкие пилюли в колонку ── */
 .text-template-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.45rem;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+  max-height: 10rem;
+  overflow-y: auto;
 }
 
 .text-template-tag {
   display: inline-flex;
   align-items: center;
-  gap: 0;
-  padding: 0.28rem 0.72rem;
+  padding: 0.22rem 0.6rem;
   border-radius: var(--radius-full, 9999px);
   font-size: 0.78rem;
   font-weight: 500;
-  letter-spacing: 0.01em;
   cursor: pointer;
   user-select: none;
-  /* Тонкая рамка вместо заливки — воздушный вид */
-  border: 1px solid color-mix(in srgb, var(--color-primary, #01696f) 30%, transparent);
-  background: color-mix(in srgb, var(--color-primary, #01696f) 5%, var(--color-surface, #fff));
-  color: var(--color-primary, #01696f);
-  transition: background 140ms, border-color 140ms, color 140ms, box-shadow 140ms, transform 80ms;
-  line-height: 1.35;
-  max-width: 13rem;
+  /* Такой же стиль, как weekday-chip — без заливки, без рамки */
+  background: var(--color-surface-offset, #f0f0ee);
+  color: var(--color-text-muted, #6b7280);
+  border: none;
+  transition: background 120ms, color 120ms;
+  line-height: 1.4;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  text-align: left;
 }
 
 .text-template-tag:hover {
-  background: color-mix(in srgb, var(--color-primary, #01696f) 12%, var(--color-surface, #fff));
-  border-color: var(--color-primary, #01696f);
-  box-shadow: 0 1px 4px color-mix(in srgb, var(--color-primary, #01696f) 18%, transparent);
-  transform: translateY(-1px);
+  background: var(--color-surface-dynamic, #e6e4df);
+  color: var(--color-text, #28251d);
 }
 
 .text-template-tag:active {
-  transform: translateY(0);
-  box-shadow: none;
+  opacity: 0.75;
 }
 
-/* Шаблоны мастера — чуть насыщеннее */
+/* Шаблоны мастера — слегка выделены активным цветом */
 .text-template-tag--master {
-  border-color: color-mix(in srgb, var(--color-primary, #01696f) 45%, transparent);
-  background: color-mix(in srgb, var(--color-primary, #01696f) 9%, var(--color-surface, #fff));
+  background: var(--color-primary-highlight, #cedcd8);
+  color: var(--color-primary, #01696f);
   font-weight: 600;
 }
 
 .text-template-tag--master:hover {
   background: color-mix(in srgb, var(--color-primary, #01696f) 16%, var(--color-surface, #fff));
+  color: var(--color-primary-hover, #0c4e54);
 }
 
 .license-banner {
