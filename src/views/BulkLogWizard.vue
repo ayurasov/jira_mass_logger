@@ -229,14 +229,15 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
               </button>
             </div>
 
-            <label class="field-block">
-              <span>Дата начала</span>
+            <!-- Поля дат: обёртка без рамки, рамку рисует сам DatePicker -->
+            <div class="field-block field-block--datepicker">
+              <span class="field-block__label">Дата начала</span>
               <DatePicker v-model="wizard.periodFrom" />
-            </label>
-            <label class="field-block">
-              <span>Дата окончания</span>
+            </div>
+            <div class="field-block field-block--datepicker">
+              <span class="field-block__label">Дата окончания</span>
               <DatePicker v-model="wizard.periodTo" />
-            </label>
+            </div>
             <label class="field-block checkbox-line mobile-full">
               <input v-model="wizard.excludeHolidays" type="checkbox" />
               <span>Исключить праздники / нерабочие дни</span>
@@ -296,9 +297,6 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
                   :title="tpl.text"
                   @click="wizard.applyTextTemplate(tpl)"
                 >
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="text-template-tag__icon">
-                    <path d="M2 5h6M5 2l3 3-3 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
                   {{ tpl.name }}
                 </button>
               </div>
@@ -331,9 +329,6 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
               <span>Повторное применение шаблона мастера</span>
               <div class="text-template-list">
                 <button v-for="tpl in wizard.templates" :key="tpl.id || tpl.name" class="text-template-tag text-template-tag--master" @click="wizard.applyTemplate(tpl)">
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="text-template-tag__icon">
-                    <path d="M2 5h6M5 2l3 3-3 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
                   {{ tpl.name }}
                 </button>
               </div>
@@ -488,6 +483,24 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   font-size: 0.82rem;
 }
 
+/* ── Поля дат: убираем рамку с обёртки, рамку рисует DatePicker внутри ── */
+.field-block--datepicker {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.field-block--datepicker .field-block__label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-text-muted, #6b7280);
+  margin-bottom: 0.1rem;
+}
+
 /* ── Дни недели: пилюли без обводок ── */
 .weekday-chips {
   display: flex;
@@ -536,63 +549,58 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   color: var(--color-primary-hover, #0c4e54);
 }
 
-/* ── Теги шаблонов текста ── */
+/* ── Теги шаблонов текста — элегантный минималистичный стиль ── */
 .text-template-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-top: 0.4rem;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
 }
 
 .text-template-tag {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.25rem 0.6rem 0.25rem 0.5rem;
+  gap: 0;
+  padding: 0.28rem 0.72rem;
   border-radius: var(--radius-full, 9999px);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 500;
+  letter-spacing: 0.01em;
   cursor: pointer;
   user-select: none;
-  border: none;
-  background: var(--color-surface-offset, #f0f0ee);
-  color: var(--color-text-muted, #555f70);
-  transition: background 120ms, color 120ms, transform 80ms;
-  line-height: 1.3;
-  max-width: 14rem;
+  /* Тонкая рамка вместо заливки — воздушный вид */
+  border: 1px solid color-mix(in srgb, var(--color-primary, #01696f) 30%, transparent);
+  background: color-mix(in srgb, var(--color-primary, #01696f) 5%, var(--color-surface, #fff));
+  color: var(--color-primary, #01696f);
+  transition: background 140ms, border-color 140ms, color 140ms, box-shadow 140ms, transform 80ms;
+  line-height: 1.35;
+  max-width: 13rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.text-template-tag__icon {
-  flex-shrink: 0;
-  opacity: 0.5;
-  transition: opacity 120ms;
-}
-
 .text-template-tag:hover {
-  background: var(--color-primary-highlight, #cedcd8);
-  color: var(--color-primary, #01696f);
+  background: color-mix(in srgb, var(--color-primary, #01696f) 12%, var(--color-surface, #fff));
+  border-color: var(--color-primary, #01696f);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--color-primary, #01696f) 18%, transparent);
   transform: translateY(-1px);
-}
-
-.text-template-tag:hover .text-template-tag__icon {
-  opacity: 1;
 }
 
 .text-template-tag:active {
   transform: translateY(0);
+  box-shadow: none;
 }
 
-/* Вариант для шаблонов мастера — чуть акцентнее */
+/* Шаблоны мастера — чуть насыщеннее */
 .text-template-tag--master {
-  background: color-mix(in srgb, var(--color-primary, #01696f) 8%, var(--color-surface, #fff));
-  color: var(--color-primary, #01696f);
+  border-color: color-mix(in srgb, var(--color-primary, #01696f) 45%, transparent);
+  background: color-mix(in srgb, var(--color-primary, #01696f) 9%, var(--color-surface, #fff));
+  font-weight: 600;
 }
 
 .text-template-tag--master:hover {
-  background: var(--color-primary-highlight, #cedcd8);
+  background: color-mix(in srgb, var(--color-primary, #01696f) 16%, var(--color-surface, #fff));
 }
 
 .license-banner {
