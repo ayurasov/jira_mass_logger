@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
 import { useSettingsStore } from './store/settings';
+import { useLicenseStore } from './store/license';
 import SyncStatusIndicator from './components/SyncStatusIndicator.vue';
 import AboutPanel from './components/AboutPanel.vue';
+import LicenseRequiredModal from './components/LicenseRequiredModal.vue';
 import { usePowerEvents } from './composables/usePowerEvents';
 import { useHotkeys } from './composables/useHotkeys';
 import { useUpdater } from './composables/useUpdater';
 import './styles/theme.css';
 
 const settings = useSettingsStore();
+const license = useLicenseStore();
 
 onMounted(() => {
   settings.loadTheme();
+  license.load();
 });
 
 // Пробуждение Windows / sleep-wake цикл
@@ -31,6 +35,8 @@ useUpdater();
     <router-view />
     <!-- Блок «О программе»: версия, автор, дата/копирайт, контакт в Telegram — правый нижний угол -->
     <AboutPanel />
+    <!-- Глобальный модал требования лицензии -->
+    <LicenseRequiredModal />
   </div>
 </template>
 
