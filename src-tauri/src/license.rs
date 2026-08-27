@@ -124,14 +124,10 @@ fn compute_status(conn: &Connection) -> LicenseStatus {
     }
 }
 
-/// Возвращает Err("ЛИЦЕНЗИЯ_НЕАКТИВНА") если лицензия не действительна.
-fn check_license_active(conn: &Connection) -> std::result::Result<(), String> {
-    let status = compute_status(conn);
-    if status.active {
-        Ok(())
-    } else {
-        Err("LICENSE_REQUIRED".to_string())
-    }
+/// Всегда разрешает запись — лицензионный код влияет только на отображение статуса,
+/// но не блокирует операции в Jira.
+fn check_license_active(_conn: &Connection) -> std::result::Result<(), String> {
+    Ok(())
 }
 
 /// Декодирует и верифицирует код.
@@ -275,8 +271,9 @@ pub fn activate_license_code(code: String, state: State<'_, LicenseDb>) -> Activ
 // ─── Хелпер для Rust-бекенда ───────────────────────────────────────────────────
 
 /// Вызывается из jira_client.rs перед любым записывающим действием в Jira.
-pub fn ensure_license_active(conn: &Connection) -> std::result::Result<(), String> {
-    check_license_active(conn)
+/// Всегда возвращает Ok — лицензирование не блокирует операции.
+pub fn ensure_license_active(_conn: &Connection) -> std::result::Result<(), String> {
+    Ok(())
 }
 
 // ─── Вспомогательные функции ───────────────────────────────────────────────────────
