@@ -57,12 +57,12 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       # Код-сайнинг macOS опционален.
-      # Если появятся секреты APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD /
+      # Если в настройках репо заданы секреты APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD /
       # APPLE_SIGNING_IDENTITY / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID —
-      # tauri-action автоматически подпишет и нотаризует .app/.dmg.
-      # Без них сборка будет unsigned — при первом запуске Gatekeeper
-      # покажет предупреждение "app из неизвестного источника" (снимается
-      # правым кликом мыши + Open, или через xattr -cr в терминале).
+      # раскомментируйте соответствующие строки в env ниже, и tauri-action
+      # автоматически подпишет и нотаризует .app/.dmg.
+      # Без них сборка unsigned — при первом запуске Gatekeeper покажет предупреждение
+      # (снимается правым кликом + Open, или через: xattr -cr /path/to/JiraTime.app).
 
       - name: Build Tauri app (unsigned)
         uses: tauri-apps/tauri-action@v0
@@ -70,12 +70,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           RUST_BACKTRACE: 1
         with:
           # Только собираем, без авто-публикации через действие.
