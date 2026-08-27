@@ -185,21 +185,23 @@ offline-очередь синхронизации, аналитический д
 
 ## Сборка из исходников
 
-### Требования к окружению
+### Windows
+
+#### Требования к окружению
 
 - Windows 10/11 с MSVC Build Tools (C++ workload)
 - [Rust](https://rustup.rs/) stable (`rustup target add x86_64-pc-windows-msvc`)
 - Node.js 20+
 - [Tauri CLI](https://tauri.app/v2/guides/getting-started/prerequisites/): `cargo install tauri-cli`
 
-### Запуск в режиме разработки
+#### Запуск в режиме разработки
 
 ```powershell
 npm install
 npm run tauri dev
 ```
 
-### Production-сборка
+#### Production-сборка
 
 ```powershell
 npm run tauri build -- --target x86_64-pc-windows-msvc
@@ -209,7 +211,7 @@ npm run tauri build -- --target aarch64-pc-windows-msvc
 
 Артефакты появятся в `src-tauri/target/<target>/release/bundle/`.
 
-### Переменные окружения для code signing
+#### Переменные окружения для code signing (Windows)
 
 | Переменная | Описание |
 |---|---|
@@ -222,6 +224,115 @@ npm run tauri build -- --target aarch64-pc-windows-msvc
 
 ---
 
+### macOS
+
+JiraTime можно собрать и запустить на macOS (Apple Silicon и Intel). Официальные подписанные сборки под macOS пока не публикуются в Releases — соберите приложение самостоятельно по инструкции ниже, либо скачайте неподписанный артефакт из GitHub Actions (workflow **Release Build (macOS)**, запускается вручную кнопкой **Run workflow** во вкладке Actions).
+
+#### Требования к окружению
+
+- macOS 12 (Monterey) или новее
+- **Xcode Command Line Tools**: `xcode-select --install`
+- [Homebrew](https://brew.sh/) (рекомендуется для установки Node.js/Rust)
+- **Node.js 20+**: `brew install node@20` (или через [nvm](https://github.com/nvm-sh/nvm))
+- **Rust** stable через [rustup](https://rustup.rs/):
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  ```
+  Добавьте нужный таргет под вашу архитектуру Mac:
+  ```bash
+  rustup target add aarch64-apple-darwin   # Apple Silicon (M1/M2/M3/M4)
+  rustup target add x86_64-apple-darwin    # Intel Mac
+  ```
+- **Tauri CLI**: `cargo install tauri-cli --locked`
+
+#### Клонирование и установка зависимостей
+
+```bash
+git clone https://github.com/ayurasov/jira_mass_logger.git
+cd jira_mass_logger
+npm install
+```
+
+#### Запуск в режиме разработки
+
+```bash
+npm run tauri dev
+```
+
+Откроется окно приложения с hot-reload фронтенда.
+
+#### Production-сборка (.app + .dmg)
+
+Сборка под свою архитектуру (Rust автоматически определит текущий Mac):
+
+```bash
+npm run tauri build
+```
+
+Явное указание таргета (например, если нужно собрать под Intel на Apple Silicon Mac — потребуется дополнительно `rustup target add x86_64-apple-darwin`):
+
+```bash
+# Apple Silicon (M1/M2/M3/M4)
+npm run tauri build -- --target aarch64-apple-darwin
+
+# Intel
+npm run tauri build -- --target x86_64-apple-darwin
+```
+
+Универсальный бинарник (arm64 + x86_64 в одном .app, крупнее по размеру):
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run tauri build -- --target universal-apple-darwin
+```
+
+Готовые артефакты появятся в:
+- `src-tauri/target/<target>/release/bundle/macos/JiraTime.app` — само приложение
+- `src-tauri/target/<target>/release/bundle/dmg/JiraTime_x.y.z_<arch>.dmg` — образ для установки
+
+#### Запуск неподписанной сборки (обход Gatekeeper)
+
+Поскольку самостоятельная сборка не подписана Apple Developer ID, macOS Gatekeeper заблокирует первый запуск сообщением «приложение повреждено» или «от неустановленного разработчика». Варианты обхода:
+
+1. **Через Finder**: правый клик (или Control+клик) по `JiraTime.app` → **Открыть** → подтвердить в диалоге. Работает только при открытии через контекстное меню, не двойным кликом.
+2. **Через терминал** — снять карантинный атрибут:
+   ```bash
+   xattr -cr /Applications/JiraTime.app
+   ```
+   (или указать путь туда, куда перетащили `.app` из `.dmg`)
+3. **Системные настройки**: **Системные настройки → Конфиденциальность и безопасность** → внизу страницы появится кнопка «Всё равно открыть» после первой попытки запуска.
+
+#### Локальная подпись и нотаризация (опционально, для собственного Apple Developer ID)
+
+Если у вас есть платный Apple Developer аккаунт, можно подписать и нотаризовать сборку локально, задав переменные окружения перед `npm run tauri build`:
+
+| Переменная | Описание |
+|---|---|
+| `APPLE_SIGNING_IDENTITY` | Имя сертификата Developer ID Application из Keychain |
+| `APPLE_CERTIFICATE` | Base64 экспортированного .p12-сертификата |
+| `APPLE_CERTIFICATE_PASSWORD` | Пароль .p12-сертификата |
+| `APPLE_ID` | Apple ID для нотаризации |
+| `APPLE_PASSWORD` | App-specific password (не основной пароль Apple ID) |
+| `APPLE_TEAM_ID` | Team ID из Apple Developer аккаунта |
+
+```bash
+export APPLE_SIGNING_IDENTITY="Developer ID Application: Ваше Имя (TEAMID)"
+export APPLE_ID="you@example.com"
+export APPLE_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+export APPLE_TEAM_ID="TEAMID"
+npm run tauri build
+```
+
+Без этих переменных сборка проходит успешно, но остаётся неподписанной (см. раздел выше про обход Gatekeeper).
+
+#### Известные ограничения на macOS
+
+- Автозапуск через `plugin-autostart` использует `launchd` вместо реестра Windows — работает «из коробки», без прав администратора.
+- Интеграция с Exchange On-Premise (EWS с NTLM) не тестировалась на macOS так же широко, как на Windows — при проблемах с корпоративным NTLM-прокси используйте OAuth2/Microsoft Graph вариант.
+- Хранилище секретов (`keyring` crate) на macOS использует **Keychain** вместо Windows Credential Manager — при первом обращении система запросит разрешение на доступ к Keychain.
+
+---
+
 ## Стек технологий
 
 | Слой | Технология |
@@ -231,10 +342,10 @@ npm run tauri build -- --target aarch64-pc-windows-msvc
 | БД | SQLite (rusqlite bundled) |
 | HTTP | reqwest + rustls-tls |
 | Графики | Apache ECharts 5 |
-| Сборка | tauri-bundler → MSI (WiX) + NSIS |
-| CI/CD | GitHub Actions (windows-latest + ubuntu-latest) |
-| Секреты | Windows Credential Manager (keyring crate) |
-| Логи | Файловый логгер с ротацией в %LOCALAPPDATA%\JiraTime\logs |
+| Сборка | tauri-bundler → MSI (WiX) + NSIS (Windows), DMG (macOS) |
+| CI/CD | GitHub Actions (windows-latest + macos-latest + ubuntu-latest) |
+| Секреты | Windows Credential Manager / macOS Keychain (keyring crate) |
+| Логи | Файловый логгер с ротацией в %LOCALAPPDATA%\JiraTime\logs (Windows) / ~/Library/Logs/JiraTime (macOS) |
 
 ---
 
