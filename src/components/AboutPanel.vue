@@ -238,14 +238,14 @@ async function activateCode() {
 
 .about-modal {
   position: relative;
-  /* Увеличена ширина с 24rem до 28rem */
-  width: 28rem;
+  /* +20% от прежних 28rem → 33.6rem */
+  width: 33.6rem;
   max-width: calc(100vw - 2rem);
   background: var(--card, #ffffff);
   border: 1px solid var(--border, #d8deea);
   border-radius: 1.1rem;
   box-shadow: 0 1.5rem 3.5rem rgba(20, 28, 46, 0.25);
-  padding: 2rem 2rem 1.75rem;
+  padding: 2rem 2.5rem 1.75rem;
   color: var(--fg, #1a1a1a);
   display: flex;
   flex-direction: column;
