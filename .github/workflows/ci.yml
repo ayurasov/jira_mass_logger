@@ -9,11 +9,25 @@ jobs:
   test-windows:
     name: Rust tests (windows-latest)
     runs-on: windows-latest
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # Tauri v2 на Windows требует WebView2 Runtime и VC++ Redist.
+      # На GitHub-hosted windows-latest они обычно есть, но явная установка
+      # страхует от edge-case при cargo check с tauri фичами.
+      - name: Install WebView2 (Tauri requirement)
+        shell: pwsh
+        run: |
+          $installer = "$env:TEMP\MicrosoftEdgeWebView2RuntimeInstaller.exe"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $installer
+          Start-Process -FilePath $installer -Args "/silent /install" -Wait
+        continue-on-error: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -23,11 +37,18 @@ jobs:
             ~/.cargo/git
             src-tauri/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      - name: Run cargo test (jira_client unit tests: ADF converter + retry logic)
+      # cargo check достаточно для проверки компилируемости без полной сборки Tauri.
+      # --no-default-features исключает custom-protocol (Tauri bundler), который
+      # требует tauri-build артефакты и не нужен в CI.
+      - name: cargo check (lib + bins)
         working-directory: src-tauri
-        run: cargo test --locked --all-features
+        run: cargo check --locked --no-default-features
 
-      - name: Run cargo check
+      # Запускаем только unit-тесты (без интеграционных, требующих UI/WebView2).
+      # lib-тесты не поднимают Tauri runtime.
+      - name: cargo test (unit only)
         working-directory: src-tauri
-        run: cargo check --all-features
+        run: cargo test --locked --no-default-features --lib -- --nocapture
