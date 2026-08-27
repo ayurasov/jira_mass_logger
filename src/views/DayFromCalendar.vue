@@ -8,12 +8,14 @@ import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { useSettingsStore } from '../store/settings';
 import { useFavoriteTasksStore } from '../store/favoriteTasks';
 import ActionIcon from '../components/ActionIcon.vue';
+import { useLicenseStore } from '../store/license';
 
 const store = useDayFromCalendarStore();
 const router = useRouter();
 const settings = useSettingsStore();
 const jiraStore = useJiraProfilesStore();
 const favorites = useFavoriteTasksStore();
+const license = useLicenseStore();
 
 const selectedDate = ref(new Date().toISOString().slice(0, 10));
 const issueSearchMap = ref<Record<number, string>>({});
@@ -114,6 +116,7 @@ function applyFavorite(key: string, summary: string | null | undefined) {
 }
 
 async function logSingle(idx: number) {
+  if (!license.guardWrite()) return;
   await store.logSingleRow(idx);
 }
 
@@ -152,6 +155,7 @@ function selectWeekDay(date: string) {
 }
 
 function goToBulkPreview() {
+  if (!license.guardWrite()) return;
   store.buildBulkPreview();
   router.push('/calendar/preview');
 }
@@ -188,6 +192,13 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
           <option :value="30">округление 30 мин</option>
         </select>
       </div>
+    </div>
+
+    <!-- Баннер режима просмотра -->
+    <div v-if="!license.isActive" class="license-banner">
+      <ActionIcon name="warning" :size="15" />
+      Работаете в <strong>режиме просмотра</strong> — логирование в Jira недоступно.
+      <button class="license-banner__btn" @click="license.openActivation">Активировать</button>
     </div>
 
     <!-- Week summary panel -->
@@ -367,9 +378,11 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
           <div class="row-actions">
             <button
               @click="logSingle(idx)"
-              :disabled="!row.selectedIssueKey || row.logged"
-              class="btn-log">
-              <ActionIcon :name="row.logged ? 'check-circle' : 'play'" :size="13" /> {{ row.logged ? 'Залогировано' : 'В worklog' }}
+              :disabled="!row.selectedIssueKey || row.logged || !license.isActive"
+              class="btn-log"
+              :class="{ 'btn-log--locked': !license.isActive }">
+              <ActionIcon :name="row.logged ? 'check-circle' : (license.isActive ? 'play' : 'key')" :size="13" />
+              {{ row.logged ? 'Залогировано' : (license.isActive ? 'В worklog' : 'Нужна лицензия') }}
             </button>
             <span v-if="row.logError" class="row-error">{{ row.logError }}</span>
             <span v-else-if="row.dedupWarning" class="row-warning"><ActionIcon name="warning" :size="12" /> {{ row.dedupWarning }}</span>
@@ -389,6 +402,30 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
 .nav-btn:hover { background: var(--bg-hover, #f0f0f0); }
 .nav-today { height: 28px; padding: 0 10px; border: 1px solid var(--border, #ddd); background: var(--bg-elev, #fff); border-radius: 4px; cursor: pointer; font-size: 12px; }
 .nav-today:hover { background: var(--bg-hover, #f0f0f0); }
+
+.license-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 0.5rem;
+  font-size: 0.87rem;
+  color: #7a5400;
+}
+.license-banner__btn {
+  margin-left: auto;
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.4rem;
+  border: 1px solid #f59e0b;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.license-banner__btn:hover { background: #fde68a; }
 
 .week-panel { background: var(--bg-elev, #fff); border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 12px; }
 .week-panel__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
@@ -418,6 +455,7 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
   background: var(--accent, #0052cc); color: #fff; border: none; font-size: 13px;
 }
 .btn-refresh:disabled, .btn-log:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-log--locked { background: var(--text-muted, #888) !important; }
 
 .coverage-bar {
   display: flex; justify-content: space-between; align-items: center;

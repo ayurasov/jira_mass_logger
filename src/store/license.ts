@@ -6,6 +6,7 @@
  *   - showModal: boolean — показывать ли модал "требуется лицензия"
  *   - requireLicense() — вызывается из guardedInvoke при ошибке LICENSE_REQUIRED
  *   - openActivation() — открыть AboutPanel на секции активации
+ *   - guardWrite() — проверить лицензию перед write-операцией; возвращает false и показывает модал если не активна
  */
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
@@ -29,6 +30,17 @@ export const useLicenseStore = defineStore('license', () => {
     showModal.value = true;
   }
 
+  /**
+   * Проверить наличие лицензии перед write-операцией.
+   * Возвращает true если лицензия активна, false — если нет (и показывает модал).
+   * Использование: if (!license.guardWrite()) return;
+   */
+  function guardWrite(): boolean {
+    if (isActive.value) return true;
+    showModal.value = true;
+    return false;
+  }
+
   /** Открыть панель About с фокусом на поле кода */
   function openActivation() {
     showModal.value = false;
@@ -39,5 +51,5 @@ export const useLicenseStore = defineStore('license', () => {
     showModal.value = false;
   }
 
-  return { isActive, showModal, load, requireLicense, openActivation, closeModal };
+  return { isActive, showModal, load, requireLicense, guardWrite, openActivation, closeModal };
 });
