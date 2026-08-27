@@ -184,6 +184,20 @@ export interface MatchSuggestion {
   matchedRuleName?: string | null;
 }
 
+// ─── License types ───────────────────────────────────────────────────────────
+
+export interface LicenseStatus {
+  active: boolean;
+  expiresAt: string | null;
+  daysLeft: number;
+}
+
+export interface ActivateResult {
+  ok: boolean;
+  message: string;
+  status: LicenseStatus;
+}
+
 /** Ошибка конфликта версий: приходит из Rust как "CONFLICT:<json WorklogDto>". */
 export function parseConflictError(error: unknown): WorklogDto | null {
   if (typeof error !== 'string' || !error.startsWith('CONFLICT:')) return null;
@@ -191,6 +205,28 @@ export function parseConflictError(error: unknown): WorklogDto | null {
     return JSON.parse(error.slice('CONFLICT:'.length)) as WorklogDto;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Оборачивает mutating invoke-вызовы к Jira.
+ * При ошибке LICENSE_REQUIRED показывает диалог и диспатчит событие открытия панели лицензии.
+ */
+async function guardedInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (err) {
+    if (typeof err === 'string' && err.includes('LICENSE_REQUIRED')) {
+      const goToLicense = window.confirm(
+        'Лицензия JiraTime истекла или не активирована.\n\n' +
+        'Нажмите OK, чтобы ввести код активации.\n' +
+        'Нажмите Отмена, чтобы продолжить в режиме просмотра.'
+      );
+      if (goToLicense) {
+        window.dispatchEvent(new CustomEvent('license:open-panel'));
+      }
+    }
+    throw err;
   }
 }
 
@@ -240,8 +276,9 @@ export const tauriApi = {
       params, sinceEpochMillis, issueKeysForFallback, dateRange, allowEmptyRange,
     });
   },
+  // guarded — проверяет лицензию на бэкенде; при ошибке LICENSE_REQUIRED показывает диалог
   addWorklog(params: JiraConnectionParams, issueKey: string, startedAt: string, timeSpentSeconds: number, comment?: string | null) {
-    return invoke<string>('add_worklog', { params, issueKey, startedAt, timeSpentSeconds, comment });
+    return guardedInvoke<string>('add_worklog', { params, issueKey, startedAt, timeSpentSeconds, comment });
   },
   updateWorklog(
     params: JiraConnectionParams,
@@ -249,7 +286,7 @@ export const tauriApi = {
     worklogId: string,
     opts: { startedAt?: string | null; timeSpentSeconds?: number | null; comment?: string | null; expectedUpdated?: string | null },
   ) {
-    return invoke<void>('update_worklog', {
+    return guardedInvoke<void>('update_worklog', {
       params,
       issueKey,
       worklogId,
@@ -260,9 +297,11 @@ export const tauriApi = {
     });
   },
   deleteWorklog(params: JiraConnectionParams, issueKey: string, worklogId: string, expectedUpdated?: string | null) {
-    return invoke<void>('delete_worklog', { params, issueKey, worklogId, expectedUpdated: expectedUpdated ?? null });
+    return guardedInvoke<void>('delete_worklog', { params, issueKey, worklogId, expectedUpdated: expectedUpdated ?? null });
   },
-  bulkAddWorklogs(params: JiraConnectionParams, entries: NewWorklogEntry[]) { return invoke<BulkResultItem[]>('bulk_add_worklogs', { params, entries }); },
+  bulkAddWorklogs(params: JiraConnectionParams, entries: NewWorklogEntry[]) {
+    return guardedInvoke<BulkResultItem[]>('bulk_add_worklogs', { params, entries });
+  },
 
   // --- Bulk wizard вспомогательные ---
   getRecentIssues() { return invoke<RecentIssue[]>('get_recent_issues'); },
@@ -308,6 +347,10 @@ export const tauriApi = {
   saveMeetingMatchRule(rule: MeetingMatchRule) { return invoke<number>('save_meeting_match_rule', { rule }); },
   deleteMeetingMatchRule(id: number) { return invoke<void>('delete_meeting_match_rule', { id }); },
   getMeetingIssueHistory() { return invoke<MeetingIssueHistoryEntry[]>('get_meeting_issue_history'); },
+
+  // --- License ---
+  getLicenseStatus() { return invoke<LicenseStatus>('get_license_status'); },
+  activateLicenseCode(code: string) { return invoke<ActivateResult>('activate_license_code', { code }); },
 
   profileToConnectionParams,
 };
