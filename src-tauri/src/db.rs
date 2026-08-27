@@ -1,9 +1,11 @@
 // Инициализация локальной SQLite БД (профили, шаблоны, кэш worklog, настройки,
-// Exchange-профили и кэш событий, правила сопоставления встреч, история матчей).
+// Exchange-профили и кэш событий, правила сопоставления встреч, история матчей,
+// лицензионное состояние).
 // На Windows БД хранится в %APPDATA%/JiraTime (не в директории установки Program Files),
 // путь берётся через tauri path API (app.path().app_data_dir()), а не хардкодится.
 use std::fs;
 use tauri::{AppHandle, Manager};
+use crate::license;
 
 pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let app_data_dir = app.path().app_data_dir()?; // Windows: %APPDATA%\JiraTime
@@ -182,6 +184,9 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         // duplicate column = "table already has column": safe to ignore
         let _ = conn.execute_batch(migration);
     }
+
+    // Инициализируем таблицы лицензирования
+    license::init_license_tables(&conn).expect("failed to init license tables");
 
     Ok(())
 }
