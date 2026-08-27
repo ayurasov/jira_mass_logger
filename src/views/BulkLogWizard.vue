@@ -18,7 +18,6 @@ const settings = useSettingsStore();
 const license = useLicenseStore();
 
 const templateName = ref('');
-const holidayJson = ref('');
 const issueInput = ref('');
 
 onMounted(async () => {
@@ -63,13 +62,6 @@ async function saveTemplate() {
   if (!templateName.value.trim()) return;
   await wizard.saveCurrentAsTemplate(templateName.value.trim());
   templateName.value = '';
-}
-
-async function importHolidayCalendar() {
-  if (!holidayJson.value.trim()) return;
-  await tauriApi.importHolidays(holidayJson.value.trim());
-  wizard.holidays = await tauriApi.getCustomHolidays();
-  holidayJson.value = '';
 }
 
 async function exportLog() {
@@ -239,11 +231,11 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 
             <label class="field-block">
               <span>Дата начала</span>
-              <DatePicker v-model="wizard.periodFrom" class="text-input" />
+              <DatePicker v-model="wizard.periodFrom" />
             </label>
             <label class="field-block">
               <span>Дата окончания</span>
-              <DatePicker v-model="wizard.periodTo" class="text-input" />
+              <DatePicker v-model="wizard.periodTo" />
             </label>
             <label class="field-block checkbox-line mobile-full">
               <input v-model="wizard.excludeHolidays" type="checkbox" />
@@ -266,20 +258,6 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
                   />
                   <span>{{ item[1] }}</span>
                 </label>
-              </div>
-            </div>
-
-            <div class="field-block span-3 holiday-import-block">
-              <span>Импорт производственного календаря РФ (JSON)</span>
-              <textarea
-                v-model="holidayJson"
-                class="text-area"
-                rows="3"
-                placeholder='[{"date":"2026-01-01","label":"Новый год"}] или ["2026-01-01","2026-01-02"]'
-              />
-              <div class="inline-actions">
-                <button class="secondary-btn" @click="importHolidayCalendar">Импортировать</button>
-                <small>Если список не импортирован, используется fallback-набор праздников РФ.</small>
               </div>
             </div>
           </div>
@@ -310,18 +288,21 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
             </label>
             <div class="field-block">
               <span>Сохранённые шаблоны текста</span>
-              <div v-if="wizard.textTemplates.length" class="template-buttons">
+              <div v-if="wizard.textTemplates.length" class="text-template-list">
                 <button
                   v-for="tpl in wizard.textTemplates"
                   :key="tpl.id ?? tpl.name"
-                  class="template-chip"
+                  class="text-template-tag"
                   :title="tpl.text"
                   @click="wizard.applyTextTemplate(tpl)"
                 >
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="text-template-tag__icon">
+                    <path d="M2 5h6M5 2l3 3-3 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
                   {{ tpl.name }}
                 </button>
               </div>
-              <small v-else>Шаблонов пока нет — создайте их на странице «Шаблоны».</small>
+              <small v-else class="muted-hint">Шаблонов пока нет — создайте их на странице «Шаблоны».</small>
             </div>
 
             <label class="field-block">
@@ -348,8 +329,11 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 
             <div class="field-block span-3" v-if="wizard.templates.length">
               <span>Повторное применение шаблона мастера</span>
-              <div class="template-buttons">
-                <button v-for="tpl in wizard.templates" :key="tpl.id || tpl.name" class="template-chip wide" @click="wizard.applyTemplate(tpl)">
+              <div class="text-template-list">
+                <button v-for="tpl in wizard.templates" :key="tpl.id || tpl.name" class="text-template-tag text-template-tag--master" @click="wizard.applyTemplate(tpl)">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="text-template-tag__icon">
+                    <path d="M2 5h6M5 2l3 3-3 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
                   {{ tpl.name }}
                 </button>
               </div>
@@ -499,8 +483,12 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   color: var(--color-error, #dc2626);
   font-size: 0.75rem;
 }
+.muted-hint {
+  color: var(--color-text-muted, #9ca3af);
+  font-size: 0.82rem;
+}
 
-/* ── Дни недели: чипы без обводок ── */
+/* ── Дни недели: пилюли без обводок ── */
 .weekday-chips {
   display: flex;
   flex-wrap: wrap;
@@ -546,6 +534,65 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 .weekday-chip--active:hover {
   background: var(--color-primary-highlight, #cedcd8);
   color: var(--color-primary-hover, #0c4e54);
+}
+
+/* ── Теги шаблонов текста ── */
+.text-template-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.text-template-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem 0.25rem 0.5rem;
+  border-radius: var(--radius-full, 9999px);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  border: none;
+  background: var(--color-surface-offset, #f0f0ee);
+  color: var(--color-text-muted, #555f70);
+  transition: background 120ms, color 120ms, transform 80ms;
+  line-height: 1.3;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-template-tag__icon {
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: opacity 120ms;
+}
+
+.text-template-tag:hover {
+  background: var(--color-primary-highlight, #cedcd8);
+  color: var(--color-primary, #01696f);
+  transform: translateY(-1px);
+}
+
+.text-template-tag:hover .text-template-tag__icon {
+  opacity: 1;
+}
+
+.text-template-tag:active {
+  transform: translateY(0);
+}
+
+/* Вариант для шаблонов мастера — чуть акцентнее */
+.text-template-tag--master {
+  background: color-mix(in srgb, var(--color-primary, #01696f) 8%, var(--color-surface, #fff));
+  color: var(--color-primary, #01696f);
+}
+
+.text-template-tag--master:hover {
+  background: var(--color-primary-highlight, #cedcd8);
 }
 
 .license-banner {
