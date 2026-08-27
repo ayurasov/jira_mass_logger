@@ -53,6 +53,12 @@ urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }
 # regex: правила сопоставления темы встречи с задачей Jira (Промпт 6)
 regex = "1"
+# --- Offline License Codes (Ed25519 + base32 encoding) ---
+# ed25519-dalek: чистый Rust, только verify (публичный ключ встроен в бинарник).
+# Приватный ключ живёт только в tools/license-codegen — не в бинарнике приложения.
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+# data-encoding: base32 для компактного человекочитаемого представления кодов
+data-encoding = "2"
 
 [target.'cfg(windows)'.dependencies]
 whoami = "1"
