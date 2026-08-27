@@ -4,7 +4,7 @@
   название, версия, автор, контакт в Telegram, copyright, блок лицензии
   с полем ввода кода активации.
   Закрывается кнопкой «ОК», крестиком, кликом по фону или клавишей Esc.
-  Слушает событие 'license:open-panel' для автооткрытия из tauriApi.
+  Слушает событие 'license:open-panel' для автооткрытия из useLicenseStore.
 -->
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
@@ -12,6 +12,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import AppLogo from './AppLogo.vue';
 import ActionIcon from './ActionIcon.vue';
 import { tauriApi, type LicenseStatus } from '../lib/tauriApi';
+import { useLicenseStore } from '../store/license';
 
 const APP_NAME = 'JiraTime';
 const AUTHOR = 'Александр Юрасов';
@@ -20,6 +21,8 @@ const COPYRIGHT_YEAR = new Date().getFullYear();
 
 const version = ref<string>('0.1.0');
 const open = ref(false);
+
+const licenseStore = useLicenseStore();
 
 // License state
 const licenseStatus = ref<LicenseStatus | null>(null);
@@ -47,7 +50,7 @@ const licenseBadgeClass = computed(() => {
 onMounted(async () => {
   try { version.value = await getVersion(); } catch { /* fallback */ }
   window.addEventListener('keydown', onKeydown);
-  // Открывает панель при событии из tauriApi (LICENSE_REQUIRED)
+  // Открывает панель при событии из useLicenseStore
   window.addEventListener('license:open-panel', openWithLicenseFocus);
   await loadLicenseStatus();
 });
@@ -66,7 +69,6 @@ function close() { open.value = false; }
 
 function openWithLicenseFocus() {
   open.value = true;
-  // После рендера фокусируем поле ввода кода
   setTimeout(() => {
     const inp = document.getElementById('license-code-input');
     if (inp) (inp as HTMLInputElement).focus();
@@ -90,7 +92,11 @@ async function activateCode() {
     const result = await tauriApi.activateLicenseCode(code);
     licenseStatus.value = result.status;
     licenseMessage.value = { text: result.message, ok: result.ok };
-    if (result.ok) licenseCode.value = '';
+    if (result.ok) {
+      licenseCode.value = '';
+      // Обновляем store — разблокируем кнопки
+      licenseStore.isActive = result.status.active;
+    }
   } catch (e) {
     licenseMessage.value = { text: String(e), ok: false };
   } finally {
@@ -232,13 +238,14 @@ async function activateCode() {
 
 .about-modal {
   position: relative;
-  width: 24rem;
+  /* Увеличена ширина с 24rem до 28rem */
+  width: 28rem;
   max-width: calc(100vw - 2rem);
   background: var(--card, #ffffff);
   border: 1px solid var(--border, #d8deea);
   border-radius: 1.1rem;
   box-shadow: 0 1.5rem 3.5rem rgba(20, 28, 46, 0.25);
-  padding: 2rem 1.75rem 1.75rem;
+  padding: 2rem 2rem 1.75rem;
   color: var(--fg, #1a1a1a);
   display: flex;
   flex-direction: column;
