@@ -9,6 +9,10 @@
  *   error     — красный знак предупреждения
  *
  * По клику — выпадающая панель с деталями и кнопкой ручной синхронизации.
+ *
+ * ВАЖНО: notify_system_resume вызывается ТОЛЬКО из App.vue (usePowerEvents).
+ * Дублирующий вызов при каждом focus здесь убран — он вызывал цепочку
+ * Jira-запросов при каждом переключении окна, что провоцировало мигание.
  */
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
@@ -88,21 +92,14 @@ onMounted(async () => {
   unlisten = await listen<SyncIndicator>('sync-status-changed', (event) => {
     indicator.value = event.payload
   })
-
-  // Слушаем возможное пробуждение Windows через видимость окна
-  window.addEventListener('focus', handleWindowFocus)
+  // Примечание: window focus НЕ обрабатываем здесь.
+  // notify_system_resume вызывается централизованно в App.vue через usePowerEvents,
+  // чтобы избежать дублирующих invoke при каждом переключении окна.
 })
 
 onUnmounted(() => {
   unlisten?.()
-  window.removeEventListener('focus', handleWindowFocus)
 })
-
-async function handleWindowFocus() {
-  // При получении фокуса сообщаем бэкенду o возможном пробуждении (выход из сна/гибернации)
-  try { await invoke('notify_system_resume') } catch {}
-  await fetchStatus()
-}
 </script>
 
 <template>
