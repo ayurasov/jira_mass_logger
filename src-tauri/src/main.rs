@@ -105,15 +105,12 @@ fn main() {
                 })
                 .build(app)?;
 
-            // Событие возможного пробуждения Windows при получении фокуса окном
-            let app_handle_for_resume = app.handle().clone();
-            if let Some(main_window) = app.get_webview_window("main") {
-                main_window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Focused(true) = event {
-                        let _ = app_handle_for_resume.emit("system:possible_resume", ());
-                    }
-                });
-            }
+            // ВАЖНО: on_window_event(Focused) намеренно НЕ используется.
+            // Ретрансляция фокуса через Rust вызывала мигание на Windows при каждом
+            // переходе между экранами (каждый Focused(true) → system:possible_resume →
+            // notify_system_resume → HTTP health-check к Jira).
+            // Обнаружение пробуждения системы выполняется исключительно через
+            // visibilitychange в usePowerEvents.ts — это надёжнее и без побочных эффектов.
 
             Ok(())
         })
@@ -169,17 +166,17 @@ fn main() {
             sync_queue::delete_cached_worklog,
             sync_queue::list_cached_worklogs,
             sync_queue::replace_cached_worklogs_range,
-            // Network / sync status indicator (Промпт 9)
+            // Network / sync status indicator
             network::get_sync_indicator,
             network::notify_system_resume,
-            // Logger (Промпт 9)
+            // Logger
             logger::read_log_tail,
             logger::get_log_dir_path,
             logger::open_log_dir_in_explorer,
             // Secrets
             secrets::save_secret,
             secrets::delete_secret,
-            // Meeting rules (Промпт 6)
+            // Meeting rules
             meeting_rules::suggest_issue_for_meeting,
             meeting_rules::remember_meeting_issue_match,
             meeting_rules::list_meeting_match_rules,
@@ -190,7 +187,7 @@ fn main() {
             scheduler::get_scheduler_settings,
             scheduler::save_scheduler_settings,
             scheduler::trigger_sync_now,
-            // License (офлайн коды активации)
+            // License
             license::get_license_status,
             license::activate_license_code,
         ])
