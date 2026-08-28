@@ -27,7 +27,7 @@ use tauri::{command, AppHandle, Manager, State};
 // Генерация: python tools/license-codegen/generate_key.py
 // Заменить это значение на свой публичный ключ перед сборкой релиза.
 const LICENSE_PUBLIC_KEY_B64: &str =
-    "ODdDn3mo4IceyI8WYYRoiVi/LFiONWMp19O4HadLggk="; // <-- REPLACE WITH YOUR KEY
+    "HkkXL/dGqyzk85FQL8rZ1rmXu7EnaOTUVDifIJRYiVQ="; // <-- REPLACE WITH YOUR KEY
 
 // Размеры payload: version(1) + days(2 LE) + grant_id(16)
 const PAYLOAD_LEN: usize = 19;
