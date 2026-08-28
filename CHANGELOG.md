@@ -1,3 +1,10 @@
+## v1.0.5 - 2026-08-28
+
+- Update package.json (c845897)
+- fix: скрыть окно при старте (visible:false) — показывать только после загрузки WebView, чтобы убрать мигание окна на Windows (df54118)
+- fix: убрать мигание при переходе между экранами — убран on_window_event(Focused) из main.rs, usePowerEvents оставляет только visibilitychange (c5d1795)
+- chore: release v1.0.4 — bump version + changelog (e536da8)
+
 ## v1.0.4 - 2026-08-28
 
 - Update package.json (9e294d7)
