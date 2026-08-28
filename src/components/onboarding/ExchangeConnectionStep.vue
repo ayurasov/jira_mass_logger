@@ -12,6 +12,7 @@ const form = reactive({
   clientId: '',
   profileName: 'Microsoft 365',
   // EWS fields
+  owaUrl: '',
   ewsUrl: '',
   ewsLogin: '',
   ewsPassword: '',
@@ -25,6 +26,32 @@ const oauthPending = ref(false);
 
 function makeSecretRef(prefix: string): string {
   return `${prefix}_${Date.now()}`;
+}
+
+/**
+ * Выводит URL SOAP-эндпоинта EWS из адреса веб-интерфейса OWA.
+ * Функция идентична deriveEwsUrlFromOwa в src/views/Profiles.vue — оба EWS и OWA
+ * в обычной on-premise конфигурации Exchange разделяют один хост:
+ *   https://mail.corp.ru/owa/            -> https://mail.corp.ru/EWS/Exchange.asmx
+ *   https://mail.corp.ru/owa              -> https://mail.corp.ru/EWS/Exchange.asmx
+ *   https://mail.corp.ru                  -> https://mail.corp.ru/EWS/Exchange.asmx
+ */
+function deriveEwsUrlFromOwa(owaUrl: string): string | null {
+  const trimmed = owaUrl.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    return `${url.protocol}//${url.host}/EWS/Exchange.asmx`;
+  } catch {
+    return null;
+  }
+}
+
+function onOwaUrlChange() {
+  const derived = deriveEwsUrlFromOwa(form.owaUrl);
+  if (derived) {
+    form.ewsUrl = derived;
+  }
 }
 
 async function saveEws() {
@@ -186,6 +213,23 @@ const isEwsReady = computed(() => form.ewsUrl.trim() && form.ewsLogin.trim() && 
         <span class="field-name">Название профиля</span>
         <input v-model="form.ewsProfileName" type="text" class="field-input" />
       </label>
+
+      <p class="hint-text">
+        Если почта настраивается через OWA (например, вы открываете
+        <code>https://mail.corp.ru/owa/</code> и вводите логин/пароль),
+        вставьте эту ссылку в поле ниже — EWS-адрес подберётся автоматически.
+      </p>
+      <label class="field-label">
+        <span class="field-name">Ссылка OWA (необязательно)</span>
+        <input
+          v-model="form.owaUrl"
+          type="text"
+          placeholder="https://mail.corp.ru/owa/"
+          class="field-input"
+          @change="onOwaUrlChange"
+          @blur="onOwaUrlChange"
+        />
+      </label>
       <label class="field-label">
         <span class="field-name">EWS URL</span>
         <input
@@ -195,6 +239,7 @@ const isEwsReady = computed(() => form.ewsUrl.trim() && form.ewsLogin.trim() && 
           required
           class="field-input"
         />
+        <span class="hint-text">Обычно совпадает с адресом OWA, только вместо <code>/owa/</code> — <code>/EWS/Exchange.asmx</code>.</span>
       </label>
       <label class="field-label">
         <span class="field-name">Логин (domain\user или UPN)</span>
@@ -205,6 +250,7 @@ const isEwsReady = computed(() => form.ewsUrl.trim() && form.ewsLogin.trim() && 
           autocomplete="username"
           class="field-input"
         />
+        <span class="hint-text">Тот же логин, что вводите на странице OWA.</span>
       </label>
       <label class="field-label">
         <span class="field-name">Пароль</span>
