@@ -3,8 +3,9 @@
 //! Стратегия определения сети:
 //!  1. reqwest health-check к /rest/api/2/serverInfo активного профиля Jira —
 //!     это надёжнее, чем проверка наличия сетевого интерфейса (NLA).
-//!  2. Фоллбэк: на Windows используем GetNetworkConnectivityHint() через windows-sys
-//!     (если reqwest недоступен).
+//!  2. Клиент reqwest создаётся один раз и переиспользуется (Arc<reqwest::Client>),
+//!     чтобы избежать пересоздания schannel/rustls-контекста на каждой проверке
+//!     (что на Windows вызывало мигание консольного окна).
 //!
 //! События Windows:
 //!  - WM_WTSSESSION_CHANGE / WM_POWERBROADCAST (сон/пробуждение) обрабатываются
@@ -47,10 +48,21 @@ pub struct NetworkMonitor {
     jira_url: Arc<Mutex<String>>,
     email:    Arc<Mutex<String>>,
     token:    Arc<Mutex<String>>,
+    /// Переиспользуемый HTTP-клиент — создаётся один раз, не пересоздаётся каждые 15 с
+    client:   Arc<reqwest::Client>,
 }
 
 impl NetworkMonitor {
     pub fn new() -> Self {
+        // Клиент создаётся один раз при старте приложения.
+        // use_rustls_tls() на Windows при многократном Client::build() может
+        // порождать мигание консольного окна через schannel-дочерние процессы.
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .use_rustls_tls()
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             status: Arc::new(Mutex::new(SyncIndicator {
                 net_status:    NetStatus::Offline,
@@ -61,6 +73,7 @@ impl NetworkMonitor {
             jira_url: Arc::new(Mutex::new(String::new())),
             email:    Arc::new(Mutex::new(String::new())),
             token:    Arc::new(Mutex::new(String::new())),
+            client:   Arc::new(client),
         }
     }
 
@@ -97,6 +110,11 @@ impl NetworkMonitor {
         s.last_error    = last_err;
         if failed > 0 { s.net_status = NetStatus::Error; }
     }
+
+    /// Переиспользуемый HTTP-клиент для health-check
+    pub fn http_client(&self) -> Arc<reqwest::Client> {
+        self.client.clone()
+    }
 }
 
 // ──────────────────────────────────────────────────────
@@ -110,7 +128,8 @@ pub fn start_network_monitor(
     app:     AppHandle,
     logger:  Arc<AppLogger>,
 ) {
-    // Периодический health-check (каждые 15 с)
+    // Периодический health-check (каждые 15 с).
+    // Клиент берётся из Arc — не пересоздаётся каждую итерацию.
     let m2 = monitor.clone();
     let app2 = app.clone();
     let lg2 = logger.clone();
@@ -126,20 +145,15 @@ pub fn start_network_monitor(
             };
             if url.is_empty() { continue; }
 
-            let probe = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
-                .use_rustls_tls()
-                .build()
-                .and_then(|c| Ok(c.get(format!("{url}/rest/api/2/serverInfo"))))
-                .ok();
-
-            let reachable = if let Some(req) = probe {
-                req.basic_auth(&email, Some(&token)).send().await
-                    .map(|r| r.status().as_u16() < 500)
-                    .unwrap_or(false)
-            } else {
-                false
-            };
+            // Переиспользуем уже созданный клиент
+            let client = m2.http_client();
+            let reachable = client
+                .get(format!("{url}/rest/api/2/serverInfo"))
+                .basic_auth(&email, Some(&token))
+                .send()
+                .await
+                .map(|r| r.status().as_u16() < 500)
+                .unwrap_or(false);
 
             if reachable {
                 m2.set_online();
