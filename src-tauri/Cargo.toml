@@ -1,6 +1,6 @@
 [package]
 name = "jiratime"
-version = "1.0.1"
+version = "1.0.2"
 description = "JiraTime - массовое логирование времени в Jira"
 edition = "2021"
 

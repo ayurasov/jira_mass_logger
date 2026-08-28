@@ -1,3 +1,12 @@
+## v1.0.2 - 2026-08-28
+
+- Update package.json (d82b933)
+- feat(onboarding): reuse OWA->EWS URL autofill logic from Profiles.vue in EWS onboarding step (cfc721e)
+- fix(onboarding): skip onboarding on first launch if profiles already exist in DB (e.g. after reinstall) (4f44fa9)
+- feat: add has_any_profiles command to detect pre-existing profiles and skip onboarding (efa9133)
+- fix: hide console window in release builds (windows_subsystem) (4e931f0)
+- chore: release v1.0.1 — bump version + changelog (3de7226)
+
 # Changelog
 
 ## v1.0.1 - 2026-08-28
