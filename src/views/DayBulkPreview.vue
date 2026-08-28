@@ -2,9 +2,11 @@
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDayFromCalendarStore } from '../store/dayFromCalendar';
+import { useAnalyticsStore } from '../store/analytics';
 import ActionIcon from '../components/ActionIcon.vue';
 
 const store = useDayFromCalendarStore();
+const analyticsStore = useAnalyticsStore();
 const router = useRouter();
 const submitting = ref(false);
 const results = ref<{ issueKey: string; success: boolean; error?: string | null }[]>([]);
@@ -29,6 +31,8 @@ async function submit() {
       success: r.success,
       error: r.error,
     }));
+    const successCount = res.filter((r) => r.success).length;
+    if (successCount > 0) analyticsStore.trackCalendarEntries(successCount);
     done.value = true;
   } finally {
     submitting.value = false;
