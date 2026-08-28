@@ -54,11 +54,16 @@ function buildOption(): EChartsOption {
       formatter: (params: any) => {
         const d = b[params[0].dataIndex];
         return `<b>${d.label} (${d.date})</b><br/>` +
-          `План: ${d.plan} ч<br/>Факт: ${d.fact} ч`;
+          `План: ${d.plan} ч<br/>Факт: ${d.fact} ч`;
       },
     },
     legend: {
-      data: ['План', 'Факт'],
+      // «FactColor» показывает бар только когда день ещё не дотянут до нормы, а когда
+      // факт равен/превышает план — бар окрашивается в overColor (зелёный). Добавляем
+      // этот цвет в легенду как отдельный пункт (сама серия «Fact» уже есть в легенде и
+      // использует factColor как базовый цвет-иконку, поэтому без этой добавки зелёный
+      // статус нигде не пояснялся).
+      data: ['План', 'Факт', 'Достаточное заполнение'],
       textStyle: { color: textColor },
       itemHeight: 10,
       right: 0,
@@ -73,7 +78,7 @@ function buildOption(): EChartsOption {
     yAxis: {
       type: 'value',
       splitLine: { lineStyle: { color: gridColor } },
-      axisLabel: { color: textColor, formatter: '{value} ч' },
+      axisLabel: { color: textColor, formatter: '{value} ч' },
     },
     series: [
       {
@@ -84,6 +89,18 @@ function buildOption(): EChartsOption {
         barCategoryGap: '35%',
         itemStyle: { color: planColor, borderRadius: [4, 4, 0, 0] },
         z: 1,
+      },
+      {
+        name: 'Достаточное заполнение',
+        type: 'bar',
+        // Служебная серия-заглушка: не рисуется на графике (нулевые данные,
+        // не учитывается tooltip'ом), нужна только для того, чтобы в легенде появился
+        // зелёный цветной маркер overColor с подписью «Достаточное заполнение».
+        data: b.map(() => 0),
+        itemStyle: { color: overColor },
+        tooltip: { show: false },
+        silent: true,
+        z: 0,
       },
       {
         name: 'Факт',
