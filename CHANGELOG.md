@@ -1,3 +1,9 @@
+## v1.0.4 - 2026-08-28
+
+- Update package.json (9e294d7)
+- fix: убрать мигание окна — переиспользуемый reqwest::Client, убран дублирующий invoke в SyncStatusIndicator (0324a8b)
+- chore: release v1.0.3 — bump version + changelog (56399ad)
+
 ## v1.0.3 - 2026-08-28
 
 - Update package.json (34db946)
