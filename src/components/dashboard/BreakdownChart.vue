@@ -11,9 +11,12 @@
           <button :class="['dash-tab', chartType==='donut' && 'active']" @click="chartType='donut'">Donut</button>
           <button :class="['dash-tab', chartType==='bar' && 'active']" @click="chartType='bar'">Bar</button>
         </div>
-        <DatePicker v-model="from" class="dash-date-input" />
-        <span style="font-size:0.8rem;opacity:.6">—</span>
-        <DatePicker v-model="to" class="dash-date-input" />
+        <!-- Компактный диапазон дат в одну строку (без переноса и без раздутых полей) -->
+        <div class="dash-date-range">
+          <DatePicker v-model="from" />
+          <span class="dash-date-range__sep">—</span>
+          <DatePicker v-model="to" />
+        </div>
       </div>
     </div>
     <div ref="chartEl" class="dash-chart-area"></div>
@@ -153,3 +156,30 @@ function buildOption(): EChartsOption {
 watch([from, to], () => store.setBreakdownPeriod(from.value, to.value), { immediate: true });
 watch([slices, chartType, () => settings.theme], () => scheduleInit(buildOption()), { immediate: true, deep: true });
 </script>
+
+<style scoped>
+/* Компактный однострочный диапазон дат — тот же приём, что и в .filters .dp
+   (src/styles/myWorklog.css): фиксируем ширину триггера и убираем перенос,
+   чтобы «от» и «до» всегда были в одну строку рядом друг с другом. */
+.dash-date-range {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.dash-date-range :deep(.dp) {
+  flex: 0 0 auto;
+  width: 7.25rem;
+  min-width: 7.25rem;
+}
+.dash-date-range :deep(.dp-trigger) {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.82rem;
+}
+.dash-date-range__sep {
+  font-size: 0.8rem;
+  opacity: 0.6;
+  flex: 0 0 auto;
+}
+</style>
