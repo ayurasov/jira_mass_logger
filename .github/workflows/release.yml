@@ -4,52 +4,74 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (e.g. 1.0.0) — creates tag release/v{version} and bumps version in code'
-        required: true
+  workflow_dispatch: {}
 
 permissions:
   contents: write
 
-# При ручном запуске ref_name = 'main', поэтому тег и имя берём из inputs.
-# При пуше тега ref_name = 'v1.2.3' — используем его напрямую.
+# При ручном запуске ref_name = 'main' — версия и changelog вычисляются джобой
+# prepare-release из package.json (источник истины) и предыдущего релизного тега.
+# При пуше тега ref_name = 'v1.2.3' — используем его напрямую, версия в коде уже
+# должна быть проставлена вручную заранее.
 env:
-  TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && format('release/v{0}', github.event.inputs.version) || github.ref_name }}
-  RELEASE_NAME: ${{ github.event_name == 'workflow_dispatch' && format('JiraTime v{0}', github.event.inputs.version) || format('JiraTime {0}', github.ref_name) }}
+  TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && format('release/v{0}', needs.prepare-release.outputs.version) || github.ref_name }}
+  RELEASE_NAME: ${{ github.event_name == 'workflow_dispatch' && format('JiraTime v{0}', needs.prepare-release.outputs.version) || format('JiraTime {0}', github.ref_name) }}
 
 jobs:
   # ─────────────────────────────────────────────
-  # Только для ручного запуска: проставляем версию в package.json,
-  # src-tauri/tauri.conf.json и src-tauri/Cargo.toml, коммитим в main.
-  # Сборочные жобы чекаутят именно этот коммит.
-  # При запуске по тегу версия в коде уже должна быть проставлена вручную — шаг пропускается.
+  # Только для ручного запуска.
+  # Версия релиза берётся из package.json (манифест в коде — источник истины,
+  # правится разработчиком перед запуском). Джоба:
+  #  1) читает VERSION из package.json;
+  #  2) проверяет, что VERSION строго больше последнего опубликованного релизного тега;
+  #  3) синхронизирует версию в src-tauri/tauri.conf.json и src-tauri/Cargo.toml;
+  #  4) собирает CHANGELOG.md из commit-сообщений между прошлым релизным тегом и HEAD;
+  #  5) коммитит изменения в main.
+  # Сборочные джобы чекаутят именно этот коммит.
+  # При запуске по тегу (push tag) вся эта джоба пропускается.
   # ─────────────────────────────────────────────
-  bump-version:
-    name: Bump version in code
+  prepare-release:
+    name: Derive version + build CHANGELOG
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
 
-      - name: Update version in package.json, tauri.conf.json, Cargo.toml
+      - name: Read target version from manifest + validate increment
+        id: version
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ github.event.inputs.version }}"
+          VERSION=$(node -pe "require('./package.json').version")
 
-          node -e "
-            const fs = require('fs');
-            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            p.version = '$VERSION';
-            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
-          "
+          LATEST_TAG=$(git tag --list 'release/v*' | sed 's#release/v##' | sort -V | tail -1 || true)
+          LATEST_TAG="${LATEST_TAG:-0.0.0}"
+
+          echo "Manifest version: $VERSION"
+          echo "Latest released version: $LATEST_TAG"
+
+          HIGHEST=$(printf '%s\n%s\n' "$LATEST_TAG" "$VERSION" | sort -V | tail -1)
+          if [ "$HIGHEST" != "$VERSION" ] || [ "$LATEST_TAG" = "$VERSION" ]; then
+            echo "::error::Версия в манифесте ($VERSION) должна быть строго больше последней выпущенной ($LATEST_TAG). Обновите version в package.json перед запуском релиза."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Sync version into tauri.conf.json and Cargo.toml
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
 
           node -e "
             const fs = require('fs');
@@ -64,6 +86,51 @@ jobs:
           echo "--- tauri.conf.json ---"; grep '"version"' src-tauri/tauri.conf.json
           echo "--- Cargo.toml ---"; grep -m1 '^version' src-tauri/Cargo.toml
 
+      - name: Generate CHANGELOG.md entry from commits since last release
+        id: changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          LATEST_TAG="${{ steps.version.outputs.latest_tag }}"
+          PREV_REF="release/v$LATEST_TAG"
+
+          if git rev-parse "$PREV_REF" >/dev/null 2>&1; then
+            RANGE="$PREV_REF..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+
+          ENTRIES=$(git log $RANGE --no-merges --pretty=format:'- %s (%h)')
+          if [ -z "$ENTRIES" ]; then
+            ENTRIES="- Без изменений в коде с прошлого релиза."
+          fi
+
+          DATE=$(date -u +%Y-%m-%d)
+          {
+            echo "## v$VERSION - $DATE"
+            echo ""
+            echo "$ENTRIES"
+            echo ""
+          } > /tmp/new_entry.md
+
+          if [ -f CHANGELOG.md ]; then
+            cat /tmp/new_entry.md CHANGELOG.md > /tmp/CHANGELOG.md.new
+          else
+            {
+              echo "# Changelog"
+              echo ""
+              cat /tmp/new_entry.md
+            } > /tmp/CHANGELOG.md.new
+          fi
+          mv /tmp/CHANGELOG.md.new CHANGELOG.md
+
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            cat /tmp/new_entry.md
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Commit and push
         id: commit
         shell: bash
@@ -71,11 +138,11 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml CHANGELOG.md
           if git diff --cached --quiet; then
-            echo "No version changes to commit"
+            echo "No changes to commit"
           else
-            git commit -m "chore: bump version to ${{ github.event.inputs.version }}"
+            git commit -m "chore: release v${{ steps.version.outputs.version }} — bump version + changelog"
             git push origin HEAD:main
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -85,8 +152,8 @@ jobs:
   # ─────────────────────────────────────────────
   build-windows:
     name: Build Windows (${{ matrix.arch }})
-    needs: [bump-version]
-    if: always() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped')
+    needs: [prepare-release]
+    if: always() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped')
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -101,7 +168,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.bump-version.outputs.sha || github.ref }}
+          ref: ${{ needs.prepare-release.outputs.sha || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -150,7 +217,7 @@ jobs:
         with:
           tagName: ${{ env.TAG_NAME }}
           releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: 'See CHANGELOG.md for details.'
+          releaseBody: ${{ needs.prepare-release.outputs.changelog || 'See CHANGELOG.md for details.' }}
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
@@ -168,8 +235,8 @@ jobs:
   # ─────────────────────────────────────────────
   build-macos:
     name: Build macOS (${{ matrix.arch }})
-    needs: [bump-version]
-    if: always() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped')
+    needs: [prepare-release]
+    if: always() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped')
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -184,7 +251,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.bump-version.outputs.sha || github.ref }}
+          ref: ${{ needs.prepare-release.outputs.sha || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -227,7 +294,7 @@ jobs:
         with:
           tagName: ${{ env.TAG_NAME }}
           releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: 'See CHANGELOG.md for details.'
+          releaseBody: ${{ needs.prepare-release.outputs.changelog || 'See CHANGELOG.md for details.' }}
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
