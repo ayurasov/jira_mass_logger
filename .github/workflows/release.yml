@@ -1,4 +1,4 @@
-name: Release Build
+name: Publish release
 
 on:
   push:
@@ -8,14 +8,6 @@ on:
 
 permissions:
   contents: write
-
-# При ручном запуске ref_name = 'main' — версия и changelog вычисляются джобой
-# prepare-release из package.json (источник истины) и предыдущего релизного тега.
-# При пуше тега ref_name = 'v1.2.3' — используем его напрямую, версия в коде уже
-# должна быть проставлена вручную заранее.
-env:
-  TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && format('release/v{0}', needs.prepare-release.outputs.version) || github.ref_name }}
-  RELEASE_NAME: ${{ github.event_name == 'workflow_dispatch' && format('JiraTime v{0}', needs.prepare-release.outputs.version) || format('JiraTime {0}', github.ref_name) }}
 
 jobs:
   # ─────────────────────────────────────────────
@@ -155,6 +147,9 @@ jobs:
     needs: [prepare-release]
     if: always() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped')
     runs-on: windows-latest
+    env:
+      TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && format('release/v{0}', needs.prepare-release.outputs.version) || github.ref_name }}
+      RELEASE_NAME: ${{ github.event_name == 'workflow_dispatch' && format('JiraTime v{0}', needs.prepare-release.outputs.version) || format('JiraTime {0}', github.ref_name) }}
     strategy:
       fail-fast: false
       matrix:
@@ -238,6 +233,9 @@ jobs:
     needs: [prepare-release]
     if: always() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped')
     runs-on: macos-latest
+    env:
+      TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && format('release/v{0}', needs.prepare-release.outputs.version) || github.ref_name }}
+      RELEASE_NAME: ${{ github.event_name == 'workflow_dispatch' && format('JiraTime v{0}', needs.prepare-release.outputs.version) || format('JiraTime {0}', github.ref_name) }}
     strategy:
       fail-fast: false
       matrix:
