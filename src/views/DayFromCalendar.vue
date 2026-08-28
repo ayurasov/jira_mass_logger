@@ -449,7 +449,20 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
 .task-list__key { font-weight: 700; color: var(--accent, #0891b2); min-width: 90px; }
 .task-list__hours { font-weight: 600; color: var(--text, #333); min-width: 60px; }
 .task-list__comment { color: var(--text-muted, #666); }
-.date-picker, .rounding-select { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border, #ddd); }
+
+/* Убираем собственную рамку/паддинг обёртки под DatePicker — рамку рисует
+   внутренний .dp-trigger компонента DatePicker, а обёртке нужна только
+   фиксированная inline-ширина, чтобы .dp (width: 100%) не растягивался и не
+   расталкивал кнопки/select на новую строку внутри .day-controls. */
+.date-picker {
+  flex: 0 0 auto;
+  width: 9rem;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.rounding-select { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border, #ddd); flex: 0 0 auto; }
 .btn-refresh, .btn-bulk, .btn-log {
   padding: 4px 12px; border-radius: 4px; cursor: pointer;
   background: var(--accent, #0052cc); color: #fff; border: none; font-size: 13px;
