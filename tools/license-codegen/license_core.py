@@ -1,5 +1,5 @@
 """
-Общая логика формирования офлайн-лицензионного кода JiraTime.
+Общая логика формирования оффлайн-лицензионного кода JiraTime.
 Используется как CLI-скриптом (generate_code.py), так и GUI (license_gui.py).
 
 Формат payload (совпадает с src-tauri/src/license.rs):
@@ -9,6 +9,7 @@
 """
 import base64
 import uuid
+from typing import Tuple
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -45,17 +46,30 @@ def load_private_key(path: str) -> Ed25519PrivateKey:
     return Ed25519PrivateKey.from_private_bytes(raw)
 
 
-def generate_code(private_key: Ed25519PrivateKey, days: int) -> str:
+def generate_code_with_grant(private_key: Ed25519PrivateKey, days: int) -> Tuple[str, str]:
+    """Сгенерировать код и вернуть (код, grant_id в hex).
+
+    grant_id нигде не восстанавливается из кода отдельно — он нужен тут,
+    чтобы сохранить его в истории выданных кодов (например, для поиска
+    по кому выдан).
+    """
     if days < 0 or days > 65535:
         raise ValueError("days должен быть в диапазоне 0..65535")
 
-    grant_id = uuid.uuid4().bytes  # 16 байт, случайный — не хранится нигде
+    grant_id = uuid.uuid4().bytes  # 16 байт, случайный — не хранится нигде, кроме истории
     payload = bytes([PAYLOAD_VERSION]) + days.to_bytes(2, "little") + grant_id
     signature = private_key.sign(payload)
     blob = payload + signature  # 19 + 64 = 83 байта
 
     code_raw = _b32_no_pad(blob)  # 133 символа
-    return _group_with_dashes(code_raw)
+    code = _group_with_dashes(code_raw)
+    return code, grant_id.hex()
+
+
+def generate_code(private_key: Ed25519PrivateKey, days: int) -> str:
+    """Обратная совместимость: только код, без grant_id (для CLI-скриптов)."""
+    code, _grant_id = generate_code_with_grant(private_key, days)
+    return code
 
 
 def label_for_days(days: int) -> str:
