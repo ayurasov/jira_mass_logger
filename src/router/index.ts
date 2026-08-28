@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
+import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from '../store/settings';
 
 const router = createRouter({
@@ -69,16 +70,47 @@ const router = createRouter({
 });
 
 /**
- * Guard: при первом запуске (онбординг не завершён) редиректируем на /onboarding.
+ * Кэш результата проверки БД на этот сеанс работы приложения — чтобы не дёргать
+ * Rust-команду `has_any_profiles` на каждую навигацию, а только один раз до первого
+ * успешного её выполнения (null = ещё не проверяли, дальше — true/false).
  */
-router.beforeEach((to) => {
+let dbHasProfilesCache: boolean | null = null;
+
+async function dbHasProfiles(): Promise<boolean> {
+  if (dbHasProfilesCache !== null) return dbHasProfilesCache;
+  try {
+    dbHasProfilesCache = await invoke<boolean>('has_any_profiles');
+  } catch (e) {
+    // Если Rust-команда недоступна (например, старый бинарник без миграции) —
+    // не блокируем навигацию, просто считаем, что данных нет.
+    console.error('has_any_profiles:', e);
+    dbHasProfilesCache = false;
+  }
+  return dbHasProfilesCache;
+}
+
+/**
+ * Guard: при первом запуске (онбординг не завершён) редиректируем на /onboarding —
+ * НО только если в базе данных (SQLite) ещё нет ни одного профиля Jira/Exchange.
+ *
+ * Это покрывает сценарий, когда localStorage-флаг `jiratime-onboarding-done` был
+ * сброшен (переустановка приложения, ручная очистка данных браузера/WebView2), но
+ * сама база данных jiratime.db с уже настроенными профилями сохранилась — в этом
+ * случае повторный онбординг не нужен, а флаг просто доводится до актуального состояния.
+ */
+router.beforeEach(async (to) => {
   if (to.meta.skipOnboardingGuard) return true;
 
   const settings = useSettingsStore();
-  if (!settings.onboardingDone) {
-    return { name: 'onboarding' };
+  if (settings.onboardingDone) return true;
+
+  if (await dbHasProfiles()) {
+    // Профили уже есть в БД — онбординг не нужен, синхронизируем флаг.
+    settings.setOnboardingDone(true);
+    return true;
   }
-  return true;
+
+  return { name: 'onboarding' };
 });
 
 export default router;
