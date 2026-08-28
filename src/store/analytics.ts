@@ -4,7 +4,7 @@
 //  2. Разбивка по задачам/проектам за выбранный период (donut / stacked bar)
 //  3. Calendar heatmap за последние 3 месяца
 //  4. Список дней с недозаполненным worklog в текущем месяце
-//  5. Метрика «экономия времени» через bulk-мастер
+//  5. Метрика «экономия времени» через bulk-мастер и импорт из календаря
 import { defineStore } from 'pinia';
 import { tauriApi, type CachedWorklogRow } from '../lib/tauriApi';
 import { useSettingsStore } from './settings';
@@ -86,8 +86,10 @@ export interface MissingDay {
 
 export interface BulkSavingMetricData {
   totalBulkEntries: number;
+  totalCalendarEntries: number;
   estimatedManualMinutes: number; // ~2 мин на ручной ввод каждой записи
   bulkMinutes: number;            // ~0.2 мин (bulk-мастер)
+  calendarMinutes: number;        // ~0.15 мин (импорт из календаря)
   savedMinutes: number;
 }
 
@@ -145,6 +147,9 @@ export const useAnalyticsStore = defineStore('analytics', {
 
     // статистика bulk-мастера из localStorage
     bulkEntriesCreated: 0,
+
+    // статистика импорта из календаря из localStorage
+    calendarEntriesCreated: 0,
 
     // map projectKey → projectName, для подписей в разбивке по проектам
     _projectNames: new Map<string, string>(),
@@ -257,16 +262,24 @@ export const useAnalyticsStore = defineStore('analytics', {
       return result.sort((a, b) => a.date.localeCompare(b.date));
     },
 
-    // ── Виджет 5: метрика экономии через bulk-мастер ───────────
+    // ── Виджет 5: метрика экономии ───────────────────────────────────
     bulkSavingMetric(): BulkSavingMetricData {
-      const n = this.bulkEntriesCreated;
-      const manualMins = n * 2.0;
-      const bulkMins   = n * 0.2;
+      const nb = this.bulkEntriesCreated;
+      const nc = this.calendarEntriesCreated;
+      // Разные нормативы времени на запись:
+      //   • Ручной ввод       ~ 2.0 мин/запись
+      //   • Bulk-мастер     ~ 0.2 мин/запись
+      //   • Импорт из кал-я ~ 0.15 мин/запись (быстрее bulk: 1 клик «Залогировать» вместо заполнения формы)
+      const manualMins   = (nb + nc) * 2.0;
+      const bulkMins     = nb * 0.2;
+      const calMins      = nc * 0.15;
       return {
-        totalBulkEntries: n,
+        totalBulkEntries: nb,
+        totalCalendarEntries: nc,
         estimatedManualMinutes: manualMins,
         bulkMinutes: bulkMins,
-        savedMinutes: Math.round(manualMins - bulkMins),
+        calendarMinutes: calMins,
+        savedMinutes: Math.round(manualMins - bulkMins - calMins),
       };
     },
   },
@@ -281,6 +294,7 @@ export const useAnalyticsStore = defineStore('analytics', {
         const to   = toIsoDate(today);
         this._rows = await tauriApi.listCachedWorklogs(from, to);
         this.bulkEntriesCreated = Number(localStorage.getItem('jiratime-bulk-entries-created') ?? '0');
+        this.calendarEntriesCreated = Number(localStorage.getItem('jiratime-calendar-entries-created') ?? '0');
         // Названия проектов для разбивки (best-effort: не блокируем дашборд при ошибке).
         try {
           const profiles = (await import('./jiraProfiles')).useJiraProfilesStore();
@@ -314,14 +328,10 @@ export const useAnalyticsStore = defineStore('analytics', {
      *               пропустить шаги 2-4 если уже синхронизировали в этом сеансе.
      */
     async syncFromJira(force = false) {
-      // Шаг 1: всегда показываем кэш немедленно, чтобы дашборд не был пустым
-      // во время ожидания ответа от Jira.
       if (!this.lastFetched) {
         await this.fetchAll();
       }
 
-      // Избегаем повторного запроса к Jira при навигации назад/вперёд,
-      // если данные уже были подгружены в текущем сеансе.
       if (!force && this.lastSynced !== null) return;
 
       this.syncing = true;
@@ -331,24 +341,21 @@ export const useAnalyticsStore = defineStore('analytics', {
         await profiles.ensureLoaded();
         const params = profiles.activeConnectionParams;
         if (!params) {
-          // Jira не настроена — тихо выходим, дашборд покажет кэш
           return;
         }
 
         const today = new Date();
-        const from = toIsoDate(addDays(today, -95)); // ~3 месяца с запасом
+        const from = toIsoDate(addDays(today, -95));
         const to   = toIsoDate(today);
 
-        // Шаг 2: получаем worklogs из Jira за нужный диапазон.
         const rawWorklogs = await tauriApi.getWorklogsSince(
           params,
           0,
           undefined,
           { dateFrom: from, dateTo: to },
-          true, // allowEmptyRange
+          true,
         );
 
-        // Шаг 3: конвертируем и атомарно заменяем кэш.
         const rows: CachedWorklogRow[] = rawWorklogs.map((w) => ({
           rowKey: `jira:${w.id}`,
           worklogId: w.id,
@@ -365,11 +372,9 @@ export const useAnalyticsStore = defineStore('analytics', {
         await tauriApi.replaceCachedWorklogsRange(from, to, rows);
         this.lastSynced = Date.now();
       } catch (e) {
-        // Ошибка синхронизации не блокирует дашборд — кэш уже показан на шаге 1
         this.syncError = e instanceof Error ? e.message : 'Ошибка синхронизации с Jira';
       } finally {
         this.syncing = false;
-        // Шаг 4: перечитываем кэш с обновлёнными данными из Jira
         await this.fetchAll();
       }
     },
@@ -378,6 +383,12 @@ export const useAnalyticsStore = defineStore('analytics', {
     trackBulkEntries(count: number) {
       this.bulkEntriesCreated += count;
       localStorage.setItem('jiratime-bulk-entries-created', String(this.bulkEntriesCreated));
+    },
+
+    /** Вызывается из DayBulkPreview после успешного логирования через календарь */
+    trackCalendarEntries(count: number) {
+      this.calendarEntriesCreated += count;
+      localStorage.setItem('jiratime-calendar-entries-created', String(this.calendarEntriesCreated));
     },
 
     setBreakdownPeriod(from: string, to: string) {
