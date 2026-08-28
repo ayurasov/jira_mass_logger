@@ -1,4 +1,9 @@
 // JiraTime — точка входа Tauri-приложения
+// В release-сборке под Windows скрываем консольное окно cmd.exe, которое
+// иначе остаётся открытым рядом с приложением на всё время его работы.
+// В debug-сборке консоль оставляем — там она нужна для вывода println!/логов.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod jira_client;
 mod jira_profiles;
 mod exchange_client;
@@ -130,6 +135,7 @@ fn main() {
             jira_profiles::delete_jira_profile,
             jira_profiles::test_jira_connection,
             jira_profiles::reset_app_data,
+            jira_profiles::has_any_profiles,
             // Exchange
             exchange_client::test_exchange_connection,
             exchange_client::get_calendar_events,
