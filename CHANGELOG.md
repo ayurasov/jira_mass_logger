@@ -1,3 +1,13 @@
+## v1.0.3 - 2026-08-28
+
+- Update package.json (34db946)
+- feat(dashboard): show calendar import row in time-saving metric widget (def4580)
+- feat(calendar): track calendar import entries in time-saving analytics (9b36324)
+- feat(analytics): track calendar import entries in time-saving metric (607ef5b)
+- feat(dashboard): add green 'sufficient fill' legend entry to hours-by-day chart (30551de)
+- fix(dashboard): compact one-line date range picker in Breakdown widget (0992bcb)
+- chore: release v1.0.2 — bump version + changelog (7a8726d)
+
 ## v1.0.2 - 2026-08-28
 
 - Update package.json (d82b933)
