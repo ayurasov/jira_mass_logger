@@ -10,6 +10,7 @@ export type NavIconName =
   | 'worklog'
   | 'bulk'
   | 'calendar'
+  | 'team'
   | 'templates'
   | 'profiles'
   | 'logs'
@@ -56,6 +57,14 @@ const props = withDefaults(defineProps<{ name: NavIconName; size?: number }>(), 
       <rect x="3" y="4.5" width="18" height="16" rx="2" />
       <path d="M3 9.5h18M8 2.5v4M16 2.5v4" />
       <path d="M8 14h5m0 0-1.6-1.6M13 14l-1.6 1.6" />
+    </g>
+
+    <!-- Команда: двое людей -->
+    <g v-else-if="name === 'team'">
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3 20c.6-3.4 3-5.5 6-5.5s5.4 2.1 6 5.5" />
+      <circle cx="17" cy="9" r="2.6" />
+      <path d="M16.5 14.6c2.4.2 4.1 2 4.5 4.9" />
     </g>
 
     <!-- Шаблоны: линейка/трафарет -->

@@ -186,6 +186,40 @@ export interface MatchSuggestion {
   matchedRuleName?: string | null;
 }
 
+// ─── Команда: worklog коллег ────────────────────────────────────────────────
+export interface JiraUserDto {
+  /** Cloud — accountId, Server/DC — username. */
+  id: string;
+  displayName: string;
+  email?: string | null;
+  active: boolean;
+}
+export interface TeamWorklogDto {
+  id: string;
+  authorId: string;
+  authorName: string;
+  issueKey: string;
+  issueSummary?: string | null;
+  started: string;
+  timeSpentSeconds: number;
+  comment?: string | null;
+}
+export interface TeamWorklogsResult {
+  worklogs: TeamWorklogDto[];
+  truncated: boolean;
+  errors: string[];
+}
+
+export interface SchedulerSettings {
+  autoSyncEnabled: boolean;
+  syncIntervalMinutes: number;
+  reminderEnabled: boolean;
+  /** "HH:MM" */
+  reminderTime: string;
+  reminderWorkdaysOnly: boolean;
+  dailyHoursNorm: number;
+}
+
 // ─── License types ───────────────────────────────────────────────────────────
 
 export interface LicenseStatus {
@@ -347,6 +381,19 @@ export const tauriApi = {
   deleteMeetingMatchRule(id: number) { return invoke<void>('delete_meeting_match_rule', { id }); },
   getMeetingIssueHistory() { return invoke<MeetingIssueHistoryEntry[]>('get_meeting_issue_history'); },
 
+  // --- Команда ---
+  searchJiraUsers(params: JiraConnectionParams, query: string) {
+    return invoke<JiraUserDto[]>('search_jira_users', { params, query });
+  },
+  getCurrentJiraUser(params: JiraConnectionParams) {
+    return invoke<JiraUserDto>('get_current_jira_user', { params });
+  },
+  getTeamWorklogs(params: JiraConnectionParams, userIds: string[], dateFrom: string, dateTo: string) {
+    return invoke<TeamWorklogsResult>('get_team_worklogs', { params, userIds, dateFrom, dateTo });
+  },
+  // --- Планировщик: напоминание о незаполненном времени ---
+  getSchedulerSettings() { return invoke<SchedulerSettings>('get_scheduler_settings'); },
+  saveSchedulerSettings(settings: SchedulerSettings) { return invoke<void>('save_scheduler_settings', { settings }); },
   // --- License ---
   getLicenseStatus() { return invoke<LicenseStatus>('get_license_status'); },
   activateLicenseCode(code: string) { return invoke<ActivateResult>('activate_license_code', { code }); },

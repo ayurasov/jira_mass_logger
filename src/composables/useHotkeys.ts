@@ -55,6 +55,13 @@ export function useHotkeys() {
       return;
     }
 
+    // Ctrl+T — «Команда»
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyT') {
+      e.preventDefault();
+      await router.push({ name: 'team' });
+      return;
+    }
+
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'Comma') {
       e.preventDefault();
       await router.push({ name: 'settings' });

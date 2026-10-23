@@ -296,7 +296,7 @@ fn api_base(params: &JiraConnectionParams) -> &'static str {
     }
 }
 
-fn apply_auth(
+pub(crate) fn apply_auth(
     req: reqwest::RequestBuilder,
     params: &JiraConnectionParams,
     token: &str,
@@ -308,7 +308,7 @@ fn apply_auth(
     }
 }
 
-fn url(params: &JiraConnectionParams, path: &str) -> String {
+pub(crate) fn url(params: &JiraConnectionParams, path: &str) -> String {
     format!(
         "{}/{}/{}",
         params.base_url.trim_end_matches('/'),
@@ -451,7 +451,7 @@ pub struct BulkResultItem {
 const MAX_RETRIES: u32 = 5;
 const BASE_BACKOFF_MS: u64 = 500;
 
-async fn send_with_retry(
+pub(crate) async fn send_with_retry(
     #[allow(unused_variables)]
     client: &reqwest::Client,
     mut build_request: impl FnMut() -> reqwest::RequestBuilder,
@@ -506,9 +506,9 @@ async fn send_with_retry(
     }
 }
 
-struct AuthedClient {
-    client: reqwest::Client,
-    token: String,
+pub(crate) struct AuthedClient {
+    pub(crate) client: reqwest::Client,
+    pub(crate) token: String,
 }
 
 /// Минимальный набор идентификаторов текущего пользователя из `/myself`.
@@ -581,7 +581,7 @@ fn server_author_matches(v: &Value, candidates: &[String]) -> bool {
     false
 }
 
-fn init(params: &JiraConnectionParams) -> Result<AuthedClient, JiraError> {
+pub(crate) fn init(params: &JiraConnectionParams) -> Result<AuthedClient, JiraError> {
     let client = build_http_client(params)?;
     let token = get_secret(&params.secret_ref)?;
     Ok(AuthedClient { client, token })
@@ -891,7 +891,7 @@ pub async fn get_worklogs_since(
 /// парсятся как success-JSON, тело без поля `values` трактуется как «нет данных», и
 /// пользователь видит «соединение есть, часов нет». Возвращает Err с HTTP-кодом и
 /// фрагментом тела, если статус не 2xx.
-async fn ensure_json_success(resp: reqwest::Response) -> Result<Value, String> {
+pub(crate) async fn ensure_json_success(resp: reqwest::Response) -> Result<Value, String> {
     let status = resp.status();
     if !status.is_success() {
         let body = truncate_chars(&resp.text().await.unwrap_or_default(), 300);

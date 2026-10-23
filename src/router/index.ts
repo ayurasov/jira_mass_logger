@@ -41,6 +41,11 @@ const router = createRouter({
           component: () => import('../views/DayBulkPreview.vue'),
         },
         {
+          path: 'team',
+          name: 'team',
+          component: () => import('../views/TeamWorklogs.vue'),
+        },
+        {
           path: 'templates',
           name: 'templates',
           component: () => import('../views/Templates.vue'),
