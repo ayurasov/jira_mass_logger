@@ -11,6 +11,7 @@ const router = useRouter();
 const submitting = ref(false);
 const results = ref<{ issueKey: string; success: boolean; error?: string | null }[]>([]);
 const done = ref(false);
+const submitError = ref<string | null>(null);
 
 onMounted(() => {
   if (store.bulkPreview.length === 0) router.replace('/calendar');
@@ -24,6 +25,7 @@ function fmtDuration(sec: number) {
 
 async function submit() {
   submitting.value = true;
+  submitError.value = null;
   try {
     const res = await store.logBulk(store.bulkPreview);
     results.value = res.map((r) => ({
@@ -34,6 +36,9 @@ async function submit() {
     const successCount = res.filter((r) => r.success).length;
     if (successCount > 0) analyticsStore.trackCalendarEntries(successCount);
     done.value = true;
+  } catch (e) {
+    // Нет профиля Jira / лицензии / сети — показываем причину, а не молча ничего не делаем.
+    submitError.value = e instanceof Error ? e.message : String(e);
   } finally {
     submitting.value = false;
   }
@@ -49,6 +54,7 @@ async function submit() {
 
     <div v-if="!done">
       <p class="preview-hint">Проверьте список записей и нажмите «Залогировать всё».</p>
+      <p v-if="submitError" class="preview-error">{{ submitError }}</p>
       <table class="preview-table">
         <thead>
           <tr>
@@ -99,6 +105,7 @@ async function submit() {
 </template>
 
 <style scoped>
+.preview-error { color: var(--danger); margin: 0 0 12px; }
 .preview-page { padding: 16px; max-width: 960px; }
 .preview-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .btn-back {

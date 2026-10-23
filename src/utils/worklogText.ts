@@ -1,7 +1,9 @@
 export interface WorklogTextContext { date: string; issue: string; week: string; }
 export function getIsoWeek(dateIso: string): string {
-  const date = new Date(dateIso);
-  const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  // Разбираем компоненты вручную: new Date('YYYY-MM-DD') — это UTC-полночь,
+  // и getFullYear()/getDate() западнее UTC дали бы предыдущий день.
+  const [y, m, d] = dateIso.slice(0, 10).split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1, d));
   const dayNum = target.getUTCDay() || 7;
   target.setUTCDate(target.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));

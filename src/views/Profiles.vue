@@ -133,7 +133,7 @@
         <label v-if="jiraForm.instanceType === 'cloud' || jiraForm.authType === 'pat'">
           {{ jiraForm.instanceType === 'cloud' ? 'API Token' : 'Personal Access Token (PAT)' }}
           <input v-model="jiraForm.token" type="password"
-            :placeholder="jiraForm.instanceType === 'cloud' ? 'Atlassian API token' : 'Jira Server PAT'"
+            :placeholder="jiraForm.id ? 'оставьте пустым, если не меняли' : (jiraForm.instanceType === 'cloud' ? 'Atlassian API token' : 'Jira Server PAT')"
             autocomplete="new-password" />
           <span class="hint" v-if="jiraForm.instanceType === 'cloud'">
             Получить: <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank">id.atlassian.com → API tokens</a>
@@ -146,8 +146,12 @@
         <label v-else-if="jiraForm.authType === 'server_basic'">
           Пароль
           <input v-model="jiraForm.token" type="password"
-            placeholder="Пароль от учётной записи Jira"
+            :placeholder="jiraForm.id ? 'оставьте пустым, если не меняли' : 'Пароль от учётной записи Jira'"
             autocomplete="new-password" />
+        </label>
+        <label v-if="jiraForm.instanceType !== 'cloud'" class="checkbox-label">
+          <input v-model="jiraForm.acceptInvalidCerts" type="checkbox" />
+          Доверять самоподписанному сертификату сервера
         </label>
 
         <label class="checkbox-label">
@@ -247,6 +251,9 @@ import { ref, reactive, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import ActionIcon from '../components/ActionIcon.vue';
+import { useJiraProfilesStore } from '../store/jiraProfiles';
+
+const jiraProfilesStore = useJiraProfilesStore();
 
 // ────────── Types ──────────
 
@@ -260,6 +267,7 @@ interface JiraProfile {
   email: string;
   secretRef: string;
   isActive: boolean;
+  acceptInvalidCerts?: boolean;
 }
 
 interface ExchProfile {
@@ -300,6 +308,7 @@ const jiraForm = reactive({
   email: '',
   token: '',
   isActive: false,
+  acceptInvalidCerts: false,
 });
 
 // Exchange form
@@ -380,6 +389,9 @@ async function loadProfiles() {
   } catch (e) {
     console.error('list_jira_profiles:', e);
   }
+  // Общий стор профилей кэширует список на сеанс — обновляем его, иначе остальные
+  // экраны продолжали бы работать со старым/удалённым активным профилем до перезапуска.
+  jiraProfilesStore.loadProfiles().catch(() => {});
   try {
     exchProfiles.value = await invoke<ExchProfile[]>('list_exchange_profiles');
   } catch (e) {
@@ -403,6 +415,7 @@ function openJiraForm(p: JiraProfile | null) {
       email: p.email,
       token: '',
       isActive: p.isActive,
+      acceptInvalidCerts: !!p.acceptInvalidCerts,
     });
   } else {
     Object.assign(jiraForm, {
@@ -414,6 +427,7 @@ function openJiraForm(p: JiraProfile | null) {
       email: '',
       token: '',
       isActive: false,
+      acceptInvalidCerts: false,
     });
   }
   jiraFormOpen.value = true;
@@ -425,7 +439,8 @@ async function saveJiraProfile() {
     jiraFormError.value = 'Заполните название, URL и логин/email.';
     return;
   }
-  if (!jiraForm.token) {
+  // При редактировании пустое поле = оставить сохранённый токен/пароль (бэкенд его не трогает).
+  if (!jiraForm.token && !jiraForm.id) {
     const credLabel = jiraForm.authType === 'server_basic' ? 'пароль' : 'токен';
     jiraFormError.value = `Введите ${credLabel} (поле не может быть пустым при сохранении новых учётных данных).`;
     return;
@@ -438,10 +453,11 @@ async function saveJiraProfile() {
         name: jiraForm.name,
         instanceType: jiraForm.instanceType,
         authType: jiraForm.instanceType === 'cloud' ? 'token' : jiraForm.authType,
-        baseUrl: jiraForm.baseUrl,
-        email: jiraForm.email,
+        baseUrl: jiraForm.baseUrl.trim().replace(/\/+$/, ''),
+        email: jiraForm.email.trim(),
         token: jiraForm.token || null,
         isActive: jiraForm.isActive,
+        acceptInvalidCerts: jiraForm.instanceType !== 'cloud' && jiraForm.acceptInvalidCerts,
       },
     });
     jiraFormOpen.value = false;

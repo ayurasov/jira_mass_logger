@@ -16,6 +16,7 @@ export interface JiraProfile {
   // apiToken/PAT хранится не здесь, а в OS keychain (keyring), тут только secretRef
   secretRef: string;
   isActive?: boolean;
+  acceptInvalidCerts?: boolean;
 }
 
 interface BackendJiraProfile {
@@ -27,6 +28,7 @@ interface BackendJiraProfile {
   email: string;
   secretRef?: string | null;
   isActive?: boolean | null;
+  acceptInvalidCerts?: boolean | null;
 }
 
 export const useJiraProfilesStore = defineStore('jiraProfiles', {
@@ -63,6 +65,7 @@ export const useJiraProfilesStore = defineStore('jiraProfiles', {
         userTimezone: settings.timezone,
         proxy: null,
         extraRootCaPemPath: null,
+        acceptInvalidCerts: !!profile.acceptInvalidCerts,
       };
     },
   },
@@ -86,6 +89,7 @@ export const useJiraProfilesStore = defineStore('jiraProfiles', {
           authType: r.authType ?? undefined,
           secretRef: r.secretRef ?? '',
           isActive: r.isActive ?? false,
+          acceptInvalidCerts: r.acceptInvalidCerts ?? false,
         }));
         this.loaded = true;
       } catch (e) {

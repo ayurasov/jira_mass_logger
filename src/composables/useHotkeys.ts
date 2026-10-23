@@ -30,23 +30,32 @@ export function useHotkeys() {
     );
   }
 
+  // Сравниваем e.code (физическая клавиша), а не e.key: в русской раскладке
+  // Ctrl+N даёт e.key === 'т', и горячие клавиши не срабатывали.
   async function handler(e: KeyboardEvent) {
     // --- Ctrl+N: Мастер массового трекинга ---
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'n') {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyN') {
       e.preventDefault();
       await router.push({ name: 'bulk' });
       return;
     }
 
     // --- Ctrl+L: Таблица worklog ---
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyL') {
       e.preventDefault();
       await router.push({ name: 'worklog' });
       return;
     }
 
     // --- Ctrl+, : Настройки ---
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') {
+    // Ctrl+K — «Календарь → Jira» (подсказка показана в боковом меню)
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyK') {
+      e.preventDefault();
+      await router.push({ name: 'calendar' });
+      return;
+    }
+
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'Comma') {
       e.preventDefault();
       await router.push({ name: 'settings' });
       return;
@@ -60,7 +69,7 @@ export function useHotkeys() {
     }
 
     // --- Ctrl+M: Свернуть в трей ---
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'm') {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyM') {
       e.preventDefault();
       try {
         const win = getCurrentWindow();

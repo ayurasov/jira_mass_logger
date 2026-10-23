@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { localIsoDate } from '../utils/time';
 import { computed, onMounted, ref } from 'vue';
 import { save } from '@tauri-apps/plugin-dialog';
 import DatePicker from '../components/DatePicker.vue';
@@ -49,9 +50,12 @@ async function buildPreviewAndNext() {
 async function submitWizard() {
   if (!license.guardWrite()) return;
   if (!jiraParams.value) return;
+  const countSuccess = () => wizard.previewRows.filter((r) => r.status === 'success').length;
+  const before = countSuccess();
   await wizard.submit(jiraParams.value);
-  const successCount = wizard.previewRows.filter(r => r.status === 'success').length;
-  if (successCount > 0) analyticsStore.trackBulkEntries(successCount);
+  // Учитываем только записи, созданные именно этой отправкой (повтор не считаем дважды).
+  const created = countSuccess() - before;
+  if (created > 0) analyticsStore.trackBulkEntries(created);
 }
 
 async function saveTemplate() {
@@ -63,7 +67,7 @@ async function saveTemplate() {
 async function exportLog() {
   const logPath = await save({
     title: 'Сохранить лог операции',
-    defaultPath: `jiratime-bulk-log-${new Date().toISOString().slice(0, 10)}.txt`,
+    defaultPath: `jiratime-bulk-log-${localIsoDate()}.txt`,
     filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
   });
   if (!logPath) return;
@@ -139,7 +143,8 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
             :key="n"
             class="step-chip"
             :class="{ active: wizard.step === n, complete: n < wizard.step }"
-            @click="wizard.goToStep(n)"
+            :disabled="n > wizard.step"
+            @click="n <= wizard.step && wizard.goToStep(n)"
           >
             <span class="step-index">{{ n }}</span>
             <span class="step-label">{{ ['Задача Jira', 'Период', 'Параметры', 'Предпросмотр'][n - 1] }}</span>

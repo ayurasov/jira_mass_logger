@@ -1,3 +1,5 @@
+import { parseIsoDate } from './time';
+
 export interface DateRangePreset {
   id: string;
   label: string;
@@ -30,7 +32,7 @@ export const DATE_RANGE_PRESETS: DateRangePreset[] = [
 ];
 
 export const RU_HOLIDAYS_FALLBACK_2026: string[] = ['2026-01-01','2026-01-02','2026-01-05','2026-01-06','2026-01-07','2026-01-08','2026-02-23','2026-03-09','2026-05-01','2026-05-11','2026-06-12','2026-11-04'];
-export function enumerateDates(fromIso: string, toIso: string): Date[] { const from = new Date(fromIso); const to = new Date(toIso); const out: Date[] = []; const cursor = new Date(from); while (cursor <= to) { out.push(new Date(cursor)); cursor.setDate(cursor.getDate() + 1); } return out; }
+export function enumerateDates(fromIso: string, toIso: string): Date[] { const from = parseIsoDate(fromIso); const to = parseIsoDate(toIso); const out: Date[] = []; const cursor = new Date(from); while (cursor <= to) { out.push(new Date(cursor)); cursor.setDate(cursor.getDate() + 1); } return out; }
 export interface WeekdayFilter { mon: boolean; tue: boolean; wed: boolean; thu: boolean; fri: boolean; sat: boolean; sun: boolean; }
 export const DEFAULT_WEEKDAY_FILTER: WeekdayFilter = { mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false };
 const WEEKDAY_INDEX: (keyof WeekdayFilter)[] = ['sun','mon','tue','wed','thu','fri','sat'];

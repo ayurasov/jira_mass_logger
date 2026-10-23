@@ -18,6 +18,8 @@ export interface JiraConnectionParams {
   extraRootCaPemPath?: string | null;
   proxy?: ProxyConfig | null;
   userTimezone?: string | null;
+  /** Доверять самоподписанным сертификатам (корпоративный Jira Server). */
+  acceptInvalidCerts?: boolean;
 }
 
 export interface ExchangeConnectionParams {

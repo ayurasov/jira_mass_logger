@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { localIsoDate } from '../utils/time';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import DatePicker from '../components/DatePicker.vue';
 import { useDayFromCalendarStore } from '../store/dayFromCalendar';
@@ -9,6 +10,7 @@ import { useSettingsStore } from '../store/settings';
 import { useFavoriteTasksStore } from '../store/favoriteTasks';
 import ActionIcon from '../components/ActionIcon.vue';
 import { useLicenseStore } from '../store/license';
+import { useAnalyticsStore } from '../store/analytics';
 
 const store = useDayFromCalendarStore();
 const router = useRouter();
@@ -17,10 +19,13 @@ const jiraStore = useJiraProfilesStore();
 const favorites = useFavoriteTasksStore();
 const license = useLicenseStore();
 
-const selectedDate = ref(new Date().toISOString().slice(0, 10));
+const selectedDate = ref(localIsoDate());
 const issueSearchMap = ref<Record<number, string>>({});
 const issueOptionsMap = ref<Record<number, { key: string; summary: string }[]>>({});
 let searchTimer: number | null = null;
+
+// День может смениться снаружи (пункт трея «Залогировать сегодня») — держим поле даты в синхроне.
+watch(() => store.selectedDate, (d) => { if (d && d !== selectedDate.value) selectedDate.value = d; });
 
 function fmtDateRu(iso: string): string {
   const d = new Date(iso + 'T12:00:00');
@@ -64,7 +69,8 @@ function timelineTop(iso: string): number {
   );
   const h = Number(parts.hour) % 24;
   const m = Number(parts.minute);
-  return ((h * 60 + m - 8 * 60) / (12 * 60)) * 100; // 08:00–20:00 window
+  const pct = ((h * 60 + m - 8 * 60) / (12 * 60)) * 100; // 08:00–20:00 window
+  return Math.min(100, Math.max(0, pct)); // встречи до 08:00 / после 20:00 — к краю шкалы
 }
 
 function timelineHeight(sec: number): number {
@@ -86,7 +92,7 @@ async function searchIssues(idx: number, q: string) {
       const isIssueKey = /^[A-Za-z][A-Za-z0-9]+-\d+$/.test(trimmed);
       const jql = isIssueKey
         ? `key = "${trimmed.toUpperCase()}" ORDER BY updated DESC`
-        : `text ~ "${trimmed}" ORDER BY updated DESC`;
+        : `text ~ "${trimmed.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}" ORDER BY updated DESC`;
       const res = await tauriApi.getIssuesByJql(params, jql);
       issueOptionsMap.value[idx] = res.map((i) => ({ key: i.key, summary: i.summary ?? '' }));
     } catch {
@@ -117,7 +123,17 @@ function applyFavorite(key: string, summary: string | null | undefined) {
 
 async function logSingle(idx: number) {
   if (!license.guardWrite()) return;
-  await store.logSingleRow(idx);
+  const row = store.rows[idx];
+  const wasLogged = !!row?.logged;
+  try {
+    await store.logSingleRow(idx);
+  } catch (e) {
+    if (row) row.logError = String(e instanceof Error ? e.message : e);
+    return;
+  }
+  if (!wasLogged && store.rows[idx]?.logged && !store.rows[idx]?.logError) {
+    useAnalyticsStore().trackCalendarEntries(1);
+  }
 }
 
 function navigateDay(delta: number) {
@@ -145,7 +161,7 @@ async function refreshWeek() {
 }
 
 function goToday() {
-  selectedDate.value = new Date().toISOString().slice(0, 10);
+  selectedDate.value = localIsoDate();
   store.loadDay(selectedDate.value);
 }
 
@@ -298,7 +314,7 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
             :class="{ logged: row.logged, 'has-error': !!row.logError }"
             :style="{
               top: timelineTop(row.event.startAt) + '%',
-              height: timelineHeight(row.roundedSeconds) + '%',
+              height: Math.max(2, Math.min(timelineHeight(row.roundedSeconds), 100 - timelineTop(row.event.startAt))) + '%',
             }"
             :title="row.event.subject">
             {{ fmtTime(row.event.startAt) }}

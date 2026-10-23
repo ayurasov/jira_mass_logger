@@ -231,8 +231,12 @@ async function resetAppData() {
   resetMessage.value = '';
   try {
     await invoke('reset_app_data');
-    localStorage.removeItem('jiratime-onboarding-done');
-    localStorage.removeItem('jiratime-work-schedule');
+    // Чистим ВСЕ ключи приложения: иначе, например, watermark инкрементальной
+    // синхронизации пережил бы сброс, и после повторной настройки того же профиля
+    // «Мой worklog» не догрузил бы старые записи из Jira.
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith('jiratime-'))
+      .forEach((k) => localStorage.removeItem(k));
     settingsStore.setOnboardingDone(false);
     resetSuccess.value = true;
     resetMessage.value = 'Данные сброшены. Перезагрузка приложения…';

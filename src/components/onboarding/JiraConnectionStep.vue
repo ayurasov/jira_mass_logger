@@ -39,8 +39,8 @@ function extractError(e: unknown): string {
 async function testAndSave() {
   error.value = '';
   testing.value = true;
+  const secretRef = `jira-onboarding-${Date.now()}`;
   try {
-    const secretRef = `jira-onboarding-${Date.now()}`;
     await invoke('save_secret', { secretRef, value: form.token });
 
     const iType = instanceType();
@@ -76,6 +76,9 @@ async function testAndSave() {
         email: form.email,
         token: form.token,
         isActive: true,
+        // Без этого флаг действовал только на проверку подключения, а все
+        // последующие запросы к Jira с самоподписанным сертификатом падали.
+        acceptInvalidCerts: form.acceptInvalidCerts,
       },
     });
 
@@ -87,6 +90,8 @@ async function testAndSave() {
     error.value = msg;
   } finally {
     testing.value = false;
+    // Временный секрет нужен только для проверки: профиль сохраняет свой собственный.
+    invoke('delete_secret', { secretRef }).catch(() => {});
   }
 }
 </script>
