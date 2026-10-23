@@ -19,6 +19,7 @@ mod logger;
 mod logger_noop;
 mod license;
 mod settings_cmd;
+mod team_worklogs;
 mod win_registry;
 
 use std::sync::{Arc, Mutex};
@@ -228,6 +229,10 @@ fn main() {
             // License
             license::get_license_status,
             license::activate_license_code,
+            // Команда: worklog коллег
+            team_worklogs::search_jira_users,
+            team_worklogs::get_team_worklogs,
+            team_worklogs::get_current_jira_user,
             // Settings
             settings_cmd::get_system_theme,
             settings_cmd::save_work_schedule,
