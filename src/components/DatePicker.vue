@@ -137,11 +137,11 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
   width: 100%;
   padding: 0.5rem 0.7rem;
   background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, #d1d5db);
+  border: 1px solid var(--color-border, var(--border));
   border-radius: 0.5rem;
   cursor: pointer;
   user-select: none;
-  color: var(--color-text, #1f2430);
+  color: var(--color-text, var(--fg));
   font: inherit;
   font-size: 0.9rem;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -158,8 +158,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
 }
 
 .dp-trigger--disabled {
-  background: var(--color-surface-alt, #f2f3f5);
-  color: var(--color-text-muted, #6b7280);
+  background: var(--color-surface-alt, var(--chip));
+  color: var(--color-text-muted, var(--muted));
   cursor: not-allowed;
   opacity: 0.7;
 }
@@ -173,12 +173,12 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
 }
 
 .dp-trigger__placeholder {
-  color: var(--color-text-muted, #9ca3af);
+  color: var(--color-text-muted, var(--muted));
 }
 
 .dp-trigger__icon {
   flex-shrink: 0;
-  color: var(--color-text-muted, #9ca3af);
+  color: var(--color-text-muted, var(--muted));
   transition: color 0.15s;
 }
 
@@ -192,7 +192,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
   left: 0;
   z-index: 60;
   background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, #e5e7eb);
+  border: 1px solid var(--color-border, var(--border));
   border-radius: 0.6rem;
   box-shadow: 0 0.5rem 1.5rem rgba(0,0,0,0.12), 0 0.15rem 0.4rem rgba(0,0,0,0.06);
   padding: 0.6rem;
@@ -208,16 +208,16 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
   padding: 0.2rem 0.5rem;
   cursor: pointer;
   border-radius: 0.3rem;
-  color: var(--color-text, #1f2430);
+  color: var(--color-text, var(--fg));
 }
-.dp-nav:hover { background: var(--color-surface-alt, #f2f3f5); }
+.dp-nav:hover { background: var(--color-surface-alt, var(--chip)); }
 .dp-title { font-weight: 600; font-size: 0.875rem; text-transform: capitalize; }
 .dp-weekdays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   text-align: center;
   font-size: 0.7rem;
-  color: var(--color-text-muted, #6b7280);
+  color: var(--color-text-muted, var(--muted));
   margin-bottom: 0.2rem;
 }
 .dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.15rem; }
@@ -228,9 +228,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
   font-size: 0.8125rem;
   border-radius: 0.3rem;
   cursor: pointer;
-  color: var(--color-text, #1f2430);
+  color: var(--color-text, var(--fg));
 }
-.dp-cell:hover { background: var(--color-surface-alt, #f2f3f5); }
+.dp-cell:hover { background: var(--color-surface-alt, var(--chip)); }
 .dp-cell--muted { color: var(--color-text-muted, #b8bcc4); }
 .dp-cell--today { font-weight: 700; box-shadow: inset 0 0 0 1px var(--color-primary, #3366ff); }
 .dp-cell--selected { background: var(--color-primary, #3366ff); color: #fff; }

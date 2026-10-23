@@ -121,22 +121,8 @@ onUnmounted(() => {
     </div>
 
     <!-- Контент -->
-    <pre
-      ref="logContainer"
-      class="logs-content"
-      aria-label="Файл логов"
-    >
-      <template v-if="filteredLines.length === 0">
-        <span class="logs-empty">Логи пусты — приложение только запустилось.</span>
-      </template>
-      <template v-else>
-        <span
-          v-for="(line, idx) in filteredLines"
-          :key="idx"
-          :class="['log-line', levelClass(line)]"
-        >{{ line }}\n</span>
-      </template>
-    </pre>
+    <!-- Разметка внутри <pre> без лишних переносов: иначе пробелы шаблона видны как пустые строки. -->
+    <pre ref="logContainer" class="logs-content" aria-label="Файл логов"><span v-if="filteredLines.length === 0" class="logs-empty">Логи пусты — приложение только запустилось.</span><span v-for="(line, idx) in filteredLines" v-else :key="idx" :class="['log-line', levelClass(line)]">{{ line }}</span></pre>
 
     <!-- Строк статуса -->
     <div class="logs-footer">
@@ -147,6 +133,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.log-line { display: block; }
 .logs-view {
   display: flex;
   flex-direction: column;
@@ -158,8 +145,8 @@ onUnmounted(() => {
 
 .logs-header {
   padding: 12px 16px 8px;
-  border-bottom: 1px solid var(--color-border, #e2e8f0);
-  background: var(--color-surface, #fafafa);
+  border-bottom: 1px solid var(--color-border, var(--border));
+  background: var(--color-surface, var(--chip));
   flex-shrink: 0;
 }
 
@@ -176,7 +163,7 @@ onUnmounted(() => {
 }
 .logs-path {
   font-size: 11px;
-  color: var(--color-text-muted, #64748b);
+  color: var(--color-text-muted, var(--muted));
   font-family: monospace;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -199,19 +186,19 @@ onUnmounted(() => {
   font-size: 11px;
   font-weight: 600;
   border-radius: 4px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border, var(--border));
   background: transparent;
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
 .filter-btn.active { background: var(--color-primary, #01696f); color: #fff; border-color: transparent; }
-.filter-debug { color: #94a3b8; }
-.filter-debug.active { background: #94a3b8; color: #fff; }
+.filter-debug { color: var(--muted); }
+.filter-debug.active { background: var(--muted); color: #fff; }
 .filter-info  { color: var(--color-text, #1e293b); }
-.filter-warn  { color: #f59e0b; }
-.filter-warn.active  { background: #f59e0b; color: #fff; }
-.filter-error { color: #ef4444; }
-.filter-error.active { background: #ef4444; color: #fff; }
+.filter-warn  { color: var(--amber-border); }
+.filter-warn.active  { background: var(--amber-border); color: #fff; }
+.filter-error { color: var(--danger); }
+.filter-error.active { background: var(--danger); color: #fff; }
 
 .auto-scroll-toggle {
   display: flex;
@@ -219,14 +206,14 @@ onUnmounted(() => {
   gap: 4px;
   font-size: 12px;
   cursor: pointer;
-  color: var(--color-text-muted, #64748b);
+  color: var(--color-text-muted, var(--muted));
 }
 
 .logs-action-btn {
   padding: 4px 10px;
   font-size: 12px;
   border-radius: 6px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border, var(--border));
   background: var(--color-surface, #fff);
   cursor: pointer;
   transition: background 0.12s;
@@ -260,24 +247,24 @@ onUnmounted(() => {
 [data-theme="dark"] .logs-content { background: #0d1117; color: #c9d1d9; }
 
 .log-line   { display: block; }
-.log-error  { color: #ef4444; }
-.log-warn   { color: #f59e0b; }
-.log-debug  { color: #94a3b8; }
+.log-error  { color: var(--danger); }
+.log-warn   { color: var(--amber-border); }
+.log-debug  { color: var(--muted); }
 .log-info   { color: inherit; }
 
 .logs-empty {
   display: block;
   text-align: center;
   margin-top: 48px;
-  color: var(--color-text-muted, #94a3b8);
+  color: var(--color-text-muted, var(--muted));
 }
 
 .logs-footer {
   padding: 6px 16px;
   font-size: 11px;
-  color: var(--color-text-muted, #64748b);
-  border-top: 1px solid var(--color-border, #e2e8f0);
-  background: var(--color-surface, #fafafa);
+  color: var(--color-text-muted, var(--muted));
+  border-top: 1px solid var(--color-border, var(--border));
+  background: var(--color-surface, var(--chip));
   flex-shrink: 0;
 }
 </style>

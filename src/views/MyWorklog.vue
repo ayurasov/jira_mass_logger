@@ -47,7 +47,7 @@
       <input v-model="store.filters.searchText" class="filters__input filters__input--search" placeholder="Поиск в описании…" />
       <label class="filters__norm">
         Норма в день, ч:
-        <input v-model.number="settings.workdayHours" type="number" min="1" max="24" step="0.5" />
+        <input v-model.number="settings.workdayHours" type="number" min="1" max="24" step="0.5" @change="persistNorm" />
       </label>
     </div>
 
@@ -65,7 +65,7 @@
           <col style="width: 34%" />
           <col style="width: 6rem" />
           <col style="width: 5rem" />
-          <col style="width: 4.5rem" />
+          <col style="width: 6.75rem" />
         </colgroup>
         <thead>
           <tr>
@@ -82,19 +82,21 @@
         <tbody>
           <template v-for="group in groupedByWeek" :key="group.week">
             <tr class="week-row">
-              <td colspan="7" class="group-label">
-                <span>Неделя {{ group.week }}</span>
-                <span class="group-total" :class="weekHoursClass(group.totalHours)">{{ group.totalHours.toFixed(2) }} ч</span>
+              <td colspan="8">
+                <div class="group-label">
+                  <span>Неделя {{ group.week.split('-W')[1] }} · {{ group.week.split('-W')[0] }}</span>
+                  <span class="group-total" :class="weekHoursClass(group.totalHours)">{{ group.totalHours.toFixed(2) }} ч</span>
+                </div>
               </td>
-              <td></td>
             </tr>
             <template v-for="dayGroup in group.days" :key="dayGroup.date">
               <tr class="day-row">
-                <td colspan="7" class="group-label">
-                  <span>{{ formatDate(dayGroup.date) }}</span>
-                  <span class="group-total" :class="dayHoursClass(dayGroup.totalHours)">{{ dayGroup.totalHours.toFixed(2) }} ч</span>
+                <td colspan="8">
+                  <div class="group-label">
+                    <span>{{ formatDate(dayGroup.date) }} · {{ WEEKDAY_RU_SHORT[dayGroup.rows[0]?.weekday ?? 0] }}</span>
+                    <span class="group-total" :class="dayHoursClass(dayGroup.totalHours)">{{ dayGroup.totalHours.toFixed(2) }} ч</span>
+                  </div>
                 </td>
-                <td></td>
               </tr>
               <tr v-for="row in dayGroup.rows" :key="row.rowKey" class="worklog-row">
                 <td>{{ formatDate(row.date) }}</td>
@@ -148,10 +150,12 @@
                 <td>
                   <span class="status-dot" :class="'status-dot--' + row.syncStatus" :title="row.syncError || row.syncStatus"></span>
                 </td>
-                <td class="row-actions">
-                  <button class="icon-btn" title="Изменить" @click="openRowEditor(row)"><ActionIcon name="edit" :size="15" /></button>
-                  <button class="icon-btn" title="Дублировать" @click="promptDuplicate(row)"><ActionIcon name="duplicate" :size="15" /></button>
-                  <button class="icon-btn icon-btn--danger" title="Удалить" @click="confirmDelete(row)"><ActionIcon name="close" :size="15" /></button>
+                <td>
+                  <div class="row-actions">
+                    <button class="icon-btn" title="Изменить" @click="openRowEditor(row)"><ActionIcon name="edit" :size="15" /></button>
+                    <button class="icon-btn" title="Дублировать" @click="promptDuplicate(row)"><ActionIcon name="duplicate" :size="15" /></button>
+                    <button class="icon-btn icon-btn--danger" title="Удалить" @click="confirmDelete(row)"><ActionIcon name="close" :size="15" /></button>
+                  </div>
                 </td>
               </tr>
             </template>
@@ -379,16 +383,18 @@ const groupedByWeek = computed(() => {
     });
 });
 
+// Допуск на округление: часы строк округлены до сотых (3 × 2.67 = 8.01 ≠ 8).
+const HOURS_EPS = 0.05;
 function dayHoursClass(hours: number) {
-  if (hours < settings.workHoursPerDay) return 'hours--under';
-  if (hours > settings.workHoursPerDay) return 'hours--over';
+  if (hours < settings.workHoursPerDay - HOURS_EPS) return 'hours--under';
+  if (hours > settings.workHoursPerDay + HOURS_EPS) return 'hours--over';
   return 'hours--ok';
 }
 function weekHoursClass(hours: number) {
   // Норма недели = норма дня × число рабочих дней из графика (а не всегда 5).
   const target = settings.workHoursPerDay * (settings.workdays.length || 5);
-  if (hours < target) return 'hours--under';
-  if (hours > target) return 'hours--over';
+  if (hours < target - HOURS_EPS) return 'hours--under';
+  if (hours > target + HOURS_EPS) return 'hours--over';
   return 'hours--ok';
 }
 
@@ -520,6 +526,13 @@ async function doDelete() {
 
 async function refreshFromJira() {
   await store.refreshFromJira();
+}
+
+// Норма из фильтра сохраняется в рабочий график (раньше жила только до перезапуска).
+function persistNorm() {
+  const h = Number(settings.workdayHours);
+  if (!h || h <= 0 || h > 24) return;
+  settings.setWorkSchedule({ workdayHours: h, workdays: settings.workdays, timezone: settings.timezone });
 }
 
 function sortIndicator(key: 'date' | 'issue' | 'hours' | 'status'): string {

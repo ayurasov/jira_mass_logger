@@ -15,13 +15,13 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, bail, Result};
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use chrono::{DateTime, Duration, Utc};
 use data_encoding::BASE32_NOPAD;
 use ed25519_dalek::{Signature, VerifyingKey, Verifier};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{command, AppHandle, Manager, State};
+use tauri::{command, State};
 
 // ─── Публичный ключ Ed25519 (база base64 std, 32 bytes) ─────────────────────────────
 // Генерация: python tools/license-codegen/generate_key.py

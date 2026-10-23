@@ -110,10 +110,10 @@
 </template>
 
 <script setup lang="ts">
+import { WORKLOG_TEXT_VARIABLES, getIsoWeek, renderWorklogText } from '../utils/worklogText';
+import { localIsoDate } from '../utils/time';
 import { ref, reactive, computed, onMounted, nextTick } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { format, getWeek } from 'date-fns';
-import { ru } from 'date-fns/locale';
 import ActionIcon from '../components/ActionIcon.vue';
 
 interface TemplateItem {
@@ -125,13 +125,7 @@ interface TemplateItem {
   useCount: number;
 }
 
-const VARIABLES: { token: string; desc: string }[] = [
-  { token: 'date',          desc: 'Текущая дата, например: 18.08.2026' },
-  { token: 'week',          desc: 'Название недели' },
-  { token: 'week_number',   desc: 'Номер недели в году' },
-  { token: 'issue',         desc: 'Ключ задачи Jira' },
-  { token: 'meeting_title', desc: 'Тема встречи из календаря' },
-];
+const VARIABLES = WORKLOG_TEXT_VARIABLES;
 
 const templates = ref<TemplateItem[]>([]);
 const searchQuery = ref('');
@@ -166,13 +160,8 @@ const filtered = computed(() => {
 });
 
 function renderPreview(text: string): string {
-  const now = new Date();
-  return text
-    .replace(/\{date\}/g, format(now, 'dd.MM.yyyy'))
-    .replace(/\{week\}/g, format(now, 'EEEE', { locale: ru }))
-    .replace(/\{week_number\}/g, String(getWeek(now, { locale: ru })))
-    .replace(/\{issue\}/g, 'PROJ-123')
-    .replace(/\{meeting_title\}/g, 'Daily Standup');
+  const today = localIsoDate();
+  return renderWorklogText(text, { date: today, week: getIsoWeek(today), issue: 'PROJ-123', meetingTitle: 'Daily Standup' });
 }
 
 async function loadTemplates() {
@@ -263,16 +252,16 @@ function insertVar(token: string) {
 <style scoped>
 .templates-page { padding: 1.5rem; max-width: 860px; }
 .page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: .4rem; display: flex; align-items: center; gap: .5rem; }
-.page-hint { font-size: .88rem; color: #666; margin-bottom: 1.2rem; }
-.page-hint code { background: #f0f0f0; border-radius: 3px; padding: .05rem .3rem; font-size: .82rem; }
+.page-hint { font-size: .88rem; color: var(--muted); margin-bottom: 1.2rem; }
+.page-hint code { background: var(--chip); border-radius: 3px; padding: .05rem .3rem; font-size: .82rem; }
 .toolbar { display: flex; gap: .8rem; margin-bottom: 1.2rem; align-items: center; }
 .search-input-wrap { position: relative; flex: 1; display: flex; align-items: center; }
-.search-input-icon { position: absolute; left: .6rem; color: #999; pointer-events: none; }
-.search-input { flex: 1; padding: .4rem .75rem .4rem 2rem; border: 1px solid var(--border, #d0d5dd); border-radius: 7px; font-size: .9rem; background: var(--input-bg, #fafafa); }
-.btn { padding: .4rem .9rem; border-radius: 6px; border: 1px solid var(--border, #d0d5dd); cursor: pointer; font-size: .9rem; background: var(--surface, #fff); }
-.btn-primary { background: #0052cc; color: #fff; border-color: #0052cc; }
+.search-input-icon { position: absolute; left: .6rem; color: var(--muted); pointer-events: none; }
+.search-input { flex: 1; padding: .4rem .75rem .4rem 2rem; border: 1px solid var(--border, var(--border)); border-radius: 7px; font-size: .9rem; background: var(--input-bg, var(--chip)); }
+.btn { padding: .4rem .9rem; border-radius: 6px; border: 1px solid var(--border, var(--border)); cursor: pointer; font-size: .9rem; background: var(--surface, #fff); }
+.btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
 .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
-.empty-hint { color: #999; font-size: .9rem; padding: 1.5rem 0; text-align: center; }
+.empty-hint { color: var(--muted); font-size: .9rem; padding: 1.5rem 0; text-align: center; }
 
 .template-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem; }
 .template-card { background: var(--surface, #fff); border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.07); padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: .5rem; border: 1.5px solid transparent; transition: border-color .15s; }
@@ -281,33 +270,33 @@ function insertVar(token: string) {
 .tc-header { display: flex; align-items: center; gap: .5rem; }
 .tc-name { font-weight: 600; flex: 1; font-size: .95rem; }
 .tc-issue { font-size: .75rem; font-weight: 700; color: var(--accent, #0891b2); background: #e0f2fe; padding: 1px 6px; border-radius: 4px; }
-.tc-uses { font-size: .75rem; color: #aaa; white-space: nowrap; }
+.tc-uses { font-size: .75rem; color: var(--muted); white-space: nowrap; }
 .tc-actions { display: flex; gap: .1rem; }
 .tc-body { font-size: .87rem; }
-.tc-text { color: #333; white-space: pre-wrap; word-break: break-word; background: #f9f9f9; border-radius: 5px; padding: .45rem .6rem; font-family: monospace; font-size: .82rem; }
-.tc-preview { display: flex; gap: .4rem; font-size: .82rem; color: #555; margin-top: .2rem; }
-.tc-preview-label { color: #aaa; white-space: nowrap; }
+.tc-text { color: var(--fg); white-space: pre-wrap; word-break: break-word; background: var(--chip); border-radius: 5px; padding: .45rem .6rem; font-family: monospace; font-size: .82rem; }
+.tc-preview { display: flex; gap: .4rem; font-size: .82rem; color: var(--muted); margin-top: .2rem; }
+.tc-preview-label { color: var(--muted); white-space: nowrap; }
 .icon-btn { background: none; border: none; cursor: pointer; font-size: 1rem; padding: .2rem .3rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
-.icon-btn:hover { background: #f0f0f0; }
-.icon-btn.danger:hover { background: #fee2e2; }
+.icon-btn:hover { background: var(--chip); }
+.icon-btn.danger:hover { background: var(--color-danger-bg); }
 
 /* Modal */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .modal { background: var(--surface, #fff); border-radius: 12px; padding: 1.8rem; min-width: 460px; max-width: 560px; box-shadow: 0 8px 32px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: .75rem; }
 .modal h2 { margin: 0 0 .5rem; font-size: 1.1rem; }
 .modal label { display: flex; flex-direction: column; gap: .2rem; font-size: .88rem; font-weight: 500; }
-.modal input, .modal textarea { padding: .38rem .6rem; border: 1px solid var(--border, #d0d5dd); border-radius: 6px; font-size: .9rem; background: var(--input-bg, #fafafa); font-family: inherit; resize: vertical; }
+.modal input, .modal textarea { padding: .38rem .6rem; border: 1px solid var(--border, var(--border)); border-radius: 6px; font-size: .9rem; background: var(--input-bg, var(--chip)); font-family: inherit; resize: vertical; }
 .checkbox-label { flex-direction: row !important; align-items: center; gap: .5rem; font-weight: 400; }
 
 .var-chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
-.var-label { font-size: .8rem; color: #888; }
-.var-chip { padding: .15rem .5rem; background: #e8eeff; color: #1a3a8f; border: none; border-radius: 4px; cursor: pointer; font-size: .8rem; font-family: monospace; }
-.var-chip:hover { background: #d0daff; }
+.var-label { font-size: .8rem; color: var(--muted); }
+.var-chip { padding: .15rem .5rem; background: var(--chip); color: var(--primary-strong); border: none; border-radius: 4px; cursor: pointer; font-size: .8rem; font-family: monospace; }
+.var-chip:hover { background: var(--chip); }
 
-.preview-box { background: #f0f8ff; border-radius: 6px; padding: .5rem .75rem; }
-.preview-box-label { font-size: .75rem; color: #888; margin-bottom: .2rem; }
-.preview-box-text { font-size: .9rem; color: #333; word-break: break-word; }
+.preview-box { background: var(--chip); border-radius: 6px; padding: .5rem .75rem; }
+.preview-box-label { font-size: .75rem; color: var(--muted); margin-bottom: .2rem; }
+.preview-box-text { font-size: .9rem; color: var(--fg); word-break: break-word; }
 
 .modal-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .5rem; }
-.form-error { color: #dc2626; font-size: .85rem; }
+.form-error { color: var(--danger); font-size: .85rem; }
 </style>

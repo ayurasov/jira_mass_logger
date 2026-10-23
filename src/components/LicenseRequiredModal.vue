@@ -175,10 +175,10 @@ const license = useLicenseStore();
   flex-shrink: 0;
 }
 .lic-limits__icon--ok {
-  color: var(--success, #16a34a);
+  color: var(--success, var(--success));
 }
 .lic-limits__icon--no {
-  color: var(--danger, #dc2626);
+  color: var(--danger, var(--danger));
 }
 
 .lic-actions {

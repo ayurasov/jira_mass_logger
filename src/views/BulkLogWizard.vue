@@ -262,7 +262,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
               <span>Описание worklog</span>
               <textarea v-model="wizard.descriptionTemplate" class="text-area" rows="4"
                 placeholder="Например: Работа по задаче {issue} за {date}" />
-              <small>Доступные переменные: <code>{date}</code>, <code>{week}</code>, <code>{issue}</code></small>
+              <small>Доступные переменные: <code>{date}</code>, <code>{week}</code>, <code>{week_number}</code>, <code>{issue}</code></small>
             </label>
             <div class="field-block">
               <span>Сохранённые шаблоны текста</span>
@@ -399,13 +399,13 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 .empty-state {
   padding: 3rem 1.5rem;
   text-align: center;
-  border: 1px dashed var(--color-border, #d0d5dd);
+  border: 1px dashed var(--color-border, var(--border));
   border-radius: 12px;
 }
-.empty-state-error { color: var(--color-error, #dc2626); font-size: 0.85rem; }
-.started-hint { display: block; color: var(--text-muted, #888); font-size: 0.75rem; margin-top: 2px; }
-.field-error { color: var(--color-error, #dc2626); font-size: 0.75rem; }
-.muted-hint { color: var(--color-text-muted, #9ca3af); font-size: 0.82rem; }
+.empty-state-error { color: var(--color-error, var(--danger)); font-size: 0.85rem; }
+.started-hint { display: block; color: var(--text-muted, var(--muted)); font-size: 0.75rem; margin-top: 2px; }
+.field-error { color: var(--color-error, var(--danger)); font-size: 0.75rem; }
+.muted-hint { color: var(--color-text-muted, var(--muted)); font-size: 0.82rem; }
 
 /* ── Поля дат ── */
 .field-block--datepicker {
@@ -420,7 +420,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 .field-block--datepicker .field-block__label {
   font-size: 0.82rem;
   font-weight: 500;
-  color: var(--color-text-muted, #6b7280);
+  color: var(--color-text-muted, var(--muted));
   margin-bottom: 0.1rem;
 }
 
@@ -437,7 +437,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   cursor: pointer;
   user-select: none;
   background: var(--color-surface-offset, #f0f0ee);
-  color: var(--color-text-muted, #6b7280);
+  color: var(--color-text-muted, var(--muted));
   transition: background 120ms, color 120ms;
   border: none;
 }
@@ -470,7 +470,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   cursor: pointer;
   user-select: none;
   background: var(--color-surface-offset, #f0f0ee);
-  color: var(--color-text-muted, #6b7280);
+  color: var(--color-text-muted, var(--muted));
   border: none;
   transition: background 120ms, color 120ms;
   line-height: 1.4;
@@ -497,23 +497,23 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   align-items: center;
   gap: 0.5rem;
   padding: 0.55rem 1rem;
-  background: #fff8e1;
-  border: 1px solid #ffe082;
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-border);
   border-radius: 0.5rem;
   font-size: 0.87rem;
-  color: #7a5400;
+  color: var(--amber-fg);
   margin-bottom: 0.5rem;
 }
 .license-banner__btn {
   margin-left: auto;
   padding: 0.25rem 0.75rem;
   border-radius: 0.4rem;
-  border: 1px solid #f59e0b;
-  background: #fef3c7;
-  color: #92400e;
+  border: 1px solid var(--amber-border);
+  background: var(--amber-bg);
+  color: var(--amber-fg);
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
 }
-.license-banner__btn:hover { background: #fde68a; }
+.license-banner__btn:hover { background: var(--amber-bg); }
 </style>

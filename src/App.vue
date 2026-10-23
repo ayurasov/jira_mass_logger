@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { useRouter } from 'vue-router';
 import { useDayFromCalendarStore } from './store/dayFromCalendar';
+import { useMyWorklogStore } from './store/myWorklog';
 import { localIsoDate } from './utils/time';
 import { useSettingsStore } from './store/settings';
 import { useLicenseStore } from './store/license';
@@ -20,6 +21,14 @@ const settings = useSettingsStore();
 const license = useLicenseStore();
 const jiraProfiles = useJiraProfilesStore();
 const router = useRouter();
+
+// Тик планировщика / кнопка «Синхронизировать сейчас» в индикаторе: отправляем
+// офлайн-очередь; ручной запуск дополнительно обновляет worklog из Jira.
+listen<{ manual?: boolean }>('sync_tick', async (e) => {
+  const worklog = useMyWorklogStore();
+  await worklog.drainSyncQueue().catch(() => {});
+  if (e.payload?.manual) await worklog.refreshFromJira().catch(() => {});
+}).catch(() => {});
 
 // Пункт трея «Залогировать сегодня» — открываем день из календаря на сегодня.
 listen('tray:log_today', async () => {
