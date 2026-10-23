@@ -50,15 +50,16 @@ ${update.body ?? ''}
       if (!shouldInstall) return;
 
       installProgress.value = 0;
+      // Progress приходит порциями (chunkLength), общий размер — один раз в Started.
+      let total = 0;
+      let downloaded = 0;
       await update.downloadAndInstall((event) => {
-        if (event.event === 'Progress') {
-          const data = event.data as { chunkLength?: number; contentLength?: number };
-          const pct = data.chunkLength && data.contentLength
-            ? Math.round((data.chunkLength / data.contentLength) * 100)
-            : null;
-          if (pct !== null) installProgress.value = pct;
-        }
-        if (event.event === 'Finished') {
+        if (event.event === 'Started') {
+          total = event.data.contentLength ?? 0;
+        } else if (event.event === 'Progress') {
+          downloaded += event.data.chunkLength;
+          if (total > 0) installProgress.value = Math.min(100, Math.round((downloaded / total) * 100));
+        } else if (event.event === 'Finished') {
           installProgress.value = 100;
         }
       });

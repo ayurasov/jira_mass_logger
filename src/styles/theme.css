@@ -16,6 +16,7 @@
   font-size: 16px;
 }
 
+html.dark,
 .app.dark {
   --bg: #1a1a1a;
   --fg: #f0f0f0;
@@ -31,8 +32,56 @@
   --shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.28);
 }
 
+/* Псевдонимы токенов, которые используются в компонентах (исторически в коде
+   встречаются разные имена). Объявлены и на :root, и на .app — так они
+   пересчитываются от токенов текущей темы, и тёмная тема работает во всех
+   компонентах, а не только там, где у var() нет «светлого» fallback. */
+:root,
+.app {
+  --text: var(--fg);
+  --color-text: var(--fg);
+  --text-muted: var(--muted);
+  --text-faint: var(--muted);
+  --color-text-muted: var(--muted);
+  --color-bg: var(--bg);
+  --surface: var(--card);
+  --bg-elev: var(--card);
+  --input-bg: var(--card);
+  --color-surface: var(--card);
+  --surface2: var(--chip);
+  --bg-hover: var(--chip);
+  --color-surface-2: var(--chip);
+  --color-surface-alt: var(--chip);
+  --color-surface-offset: var(--chip);
+  --color-surface-dynamic: var(--chip);
+  --color-surface-strong: var(--border);
+  --color-border: var(--border);
+  --color-border-light: var(--border);
+  --color-divider: var(--border);
+  --accent: var(--primary);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-strong);
+  --color-primary-highlight: var(--chip);
+  --primary-soft: var(--chip);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-error: var(--danger);
+  --color-success-bg: color-mix(in srgb, var(--success) 14%, transparent);
+  --color-warning-bg: color-mix(in srgb, var(--warning) 14%, transparent);
+  --color-danger-bg: color-mix(in srgb, var(--danger) 12%, transparent);
+  --space-7: 1.75rem;
+  --transition-interactive: 160ms ease;
+}
+
+html.dark,
+.app.dark {
+  --heatmap-holiday: #6b5317;
+  --heatmap-holiday-fill: #a37a14;
+}
+
 * { box-sizing: border-box; }
-body { margin: 0; font-family: 'Segoe UI', Inter, system-ui, sans-serif; }
+body { margin: 0; font-family: 'Segoe UI', Inter, system-ui, sans-serif; background: var(--bg); color: var(--fg); }
 
 .app {
   background: var(--bg);

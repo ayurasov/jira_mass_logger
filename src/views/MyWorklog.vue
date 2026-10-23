@@ -55,7 +55,6 @@
       ref="scrollContainer"
       class="worklog-table-wrap"
       :class="{ 'worklog-table-wrap--editing': editingCell !== null }"
-      @wheel="onWheel"
     >
       <table class="worklog-table">
         <colgroup>
@@ -269,6 +268,7 @@
 </template>
 
 <script setup lang="ts">
+import { localIsoDate, daysAgoIso, formatRuDate } from '../utils/time';
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { save } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
@@ -309,17 +309,13 @@ onMounted(async () => {
   const qFrom = (route.query.from as string) || '';
   const qTo = (route.query.to as string) || '';
   if (qFrom || qTo) {
-    const now = new Date();
-    const from = qFrom || new Date(now.getTime() - 27 * 86400000).toISOString().slice(0, 10);
-    const to = qTo || now.toISOString().slice(0, 10);
+    const from = qFrom || daysAgoIso(27);
+    const to = qTo || localIsoDate();
     store.filters.fromDate = from;
     store.filters.toDate = to;
   } else if (!store.filters.fromDate || !store.filters.toDate) {
-    const now = new Date();
-    const from = new Date(now);
-    from.setDate(from.getDate() - 27);
-    store.filters.fromDate = from.toISOString().slice(0, 10);
-    store.filters.toDate = now.toISOString().slice(0, 10);
+    store.filters.fromDate = daysAgoIso(27);
+    store.filters.toDate = localIsoDate();
   }
   store.persistFilters();
 
@@ -338,9 +334,8 @@ watch(
   () => [route.query.from as string, route.query.to as string],
   ([from, to]) => {
     if (!from && !to) return;
-    const now = new Date();
-    const f = from || new Date(now.getTime() - 27 * 86400000).toISOString().slice(0, 10);
-    const t = to || now.toISOString().slice(0, 10);
+    const f = from || daysAgoIso(27);
+    const t = to || localIsoDate();
     if (f !== store.filters.fromDate || t !== store.filters.toDate) {
       store.filters.fromDate = f;
       store.filters.toDate = t;
@@ -390,15 +385,15 @@ function dayHoursClass(hours: number) {
   return 'hours--ok';
 }
 function weekHoursClass(hours: number) {
-  const target = settings.workHoursPerDay * 5;
+  // Норма недели = норма дня × число рабочих дней из графика (а не всегда 5).
+  const target = settings.workHoursPerDay * (settings.workdays.length || 5);
   if (hours < target) return 'hours--under';
   if (hours > target) return 'hours--over';
   return 'hours--ok';
 }
 
 function formatDate(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return formatRuDate(iso);
 }
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString('ru-RU');
@@ -514,6 +509,7 @@ async function confirmDuplicate() {
 }
 
 function confirmDelete(row: WorklogRow) {
+  if (!license.guardWrite()) return;
   deleteTarget.value = row;
 }
 async function doDelete() {
@@ -542,9 +538,6 @@ function onChangeAutoSyncInterval(e: Event) {
   store.startAutoSync();
 }
 
-function onWheel(_e: WheelEvent) {
-}
-
 async function exportCsv() {
   const rows = store.filteredRows;
   const header = ['Дата', 'День недели', 'Задача', 'Описание', 'Часы', 'Время старта', 'Статус'];
@@ -555,7 +548,8 @@ async function exportCsv() {
       WEEKDAY_RU_SHORT[r.weekday],
       r.issueKey,
       `"${r.comment.replaceAll('"', '""')}"`,
-      r.hours.toFixed(2),
+      // Excel в русской локали ожидает десятичную запятую.
+      r.hours.toFixed(2).replace('.', ','),
       formatTime(r.started),
       r.syncStatus,
     ].join(';'));

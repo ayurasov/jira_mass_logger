@@ -24,6 +24,7 @@
 </template>
 
 <script setup lang="ts">
+import { localIsoDate } from '../../utils/time';
 import { ref, watch, computed, toRef } from 'vue';
 import DatePicker from '../DatePicker.vue';
 import { PieChart, BarChart } from 'echarts/charts';
@@ -47,8 +48,8 @@ const chartType = ref<'donut' | 'bar'>('donut');
 
 const now = new Date();
 const defaultFrom = new Date(now); defaultFrom.setDate(now.getDate() - 30);
-const from = ref(defaultFrom.toISOString().slice(0, 10));
-const to   = ref(now.toISOString().slice(0, 10));
+const from = ref(localIsoDate(defaultFrom));
+const to   = ref(localIsoDate(now));
 
 function setMode(m: 'project' | 'issue') {
   mode.value = m;

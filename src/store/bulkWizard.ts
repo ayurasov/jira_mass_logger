@@ -1,13 +1,26 @@
 import { defineStore } from 'pinia';
 import { tauriApi, type BulkResultItem, type IssueDto, type JiraConnectionParams, type RecentIssue, type TextTemplate, type WizardTemplate } from '../lib/tauriApi';
-import { DATE_RANGE_PRESETS, DEFAULT_WEEKDAY_FILTER, RU_HOLIDAYS_FALLBACK_2026, WEEKDAY_RU_SHORT, buildWorkingDates, toIsoDate, type WeekdayFilter } from '../utils/dateRange';
+import { DATE_RANGE_PRESETS, DEFAULT_WEEKDAY_FILTER, WEEKDAY_RU_SHORT, buildWorkingDates, toIsoDate, type WeekdayFilter } from '../utils/dateRange';
 import { getIsoWeek, renderWorklogText } from '../utils/worklogText';
 import { useSettingsStore } from './settings';
+import { getTimezoneOffsetMs } from '../utils/time';
+
+const WEEKDAY_KEYS: (keyof WeekdayFilter)[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/** Фильтр дней недели и норма часов — из рабочего графика в настройках. */
+function scheduleDefaults(): { weekdayFilter: WeekdayFilter; hoursPerDay: number } {
+  const settings = useSettingsStore();
+  const days = settings.workdays?.length ? settings.workdays : [1, 2, 3, 4, 5];
+  const weekdayFilter = Object.fromEntries(WEEKDAY_KEYS.map((k, i) => [k, days.includes(i)])) as unknown as WeekdayFilter;
+  return { weekdayFilter, hoursPerDay: settings.workdayHours || 8 };
+}
 
 export interface IssueOption { key: string; summary?: string | null; source: 'recent' | 'search'; isFavorite?: boolean; }
 export interface PreviewRow { id: string; date: string; weekday: string; hours: number; description: string; startedAt: string; issueKey: string; conflict: boolean; skipped?: boolean; status?: 'pending' | 'success' | 'error' | 'retry'; error?: string | null; }
 export interface BulkWizardConfigSnapshot { issueKey: string; issueSummary?: string | null; periodFrom: string; periodTo: string; presetId: string; weekdayFilter: WeekdayFilter; excludeHolidays: boolean; hoursPerDay: number; descriptionTemplate: string; startTime: string; }
 let searchTimer: number | null = null;
+/** resolve отложенного поиска: при новом вводе предыдущий await должен завершиться, а не висеть. */
+let searchResolve: (() => void) | null = null;
 
 /** Собирает Jira-строку started из даты+времени, как они буквально введены пользователем
  *  (локальное время в таймзоне из настроек), без двойного сдвига:
@@ -41,25 +54,6 @@ function datetimeLocalToJiraStarted(value: string, timezone: string): string {
   return toJiraStartedLocal(datePart, (timePart ?? '00:00').slice(0, 5), timezone);
 }
 
-function getTimezoneOffsetMs(dt: Date, tz: string): number {
-  try {
-    const fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-      hour12: false,
-    });
-    const parts = Object.fromEntries(fmt.formatToParts(dt).map((p) => [p.type, p.value]));
-    const localMs = Date.UTC(
-      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
-      Number(parts.hour) % 24, Number(parts.minute), Number(parts.second),
-    );
-    return localMs - dt.getTime();
-  } catch {
-    return -dt.getTimezoneOffset() * 60000;
-  }
-}
-
 /** Похоже ли на ключ задачи Jira (ABC-123) — тогда ищем точным JQL key=, иначе полнотекстовый text ~. */
 function isIssueKeyLike(query: string): boolean {
   return /^[A-Za-z][A-Za-z0-9]+-\d+$/.test(query.trim());
@@ -69,7 +63,7 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
   state: () => ({
     step: 1, totalSteps: 4, loading: false, query: '', issueKey: '', issueSummary: '', recentIssues: [] as RecentIssue[], issueOptions: [] as IssueOption[],
     selectedPresetId: 'this_week', periodFrom: DATE_RANGE_PRESETS[0].range().from, periodTo: DATE_RANGE_PRESETS[0].range().to,
-    weekdayFilter: { ...DEFAULT_WEEKDAY_FILTER } as WeekdayFilter, excludeHolidays: true, holidays: [...RU_HOLIDAYS_FALLBACK_2026] as string[],
+    weekdayFilter: { ...DEFAULT_WEEKDAY_FILTER } as WeekdayFilter, excludeHolidays: true, holidays: [] as string[],
     hoursPerDay: 8, descriptionTemplate: 'Работа по задаче {issue} за {date}',
     // Реальные шаблоны описаний (страница "Шаблоны", text_templates в БД) — раньше здесь был
     // статичный захардкоженный список, никак не связанный с тем, что пользователь сохраняет
@@ -91,6 +85,12 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
       this.textTemplates = await tauriApi.listTemplates().catch(() => []);
       const custom = await tauriApi.getCustomHolidays().catch(() => []);
       if (custom.length > 0) this.holidays = custom;
+      // Значения по умолчанию — из рабочего графика, пока пользователь ничего не начал вводить.
+      if (this.step === 1 && !this.issueKey && this.previewRows.length === 0) {
+        const defaults = scheduleDefaults();
+        this.weekdayFilter = defaults.weekdayFilter;
+        this.hoursPerDay = defaults.hoursPerDay;
+      }
       this.issueOptions = this.recentIssues.map((item) => ({ key: item.issueKey, summary: item.summary, source: 'recent', isFavorite: item.isFavorite }));
     },
     /** Применяет сохранённый шаблон описания (страница "Шаблоны") к текущему мастеру:
@@ -106,13 +106,16 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
       }
     },
     async searchIssues(params: JiraConnectionParams, query: string) {
-      this.query = query; if (searchTimer) window.clearTimeout(searchTimer); if (!query.trim()) { this.issueOptions = this.recentIssues.map((item) => ({ key: item.issueKey, summary: item.summary, source: 'recent', isFavorite: item.isFavorite })); return; }
+      this.query = query; if (searchTimer) window.clearTimeout(searchTimer); searchResolve?.(); searchResolve = null; if (!query.trim()) { this.loading = false; this.issueOptions = this.recentIssues.map((item) => ({ key: item.issueKey, summary: item.summary, source: 'recent', isFavorite: item.isFavorite })); return; }
       this.loading = true;
       await new Promise<void>((resolve) => {
+        searchResolve = resolve;
         searchTimer = window.setTimeout(async () => {
+          searchResolve = null;
           try {
             const trimmed = query.trim();
-            const safeQuery = trimmed.replaceAll('"', '\\"');
+            // Экранируем сначала обратный слеш, затем кавычки — иначе «\» ломал JQL.
+            const safeQuery = trimmed.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
             // Если запрос похож на ключ задачи (ABC-123) — точный поиск по key=,
             // иначе обычный полнотекстовый поиск по text (как в календарном логгере).
             const jql = isIssueKeyLike(trimmed)
@@ -124,17 +127,31 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
             for (const row of [...mergedRecent, ...found.map((issue: IssueDto) => ({ key: issue.key, summary: issue.summary, source: 'search' as const }))]) {
               if (!seen.has(row.key)) { seen.add(row.key); searchOptions.push(row); }
             }
-            this.issueOptions = searchOptions;
+            if (this.query === query) this.issueOptions = searchOptions;
+          } catch {
+            // Ошибка Jira при поиске — оставляем последние варианты, не роняем UI.
           } finally { this.loading = false; resolve(); }
         }, 300);
       });
     },
-    selectIssue(option: IssueOption | string) { if (typeof option === 'string') { const match = option.match(/[A-Z][A-Z0-9_]+-\d+/); this.issueKey = match?.[0] ?? option.trim().toUpperCase(); this.issueSummary = ''; return; } this.issueKey = option.key; this.issueSummary = option.summary ?? ''; },
+    selectIssue(option: IssueOption | string) {
+      if (typeof option === 'string') {
+        const text = option.trim();
+        if (!text) { this.issueKey = ''; this.issueSummary = ''; return; }
+        // Ключ ищем без учёта регистра (ссылка, «abc-123»). Произвольный текст поиска
+        // ключом не считаем — иначе по blur в issueKey попадал бы сам запрос.
+        const match = text.toUpperCase().match(/[A-Z][A-Z0-9_]+-\d+/);
+        if (match && match[0] !== this.issueKey) { this.issueKey = match[0]; this.issueSummary = ''; }
+        return;
+      } this.issueKey = option.key; this.issueSummary = option.summary ?? ''; },
     async generatePreview(params: JiraConnectionParams) {
       if (!this.issueKey || !this.periodFrom || !this.periodTo) return; this.loading = true;
       try {
         const settings = useSettingsStore();
-        const workingDates = buildWorkingDates(this.periodFrom, this.periodTo, this.weekdayFilter, this.excludeHolidays, this.holidays);
+        // Праздники: производственный календарь из настроек (с учётом правок пользователя)
+        // + импортированный пользователем список.
+        const holidays = [...settings.holidays.map((h) => h.date), ...this.holidays];
+        const workingDates = buildWorkingDates(this.periodFrom, this.periodTo, this.weekdayFilter, this.excludeHolidays, holidays);
         const existing = await tauriApi.getWorklog(params, this.issueKey).catch(() => []);
         this.existingWorklogs = existing.map((item) => ({ startedDate: item.started.slice(0, 10), issueKey: this.issueKey }));
         const existingSet = new Set(this.existingWorklogs.map((item) => `${item.issueKey}|${item.startedDate}`));
@@ -159,18 +176,15 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
     async submit(params: JiraConnectionParams) {
       this.sending = true; this.statusLogLines = [];
       try {
-        const entries = this.previewRows.filter((row) => !row.skipped).map((row) => ({ issueKey: row.issueKey, startedAt: row.startedAt, timeSpentSeconds: Math.round(row.hours * 3600), comment: row.description }));
+        // Уже успешно отправленные строки повторно не шлём — иначе повтор после
+        // частичной ошибки создавал бы дубли в Jira.
+        const toSend = this.previewRows.filter((row) => !row.skipped && row.status !== 'success');
+        const entries = toSend.map((row) => ({ issueKey: row.issueKey, startedAt: row.startedAt, timeSpentSeconds: Math.round(row.hours * 3600), comment: row.description }));
         this.results = await tauriApi.bulkAddWorklogs(params, entries);
-        let successCount = 0;
-        for (let i = 0; i < this.results.length; i++) {
-          const result = this.results[i]; const row = this.previewRows.filter((r) => !r.skipped)[i]; if (!row) continue;
+                for (let i = 0; i < this.results.length; i++) {
+          const result = this.results[i]; const row = toSend[i]; if (!row) continue;
           row.status = result.success ? 'success' : (result.attempts > 1 ? 'retry' : 'error'); row.error = result.error;
-          if (result.success) successCount++;
           this.statusLogLines.push(`${row.date} | ${row.issueKey} | ${result.success ? 'Успех' : 'Ошибка'} | попыток: ${result.attempts}${result.error ? ` | ${result.error}` : ''}`);
-        }
-        if (successCount > 0) {
-          const prev = Number(localStorage.getItem('jiratime-bulk-entries-created') ?? '0');
-          localStorage.setItem('jiratime-bulk-entries-created', String(prev + successCount));
         }
         await tauriApi.touchRecentIssue(this.issueKey, this.issueSummary || undefined).catch(() => undefined);
       } finally { this.sending = false; }
@@ -191,9 +205,10 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
       const range = DATE_RANGE_PRESETS[0].range();
       this.periodFrom = range.from;
       this.periodTo = range.to;
-      this.weekdayFilter = { ...DEFAULT_WEEKDAY_FILTER };
+      const defaults = scheduleDefaults();
+      this.weekdayFilter = defaults.weekdayFilter;
       this.excludeHolidays = true;
-      this.hoursPerDay = 8;
+      this.hoursPerDay = defaults.hoursPerDay;
       this.descriptionTemplate = 'Работа по задаче {issue} за {date}';
       this.startTime = '09:00';
       this.previewRows = [];

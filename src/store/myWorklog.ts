@@ -1,5 +1,6 @@
 // Pinia-стор экрана "Мой worklog": редактируемая таблица с оптимистичным UI,
 // очередью несинхронизированных изменений и обработкой конфликтов версий.
+import { localIsoDate, weekdayOfIso, formatJiraStarted } from '../utils/time';
 import { defineStore } from 'pinia';
 import { tauriApi, parseConflictError, type WorklogDto, type JiraConnectionParams, type CachedWorklogRow } from '../lib/tauriApi';
 import { useJiraProfilesStore } from './jiraProfiles';
@@ -27,45 +28,11 @@ function rowKeyOf(worklogId: string | null | undefined, issueKey: string, starte
   return worklogId ? `wl:${worklogId}` : `local:${issueKey}:${started}:${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function formatJiraStartedInTimezone(date: Date, timezone: string): string {
-  const offsetMs = getTimezoneOffsetMs(date, timezone);
-  const localMs = date.getTime() + offsetMs;
-  const local = new Date(localMs);
-  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-  const sign = offsetMs >= 0 ? '+' : '-';
-  const absMin = Math.abs(offsetMs) / 60000;
-  const hh = pad(Math.floor(absMin / 60));
-  const mm = pad(absMin % 60);
-  return (
-    `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}` +
-    `T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}.000` +
-    `${sign}${hh}${mm}`
-  );
-}
-
-function getTimezoneOffsetMs(dt: Date, tz: string): number {
-  try {
-    const fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-      hour12: false,
-    });
-    const parts = Object.fromEntries(fmt.formatToParts(dt).map((p) => [p.type, p.value]));
-    const localMs = Date.UTC(
-      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
-      Number(parts.hour) % 24, Number(parts.minute), Number(parts.second),
-    );
-    return localMs - dt.getTime();
-  } catch {
-    return -dt.getTimezoneOffset() * 60000;
-  }
-}
-
 function dtoToRow(dto: WorklogDto, projectKey?: string | null, issueSummary?: string | null): WorklogRow {
   const started = dto.started;
   const date = started.slice(0, 10);
-  const weekday = new Date(started).getDay();
+  // День недели — по календарной дате записи (в TZ Jira), а не по локальному часовому поясу ПК.
+  const weekday = weekdayOfIso(date);
   return {
     rowKey: rowKeyOf(dto.id, dto.issueKey ?? '', started),
     worklogId: dto.id,
@@ -92,7 +59,7 @@ function cachedToRow(row: CachedWorklogRow): WorklogRow {
     issueSummary: row.issueSummary,
     projectKey: row.projectKey,
     date,
-    weekday: new Date(row.started).getDay(),
+    weekday: weekdayOfIso(date),
     isoWeek: getIsoWeek(date),
     started: row.started,
     hours: Math.round((row.timeSpentSeconds / 3600) * 100) / 100,
@@ -115,6 +82,12 @@ function rowToCached(row: WorklogRow): CachedWorklogRow {
     updated: row.updated,
   };
 }
+
+// Слушатели online/offline вешаются один раз на всё приложение (экран монтируется
+// многократно), а очередь разбирается строго одним проходом за раз — иначе
+// параллельные drain'ы отправляли бы одни и те же create-операции дважды.
+let networkListenersAttached = false;
+let drainInFlight: Promise<void> | null = null;
 
 export const useMyWorklogStore = defineStore('myWorklog', {
   state: () => ({
@@ -196,7 +169,7 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         const dateRange = this.filters.fromDate || this.filters.toDate
           ? {
               dateFrom: this.filters.fromDate || '1970-01-01',
-              dateTo: this.filters.toDate || new Date().toISOString().slice(0, 10),
+              dateTo: this.filters.toDate || localIsoDate(),
               issueFilter: this.filters.issueKey || undefined,
             }
           : undefined;
@@ -235,7 +208,7 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       Object.assign(row, patch);
       if (patch.started) {
         row.date = patch.started.slice(0, 10);
-        row.weekday = new Date(patch.started).getDay();
+        row.weekday = weekdayOfIso(row.date);
         row.isoWeek = getIsoWeek(row.date);
       }
       row.syncStatus = 'pending';
@@ -254,7 +227,7 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       try {
         const settings = useSettingsStore();
         await tauriApi.updateWorklog(params, row.issueKey, row.worklogId, {
-          startedAt: patch.started ? formatJiraStartedInTimezone(new Date(patch.started), settings.timezone) : undefined,
+          startedAt: patch.started ? formatJiraStarted(new Date(patch.started), settings.timezone) : undefined,
           timeSpentSeconds: patch.hours !== undefined ? Math.round(row.hours * 3600) : undefined,
           comment: patch.comment,
           expectedUpdated: previous.updated,
@@ -262,7 +235,7 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         const fresh = await tauriApi.getWorklogById(params, row.issueKey, row.worklogId);
         row.started = fresh.started;
         row.date = fresh.started.slice(0, 10);
-        row.weekday = new Date(fresh.started).getDay();
+        row.weekday = weekdayOfIso(row.date);
         row.isoWeek = getIsoWeek(row.date);
         row.updated = fresh.updated;
         row.syncStatus = 'synced';
@@ -327,7 +300,7 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         rowKey: rowKeyOf(null, row.issueKey, newStarted),
         worklogId: null,
         date: newDate,
-        weekday: new Date(newStarted).getDay(),
+        weekday: weekdayOfIso(newDate),
         isoWeek: getIsoWeek(newDate),
         started: newStarted,
         hours: overrides?.hours !== undefined && overrides.hours > 0 ? overrides.hours : row.hours,
@@ -341,7 +314,7 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       if (!params) { newRow.syncStatus = 'local-only'; return; }
       if (!this.isOnline) { await this.queueOffline(newRow, 'create'); return; }
       try {
-        const id = await tauriApi.addWorklog(params, newRow.issueKey, formatJiraStartedInTimezone(new Date(newStarted), useSettingsStore().timezone), Math.round(newRow.hours * 3600), newRow.comment);
+        const id = await tauriApi.addWorklog(params, newRow.issueKey, formatJiraStarted(new Date(newStarted), useSettingsStore().timezone), Math.round(newRow.hours * 3600), newRow.comment);
         const oldRowKey = newRow.rowKey;
         newRow.worklogId = id;
         newRow.rowKey = rowKeyOf(id, newRow.issueKey, newStarted);
@@ -366,19 +339,30 @@ export const useMyWorklogStore = defineStore('myWorklog', {
           await tauriApi.upsertCachedWorklog(rowToCached(row));
         }
       } else if (resolution === 'keep-local' && params && row && row.worklogId) {
-        await tauriApi.updateWorklog(params, row.issueKey, row.worklogId, {
-          timeSpentSeconds: Math.round(row.hours * 3600),
-          comment: row.comment,
-          startedAt: row.started,
-          expectedUpdated: remote.updated,
+        // Отправляем локальную версию целиком (не только изменённое поле).
+        Object.assign(row, {
+          hours: local.hours, comment: local.comment, started: local.started,
+          date: local.date, weekday: local.weekday, isoWeek: local.isoWeek,
         });
-        const fresh = await tauriApi.getWorklogById(params, row.issueKey, row.worklogId);
-        row.started = fresh.started;
-        row.date = fresh.started.slice(0, 10);
-        row.weekday = new Date(fresh.started).getDay();
-        row.isoWeek = getIsoWeek(row.date);
-        row.updated = fresh.updated;
-        row.syncStatus = 'synced';
+        try {
+          await tauriApi.updateWorklog(params, row.issueKey, row.worklogId, {
+            timeSpentSeconds: Math.round(row.hours * 3600),
+            comment: row.comment,
+            startedAt: row.started,
+            expectedUpdated: remote.updated,
+          });
+          const fresh = await tauriApi.getWorklogById(params, row.issueKey, row.worklogId);
+          row.started = fresh.started;
+          row.date = fresh.started.slice(0, 10);
+          row.weekday = weekdayOfIso(row.date);
+          row.isoWeek = getIsoWeek(row.date);
+          row.updated = fresh.updated;
+          row.syncStatus = 'synced';
+          row.syncError = null;
+        } catch (err) {
+          row.syncStatus = 'error';
+          row.syncError = String(err);
+        }
         await tauriApi.upsertCachedWorklog(rowToCached(row));
       }
       this.pendingConflict = null;
@@ -390,11 +374,20 @@ export const useMyWorklogStore = defineStore('myWorklog', {
     },
 
     async drainSyncQueue() {
+      if (drainInFlight) return drainInFlight;
+      drainInFlight = this.drainSyncQueueOnce().finally(() => { drainInFlight = null; });
+      return drainInFlight;
+    },
+
+    async drainSyncQueueOnce() {
       if (!this.isOnline) return;
       const params = this.activeConnectionParams();
       if (!params) return;
       const queue = await tauriApi.listSyncQueue();
       for (const item of queue) {
+        // Исчерпавшие попытки (см. MAX_ATTEMPTS в sync_queue.rs) не долбим бесконечно —
+        // они видны в индикаторе синхронизации как ошибки.
+        if (item.attempts >= 10) continue;
         try {
           const payload = JSON.parse(item.payloadJson) as CachedWorklogRow;
           if (item.operation === 'update' && payload.worklogId) {
@@ -473,7 +466,7 @@ export const useMyWorklogStore = defineStore('myWorklog', {
       this.loading = true;
       try {
         const from = this.filters.fromDate || '1970-01-01';
-        const to = this.filters.toDate || new Date().toISOString().slice(0, 10);
+        const to = this.filters.toDate || localIsoDate();
         const dtos = await tauriApi.getWorklogsSince(params, 0, [], {
           dateFrom: from,
           dateTo: to,
@@ -509,6 +502,8 @@ export const useMyWorklogStore = defineStore('myWorklog', {
     },
 
     setupNetworkListeners() {
+      if (networkListenersAttached) return;
+      networkListenersAttached = true;
       window.addEventListener('online', () => { this.isOnline = true; this.drainSyncQueue(); });
       window.addEventListener('offline', () => { this.isOnline = false; });
     },
