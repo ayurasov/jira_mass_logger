@@ -754,6 +754,13 @@ pub async fn test_exchange_connection(
     result
 }
 
+/// Нормализует RFC3339-строку к UTC ("YYYY-MM-DDTHH:MM:SSZ"). Нераспознанное — как есть.
+fn to_utc_rfc3339(s: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .unwrap_or_else(|_| s.to_string())
+}
+
 #[tauri::command]
 pub async fn get_calendar_events(
     db: State<'_, WizardDb>,
@@ -762,7 +769,13 @@ pub async fn get_calendar_events(
     date_to: String,
     force_refresh: bool,
 ) -> Result<Vec<CalendarEventDto>, String> {
+    // Кэш ключуется локальной датой (первые 10 символов, фронт присылает границы дня
+    // со смещением часового пояса, например "2026-10-23T00:00:00+03:00").
     let cache_date = date_from.get(..10).unwrap_or(&date_from).to_string();
+    // В Graph/EWS отдаём границы в UTC ("…Z"): '+' в query-строке Graph иначе
+    // превратился бы в пробел, а EWS ожидает xs:dateTime.
+    let date_from = to_utc_rfc3339(&date_from);
+    let date_to = to_utc_rfc3339(&date_to);
 
     if !force_refresh {
         let conn = lock_db(&db)?;
