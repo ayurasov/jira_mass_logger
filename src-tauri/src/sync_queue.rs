@@ -89,7 +89,7 @@ pub struct CachedWorklogRow {
 const WORKER_POLL_SECS: u64 = 30;
 const BASE_BACKOFF_SECS: u64 = 5;
 const MAX_BACKOFF_SECS: u64 = 300;   // 5 мин максимум
-const MAX_ATTEMPTS: i64    = 10;      // после этого → failed
+pub const MAX_ATTEMPTS: i64 = 10;      // после этого → failed
 
 // ──────────────────────────────────────────────────────
 // Вспомогательные функции БД
@@ -200,6 +200,17 @@ pub fn start_worker(
             logger.info("sync_worker", &format!("{} item(s) in queue", items.len()));
 
             for item in items {
+                // Элементы, поставленные в очередь UI («Мой worklog»), несут CachedWorklogRow
+                // без baseUrl/учётных данных — их разбирает фронтенд через jira_client
+                // (drainSyncQueue). Воркер их не трогает: иначе он помечал бы их failed
+                // («payload missing baseUrl») каждые 30 секунд и конкурировал с UI.
+                let owned_by_worker = serde_json::from_str::<serde_json::Value>(&item.payload_json)
+                    .map(|v| v.get("baseUrl").is_some())
+                    .unwrap_or(true);
+                if !owned_by_worker {
+                    continue;
+                }
+
                 // Вычисляем backoff: 5 * 2^attempts, но не более MAX_BACKOFF_SECS
                 let backoff = {
                     let exp = BASE_BACKOFF_SECS.saturating_mul(1u64 << item.attempts.min(10) as u32);
@@ -261,9 +272,11 @@ pub fn start_worker(
                     Err(SyncError::Permanent(msg)) => {
                         logger.error("sync_worker", &format!("permanent error id={}: {msg}", item.id));
                         if let Ok(conn) = db.lock() {
+                            // attempts = MAX_ATTEMPTS: неисправимую ошибку не повторяем
+                            // (fetch_pending берёт failed с attempts < MAX_ATTEMPTS).
                             let _ = conn.execute(
-                                "UPDATE sync_queue SET status='failed', last_error=?2, updated_at=datetime('now') WHERE id=?1",
-                                params![item.id, &msg],
+                                "UPDATE sync_queue SET status='failed', attempts=?3, last_error=?2, updated_at=datetime('now') WHERE id=?1",
+                                params![item.id, &msg, MAX_ATTEMPTS],
                             );
                         }
                     }

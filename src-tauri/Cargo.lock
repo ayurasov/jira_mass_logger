@@ -1165,6 +1165,22 @@ dependencies = [
 
 [[package]]
 name = "curve25519-dalek"
+version = "4.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "curve25519-dalek-derive",
+ "digest 0.10.7",
+ "fiat-crypto 0.2.9",
+ "rustc_version",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "curve25519-dalek"
 version = "5.0.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c906a87e53a36ff795d72e06e8162a83c5436e3ea89e942a9cb9fc083f0a384f"
@@ -1173,7 +1189,7 @@ dependencies = [
  "cpufeatures 0.3.0",
  "curve25519-dalek-derive",
  "digest 0.11.3",
- "fiat-crypto",
+ "fiat-crypto 0.3.0",
  "rustc_version",
  "subtle",
  "zeroize",
@@ -1223,6 +1239,12 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "data-encoding"
+version = "2.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "dbus"
@@ -1567,6 +1589,16 @@ dependencies = [
 
 [[package]]
 name = "ed25519"
+version = "2.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
+dependencies = [
+ "pkcs8 0.10.2",
+ "signature 2.2.0",
+]
+
+[[package]]
+name = "ed25519"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29fcf32e6c73d1079f83ab4d782de2d81620346a5f38c6237a86a22f8368980a"
@@ -1576,12 +1608,26 @@ dependencies = [
 
 [[package]]
 name = "ed25519-dalek"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
+dependencies = [
+ "curve25519-dalek 4.1.3",
+ "ed25519 2.2.3",
+ "serde",
+ "sha2 0.10.9",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "ed25519-dalek"
 version = "3.0.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1685663e23882cd8517dcbcb1c23a6ebff4433c22dfb681d760219b62cd1b849"
 dependencies = [
- "curve25519-dalek",
- "ed25519",
+ "curve25519-dalek 5.0.0-rc.1",
+ "ed25519 3.0.0",
  "rand_core 0.10.1",
  "sha2 0.11.0",
  "subtle",
@@ -1795,6 +1841,12 @@ dependencies = [
  "rand_core 0.10.1",
  "subtle",
 ]
+
+[[package]]
+name = "fiat-crypto"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
 name = "fiat-crypto"
@@ -3004,12 +3056,14 @@ dependencies = [
 
 [[package]]
 name = "jiratime"
-version = "0.1.0"
+version = "1.0.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
  "chrono-tz",
+ "data-encoding",
+ "ed25519-dalek 2.2.0",
  "keyring",
  "log",
  "oauth2",
@@ -3040,6 +3094,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "whoami",
+ "winreg 0.55.0",
  "wiremock",
 ]
 
@@ -4011,7 +4066,7 @@ checksum = "62941b68907ddf996ac20f0debf700c236ccc3d874637731a93c631129ca042f"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
- "fiat-crypto",
+ "fiat-crypto 0.3.0",
  "primefield",
  "primeorder",
  "sha2 0.11.0",
@@ -4234,10 +4289,10 @@ dependencies = [
  "base64 0.22.1",
  "crypto-bigint",
  "crypto-common 0.2.2",
- "curve25519-dalek",
+ "curve25519-dalek 5.0.0-rc.1",
  "digest 0.11.3",
  "ecdsa",
- "ed25519-dalek",
+ "ed25519-dalek 3.0.0-rc.1",
  "hex",
  "inout 0.2.2",
  "md-5 0.11.0",
@@ -6296,8 +6351,8 @@ dependencies = [
  "cfg-if",
  "crypto-bigint",
  "crypto-mac",
- "curve25519-dalek",
- "ed25519-dalek",
+ "curve25519-dalek 5.0.0-rc.1",
+ "ed25519-dalek 3.0.0-rc.1",
  "futures",
  "getrandom 0.3.4",
  "hmac 0.13.0",
@@ -8634,7 +8689,7 @@ version = "3.0.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eee64e8620caa64914d669b1f68f858aaff54e2d0f9ad3b30a613b58a1baa83e"
 dependencies = [
- "curve25519-dalek",
+ "curve25519-dalek 5.0.0-rc.1",
  "rand_core 0.10.1",
  "zeroize",
 ]

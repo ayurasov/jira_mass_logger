@@ -40,6 +40,9 @@ pub struct JiraProfileDto {
     /// Пароль/токен в открытом виде — только на вход, никогда не возвращается наружу.
     pub token: Option<String>,
     pub is_active: Option<bool>,
+    /// Доверять самоподписанным/внутренним сертификатам (корпоративный Jira Server).
+    #[serde(default)]
+    pub accept_invalid_certs: Option<bool>,
 }
 
 fn lock_db<'a>(db: &'a State<'a, WizardDb>) -> Result<std::sync::MutexGuard<'a, Connection>, String> {
@@ -61,7 +64,8 @@ pub fn list_jira_profiles(db: State<'_, WizardDb>) -> Result<Vec<JiraProfileDto>
     let conn = lock_db(&db)?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, name, instance_type, auth_type, base_url, email, secret_ref, is_active
+            "SELECT id, name, instance_type, auth_type, base_url, email, secret_ref, is_active,
+                    accept_invalid_certs
              FROM jira_profiles ORDER BY id",
         )
         .map_err(|e| e.to_string())?;
@@ -77,6 +81,7 @@ pub fn list_jira_profiles(db: State<'_, WizardDb>) -> Result<Vec<JiraProfileDto>
                 secret_ref: row.get(6)?,
                 token: None,
                 is_active: Some(row.get::<_, i64>(7)? != 0),
+                accept_invalid_certs: Some(row.get::<_, i64>(8)? != 0),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -90,6 +95,8 @@ pub fn save_jira_profile(
 ) -> Result<i64, String> {
     let conn = lock_db(&db)?;
     let is_active = profile.is_active.unwrap_or(false) as i64;
+    // None (старый клиент / смена активности) — не меняем сохранённое значение.
+    let accept_invalid_certs = profile.accept_invalid_certs.map(|v| v as i64);
     let auth_type = profile
         .auth_type
         .clone()
@@ -122,7 +129,8 @@ pub fn save_jira_profile(
             conn.execute(
                 "UPDATE jira_profiles SET
                  name=?1, base_url=?2, email=?3, type=?4, instance_type=?5,
-                 auth_type=?6, is_active=?7
+                 auth_type=?6, is_active=?7,
+                 accept_invalid_certs=COALESCE(?9, accept_invalid_certs)
                  WHERE id=?8",
                 params![
                     profile.name,
@@ -132,7 +140,8 @@ pub fn save_jira_profile(
                     profile.instance_type,
                     auth_type,
                     is_active,
-                    id
+                    id,
+                    accept_invalid_certs
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -151,8 +160,9 @@ pub fn save_jira_profile(
 
             conn.execute(
                 "INSERT INTO jira_profiles
-                 (name, base_url, email, type, instance_type, auth_type, secret_ref, is_active)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                 (name, base_url, email, type, instance_type, auth_type, secret_ref, is_active,
+                  accept_invalid_certs)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
                 params![
                     profile.name,
                     profile.base_url,
@@ -161,7 +171,8 @@ pub fn save_jira_profile(
                     profile.instance_type,
                     auth_type,
                     secret_ref,
-                    is_active
+                    is_active,
+                    accept_invalid_certs.unwrap_or(0)
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -196,13 +207,15 @@ pub async fn test_jira_connection(
     db: State<'_, WizardDb>,
     profile_id: i64,
 ) -> Result<bool, String> {
-    let (base_url, email, secret_ref, instance_type, auth_type): (String, String, String, String, String) = {
+    let (base_url, email, secret_ref, instance_type, auth_type, accept_invalid_certs):
+        (String, String, String, String, String, i64) = {
         let conn = lock_db(&db)?;
         conn.query_row(
-            "SELECT base_url, email, secret_ref, instance_type, COALESCE(auth_type, 'token')
+            "SELECT base_url, email, secret_ref, instance_type, COALESCE(auth_type, 'token'),
+                    accept_invalid_certs
              FROM jira_profiles WHERE id = ?1",
             params![profile_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         )
         .map_err(|e| e.to_string())?
     };
@@ -215,7 +228,7 @@ pub async fn test_jira_connection(
         extra_root_ca_pem_path: None,
         proxy: None,
         user_timezone: None,
-        accept_invalid_certs: false,
+        accept_invalid_certs: accept_invalid_certs != 0,
     };
 
     jira_client::test_connection(params).await
@@ -294,7 +307,14 @@ pub fn reset_app_data(db: State<'_, WizardDb>) -> Result<(), String> {
          DELETE FROM exchange_profiles;
          DELETE FROM settings;
          DELETE FROM meeting_match_rules;
-         DELETE FROM meeting_issue_history;",
+         DELETE FROM meeting_issue_history;
+         -- Данные, привязанные к удалённым аккаунтам: без этого после сброса
+         -- и подключения другого Jira/Exchange показывались бы чужие worklog,
+         -- встречи и неотправленные операции старого аккаунта.
+         DELETE FROM cached_worklogs;
+         DELETE FROM sync_queue;
+         DELETE FROM calendar_events_cache;
+         DELETE FROM recent_issues;",
     )
     .map_err(|e| e.to_string())?;
 

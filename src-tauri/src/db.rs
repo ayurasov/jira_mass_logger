@@ -185,6 +185,15 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         let _ = conn.execute_batch(migration);
     }
 
+    // v1.0.6: события календаря теперь запрашиваются по границам ЛОКАЛЬНОГО дня
+    // (раньше — по UTC-суткам). Старый кэш под теми же датами содержит другой набор
+    // встреч — сбрасываем его один раз.
+    let _ = conn.execute_batch(
+        "DELETE FROM calendar_events_cache
+           WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'calendar_cache_local_day');
+         INSERT OR IGNORE INTO settings (key, value) VALUES ('calendar_cache_local_day', '1');",
+    );
+
     // Инициализируем таблицы лицензирования
     license::init_license_tables(&conn).expect("failed to init license tables");
 
