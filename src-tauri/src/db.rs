@@ -156,6 +156,20 @@ pub fn init_db(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         );",
     )?;
 
+    // Настройки планировщика (напоминание о незаполненном времени, автосинхронизация).
+    // Раньше таблица не создавалась — настройки нельзя было сохранить.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS scheduler_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            auto_sync_enabled INTEGER NOT NULL DEFAULT 1,
+            sync_interval_minutes INTEGER NOT NULL DEFAULT 15,
+            reminder_enabled INTEGER NOT NULL DEFAULT 0,
+            reminder_time TEXT NOT NULL DEFAULT '17:30',
+            reminder_workdays_only INTEGER NOT NULL DEFAULT 1,
+            daily_hours_norm REAL NOT NULL DEFAULT 8
+        );",
+    )?;
+
     // Migrations: add columns that may be missing in existing DBs
     let migrations: &[&str] = &[
         "ALTER TABLE jira_profiles ADD COLUMN instance_type TEXT NOT NULL DEFAULT 'cloud'",

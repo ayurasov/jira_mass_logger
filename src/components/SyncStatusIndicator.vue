@@ -191,9 +191,9 @@ onUnmounted(() => {
 
 /* Цвета статусов */
 .si-online  .si-icon { color: #22c55e; }
-.si-offline .si-icon { color: #94a3b8; }
+.si-offline .si-icon { color: var(--muted); }
 .si-syncing .si-icon { color: #3b82f6; }
-.si-error   .si-icon { color: #ef4444; }
+.si-error   .si-icon { color: var(--danger); }
 
 /* Адаптация под дарк тему */
 @media (prefers-color-scheme: dark) {
@@ -212,7 +212,7 @@ onUnmounted(() => {
 .si-badge {
   font-size: 10px;
   font-weight: 700;
-  background: #ef4444;
+  background: var(--danger);
   color: #fff;
   border-radius: 999px;
   padding: 1px 5px;
@@ -228,7 +228,7 @@ onUnmounted(() => {
   right: 0;
   width: 260px;
   background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--color-border, var(--border));
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.12);
   z-index: 9999;
@@ -240,12 +240,12 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 10px 14px 8px;
-  border-bottom: 1px solid var(--color-divider, #e2e8f0);
+  border-bottom: 1px solid var(--color-divider, var(--border));
 }
 .si-popup-title { font-weight: 600; font-size: 13px; }
 .si-close {
   border: none; background: none; cursor: pointer;
-  font-size: 18px; line-height: 1; color: var(--color-text-muted, #64748b);
+  font-size: 18px; line-height: 1; color: var(--color-text-muted, var(--muted));
   padding: 0 2px;
   display: inline-flex; align-items: center;
 }
@@ -258,11 +258,11 @@ onUnmounted(() => {
   padding: 3px 0;
   color: var(--color-text, #1e293b);
 }
-.si-row--error { color: #ef4444; }
-.si-label { color: var(--color-text-muted, #64748b); }
+.si-row--error { color: var(--danger); }
+.si-label { color: var(--color-text-muted, var(--muted)); }
 .si-error-text {
   font-size: 11px;
-  color: #ef4444;
+  color: var(--danger);
   margin-top: 6px;
   word-break: break-all;
   max-height: 60px;
@@ -271,7 +271,7 @@ onUnmounted(() => {
 
 .si-popup-footer {
   padding: 8px 14px 12px;
-  border-top: 1px solid var(--color-divider, #e2e8f0);
+  border-top: 1px solid var(--color-divider, var(--border));
 }
 .si-sync-btn {
   width: 100%;

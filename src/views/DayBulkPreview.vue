@@ -109,22 +109,22 @@ async function submit() {
 .preview-page { padding: 16px; max-width: 960px; }
 .preview-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .btn-back {
-  background: none; border: 1px solid var(--border, #ddd);
+  background: none; border: 1px solid var(--border, var(--border));
   border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 13px;
 }
-.preview-hint { color: #666; font-size: 13px; margin-bottom: 8px; }
+.preview-hint { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
 .preview-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .preview-table th,
-.preview-table td { padding: 6px 10px; border: 1px solid var(--border, #ddd); text-align: left; }
-.preview-table thead { background: var(--surface2, #f4f5f7); }
-.td-summary { color: #666; font-size: 11px; }
+.preview-table td { padding: 6px 10px; border: 1px solid var(--border, var(--border)); text-align: left; }
+.preview-table thead { background: var(--surface2, var(--chip)); }
+.td-summary { color: var(--muted); font-size: 11px; }
 .td-mono { font-family: monospace; font-size: 12px; }
 .preview-footer {
   display: flex; justify-content: space-between; align-items: center;
-  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #ddd);
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, var(--border));
 }
 .btn-submit {
-  padding: 6px 20px; background: var(--accent, #0052cc); color: #fff;
+  padding: 6px 20px; background: var(--accent, var(--primary)); color: #fff;
   border: none; border-radius: 4px; cursor: pointer; font-size: 14px;
 }
 .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -133,8 +133,8 @@ async function submit() {
   display: flex; gap: 8px; align-items: center;
   padding: 6px 10px; border-radius: 4px; font-size: 13px;
 }
-.result-row.ok   { background: #d4edda; }
-.result-row.fail { background: #f8d7da; }
-.err-msg { color: #721c24; font-size: 11px; }
+.result-row.ok   { background: var(--color-success-bg); }
+.result-row.fail { background: var(--color-danger-bg); }
+.err-msg { color: var(--danger); font-size: 11px; }
 .btn-done { margin-top: 16px; }
 </style>

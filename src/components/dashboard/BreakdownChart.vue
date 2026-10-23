@@ -4,12 +4,12 @@
       <span class="dash-card-title">Разбивка часов</span>
       <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
         <div class="dash-tab-group">
-          <button :class="['dash-tab', mode==='project' && 'active']" @click="setMode('project')">Project</button>
-          <button :class="['dash-tab', mode==='issue' && 'active']" @click="setMode('issue')">Issue</button>
+          <button :class="['dash-tab', mode==='project' && 'active']" @click="setMode('project')">Проекты</button>
+          <button :class="['dash-tab', mode==='issue' && 'active']" @click="setMode('issue')">Задачи</button>
         </div>
         <div class="dash-tab-group">
-          <button :class="['dash-tab', chartType==='donut' && 'active']" @click="chartType='donut'">Donut</button>
-          <button :class="['dash-tab', chartType==='bar' && 'active']" @click="chartType='bar'">Bar</button>
+          <button :class="['dash-tab', chartType==='donut' && 'active']" @click="chartType='donut'">Кольцо</button>
+          <button :class="['dash-tab', chartType==='bar' && 'active']" @click="chartType='bar'">Полосы</button>
         </div>
         <!-- Компактный диапазон дат в одну строку (без переноса и без раздутых полей) -->
         <div class="dash-date-range">

@@ -37,7 +37,8 @@ impl Default for SchedulerSettings {
         Self {
             auto_sync_enabled: true,
             sync_interval_minutes: 15,
-            reminder_enabled: true,
+            // Напоминание включается пользователем в «Настройках».
+            reminder_enabled: false,
             reminder_time: "17:30".into(),
             reminder_workdays_only: true,
             daily_hours_norm: 8.0,
@@ -49,7 +50,8 @@ pub struct SchedulerState(pub Arc<Mutex<SchedulerInner>>);
 
 pub struct SchedulerInner {
     pub settings: SchedulerSettings,
-    pub last_reminder_sent_ts: i64,
+    /// Дата (YYYY-MM-DD), за которую напоминание уже обработано.
+    pub last_reminder_date: String,
     pub last_sync_ts: i64,
 }
 
@@ -65,7 +67,7 @@ fn load_settings_from_db(db: &WizardDb) -> SchedulerSettings {
             Ok(SchedulerSettings {
                 auto_sync_enabled:      row.get::<_, i64>(0).map(|v| v != 0).unwrap_or(true),
                 sync_interval_minutes:  row.get(1).unwrap_or(15),
-                reminder_enabled:       row.get::<_, i64>(2).map(|v| v != 0).unwrap_or(true),
+                reminder_enabled:       row.get::<_, i64>(2).map(|v| v != 0).unwrap_or(false),
                 reminder_time:          row.get(3).unwrap_or_else(|_| "17:30".into()),
                 reminder_workdays_only: row.get::<_, i64>(4).map(|v| v != 0).unwrap_or(true),
                 daily_hours_norm:       row.get(5).unwrap_or(8.0),
@@ -118,40 +120,36 @@ fn parse_hhmm(s: &str) -> Option<(u32, u32)> {
     Some((h, m))
 }
 
-fn should_remind(settings: &SchedulerSettings, last_sent_ts: i64) -> bool {
+/// Пора ли напоминать: включено, сегодня (по желанию) рабочий день, время уже
+/// наступило и сегодня напоминание ещё не отправлялось. Раньше требовалось точное
+/// совпадение минуты — при дрейфе 60-секундного цикла минута могла пропуститься.
+fn should_remind(settings: &SchedulerSettings, last_sent_date: &str, now: chrono::NaiveDateTime) -> bool {
+    use chrono::{Datelike, Timelike, Weekday};
     if !settings.reminder_enabled {
         return false;
     }
     let Some((rh, rm)) = parse_hhmm(&settings.reminder_time) else {
         return false;
     };
-    use chrono::{Datelike, Local, Timelike, Weekday};
-    let now = Local::now();
-    if settings.reminder_workdays_only {
-        match now.weekday() {
-            Weekday::Sat | Weekday::Sun => return false,
-            _ => {}
-        }
+    if settings.reminder_workdays_only && matches!(now.weekday(), Weekday::Sat | Weekday::Sun) {
+        return false;
     }
-    let matches = now.hour() == rh && now.minute() == rm;
-    if !matches { return false; }
-    now_ts() - last_sent_ts > 60
+    let today = now.format("%Y-%m-%d").to_string();
+    (now.hour(), now.minute()) >= (rh, rm) && last_sent_date != today
 }
 
-fn has_unfilled_hours(db: &WizardDb, norm_hours: f64) -> bool {
-    let Ok(conn) = db.0.lock() else { return false };
-    use chrono::Local;
-    let today = Local::now().format("%Y-%m-%d").to_string();
+/// Сколько часов уже залогировано сегодня по локальному кэшу worklog.
+fn logged_hours_today(db: &WizardDb, today: &str) -> f64 {
+    let Ok(conn) = db.0.lock() else { return 0.0 };
     let total_seconds: i64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(time_spent_seconds), 0)
-             FROM worklog_cache
-             WHERE date(started_at) = ?1 AND deleted = 0",
+            "SELECT COALESCE(SUM(time_spent_seconds), 0) FROM cached_worklogs
+             WHERE substr(started, 1, 10) = ?1",
             params![today],
             |r| r.get(0),
         )
         .unwrap_or(0);
-    (total_seconds as f64 / 3600.0) < norm_hours
+    total_seconds as f64 / 3600.0
 }
 
 pub async fn scheduler_loop(app: AppHandle) {
@@ -169,23 +167,30 @@ pub async fn scheduler_loop(app: AppHandle) {
         };
 
         let settings = load_settings_from_db(&db);
-        let (last_reminder_ts, last_sync_ts) = {
+        let (last_reminder_date, last_sync_ts) = {
             let inner = sched_state.0.lock().unwrap();
-            (inner.last_reminder_sent_ts, inner.last_sync_ts)
+            (inner.last_reminder_date.clone(), inner.last_sync_ts)
         };
 
-        if should_remind(&settings, last_reminder_ts)
-            && has_unfilled_hours(&db, settings.daily_hours_norm)
-        {
-            let norm = settings.daily_hours_norm;
-            let _ = app.emit(
-                "reminder",
-                serde_json::json!({
-                    "title": "Не забудь зафиксировать время!",
-                    "body":  format!("Сегодня ещё не залогировано {norm} часов."),
-                }),
-            );
-            sched_state.0.lock().unwrap().last_reminder_sent_ts = now_ts();
+        let now = chrono::Local::now().naive_local();
+        if should_remind(&settings, &last_reminder_date, now) {
+            let today = now.format("%Y-%m-%d").to_string();
+            let logged = logged_hours_today(&db, &today);
+            if logged + 0.01 < settings.daily_hours_norm {
+                use tauri_plugin_notification::NotificationExt;
+                let left = settings.daily_hours_norm - logged;
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title("JiraTime: не забудьте списать время")
+                    .body(format!(
+                        "Сегодня залогировано {:.1} ч из {:.1} ч — осталось {:.1} ч.",
+                        logged, settings.daily_hours_norm, left
+                    ))
+                    .show();
+            }
+            // Помечаем день обработанным, даже если норма выполнена — не проверяем повторно.
+            sched_state.0.lock().unwrap().last_reminder_date = today;
         }
 
         if settings.auto_sync_enabled {
@@ -231,7 +236,7 @@ pub fn init_scheduler(app: &AppHandle, db: &WizardDb) -> SchedulerState {
     let settings = load_settings_from_db(db);
     let state = SchedulerState(Arc::new(Mutex::new(SchedulerInner {
         settings,
-        last_reminder_sent_ts: 0,
+        last_reminder_date: String::new(),
         last_sync_ts: 0,
     })));
     let app_handle = app.clone();
@@ -245,4 +250,26 @@ pub fn start(app: AppHandle) {
         .state::<WizardDb>();
     let state = init_scheduler(&app, &db);
     app.manage(state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn at(d: (i32, u32, u32), h: u32, m: u32) -> chrono::NaiveDateTime {
+        NaiveDate::from_ymd_opt(d.0, d.1, d.2).unwrap().and_hms_opt(h, m, 0).unwrap()
+    }
+
+    #[test]
+    fn remind_once_after_time_on_workdays() {
+        let s = SchedulerSettings { reminder_enabled: true, ..SchedulerSettings::default() };
+        // 2026-10-23 — пятница
+        assert!(!should_remind(&s, "", at((2026, 10, 23), 17, 29)));
+        assert!(should_remind(&s, "", at((2026, 10, 23), 17, 31)), "пропущенная минута не теряет напоминание");
+        assert!(!should_remind(&s, "2026-10-23", at((2026, 10, 23), 18, 0)), "второй раз за день не напоминаем");
+        assert!(!should_remind(&s, "", at((2026, 10, 24), 18, 0)), "суббота");
+        let off = SchedulerSettings::default();
+        assert!(!should_remind(&off, "", at((2026, 10, 23), 18, 0)), "по умолчанию выключено");
+    }
 }
