@@ -55,6 +55,13 @@ export function useHotkeys() {
       return;
     }
 
+    // Ctrl+D — «Собрать день», Ctrl+J — «Дайджест»
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.code === 'KeyD' || e.code === 'KeyJ')) {
+      e.preventDefault();
+      await router.push({ name: e.code === 'KeyD' ? 'compose' : 'digest' });
+      return;
+    }
+
     // Ctrl+T — «Команда»
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyT') {
       e.preventDefault();

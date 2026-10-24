@@ -113,3 +113,16 @@ export function zonedDayBounds(iso: string, tz: string): { from: string; to: str
   const end = zonedMidnightMs(addDaysIso(iso, 1), tz) - 1000;
   return { from: formatRfc3339InTz(start, tz), to: formatRfc3339InTz(end, tz) };
 }
+
+/**
+ * Локальные дата+время (как ввёл пользователь) → строка Jira `started` со смещением
+ * часового пояса `tz` на эту дату: ("2026-10-23", "09:30", "Europe/Moscow") →
+ * "2026-10-23T09:30:00.000+0300". Время не пересчитывается — только добавляется offset.
+ */
+export function jiraStartedFromLocal(dateIso: string, hhmm: string, tz: string): string {
+  const [y, m, d] = dateIso.slice(0, 10).split('-').map(Number);
+  const [hh, mm] = hhmm.split(':').map(Number);
+  const guess = Date.UTC(y, m - 1, d, hh || 0, mm || 0);
+  const offsetMs = getTimezoneOffsetMs(new Date(guess - getTimezoneOffsetMs(new Date(guess), tz)), tz);
+  return `${dateIso.slice(0, 10)}T${pad(hh || 0)}:${pad(mm || 0)}:00.000${formatOffset(offsetMs, false)}`;
+}

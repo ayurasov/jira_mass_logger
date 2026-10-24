@@ -267,9 +267,15 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
           · <ActionIcon name="check-circle" :size="13" /> Норма выполнена
         </template>
       </span>
-      <button v-if="store.rows.length > 0" @click="goToBulkPreview" class="btn-bulk">
-        Затянуть весь день →
-      </button>
+      <span class="coverage-actions">
+        <button
+          v-if="store.uncoveredSeconds > 0" class="btn-compose" title="Добить день привычными задачами до нормы"
+          @click="router.push({ name: 'compose', query: { date: selectedDate } })"
+        >Собрать день</button>
+        <button v-if="store.rows.length > 0" @click="goToBulkPreview" class="btn-bulk">
+          Затянуть весь день →
+        </button>
+      </span>
     </div>
 
     <div v-if="store.loading" class="loading">Загрузка встреч…</div>
@@ -415,6 +421,9 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
 </template>
 
 <style scoped>
+.coverage-actions { display: inline-flex; gap: 0.5rem; align-items: center; }
+.btn-compose { border: 1px solid var(--primary); background: transparent; color: var(--primary-strong); border-radius: 6px; padding: 6px 12px; font-weight: 600; font-size: 13px; }
+.btn-compose:hover { background: var(--chip); }
 .day-calendar { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .day-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .day-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

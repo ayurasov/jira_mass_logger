@@ -41,6 +41,16 @@ const router = createRouter({
           component: () => import('../views/DayBulkPreview.vue'),
         },
         {
+          path: 'compose',
+          name: 'compose',
+          component: () => import('../views/ComposeDay.vue'),
+        },
+        {
+          path: 'digest',
+          name: 'digest',
+          component: () => import('../views/JiraDigest.vue'),
+        },
+        {
           path: 'team',
           name: 'team',
           component: () => import('../views/TeamWorklogs.vue'),

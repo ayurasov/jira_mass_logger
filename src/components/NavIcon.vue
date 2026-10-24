@@ -11,6 +11,8 @@ export type NavIconName =
   | 'bulk'
   | 'calendar'
   | 'team'
+  | 'compose'
+  | 'digest'
   | 'templates'
   | 'profiles'
   | 'logs'
@@ -57,6 +59,19 @@ const props = withDefaults(defineProps<{ name: NavIconName; size?: number }>(), 
       <rect x="3" y="4.5" width="18" height="16" rx="2" />
       <path d="M3 9.5h18M8 2.5v4M16 2.5v4" />
       <path d="M8 14h5m0 0-1.6-1.6M13 14l-1.6 1.6" />
+    </g>
+
+    <!-- Собрать день: блоки, складывающиеся в день -->
+    <g v-else-if="name === 'compose'">
+      <rect x="3" y="4" width="18" height="4" rx="1.2" />
+      <rect x="3" y="10" width="11" height="4" rx="1.2" />
+      <path d="M17 12h4M19 10v4" />
+      <rect x="3" y="16" width="7" height="4" rx="1.2" />
+    </g>
+
+    <!-- Дайджест: пульс активности -->
+    <g v-else-if="name === 'digest'">
+      <path d="M3 12h4l2.5-6 4 12 2.5-6H21" />
     </g>
 
     <!-- Команда: двое людей -->
