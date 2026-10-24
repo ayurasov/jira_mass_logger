@@ -31,6 +31,9 @@ pub struct DigestScope {
     /// Участники (Cloud — accountId, Server — username) для скоупа «команда».
     #[serde(default)]
     pub user_ids: Vec<String>,
+    /// Произвольный JQL-фильтр (эпик, компонент, метка…) — скоуп «свой JQL».
+    #[serde(default)]
+    pub jql: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -58,6 +61,9 @@ pub struct DigestIssue {
     pub assignee_name: Option<String>,
     pub created: String,
     pub updated: String,
+    /// Срок (YYYY-MM-DD), если задан.
+    pub due_date: Option<String>,
+    pub project_key: Option<String>,
     pub changes: Vec<DigestChange>,
 }
 
@@ -66,6 +72,10 @@ pub struct DigestIssue {
 pub struct DigestResult {
     pub updated: Vec<DigestIssue>,
     pub stale: Vec<DigestIssue>,
+    /// Открытые задачи с истёкшим сроком.
+    pub overdue: Vec<DigestIssue>,
+    /// Открытые задачи без исполнителя.
+    pub unassigned: Vec<DigestIssue>,
     pub worklogs: Vec<TeamWorklogDto>,
     pub truncated: bool,
     pub errors: Vec<String>,
@@ -73,6 +83,12 @@ pub struct DigestResult {
 
 /// Условие скоупа для JQL.
 fn scope_clause(scope: &DigestScope, worklog_too: bool) -> Result<String, String> {
+    if let Some(jql) = scope.jql.as_deref().map(str::trim).filter(|j| !j.is_empty()) {
+        // ORDER BY из пользовательского JQL мешает добавлять условия — отрезаем.
+        let lower = jql.to_ascii_lowercase(); // ASCII — индексы байт совпадают с исходной строкой
+        let body = match lower.find("order by") { Some(i) => jql[..i].trim(), None => jql };
+        return Ok(format!("({body})"));
+    }
     if !scope.project_keys.is_empty() {
         let keys = scope.project_keys.iter().map(|k| jql_quote(k)).collect::<Vec<_>>().join(", ");
         return Ok(format!("project in ({keys})"));
@@ -192,11 +208,19 @@ fn parse_issue(v: &Value, cloud: bool, since: &str) -> Option<DigestIssue> {
         assignee_name: assignee.and_then(|a| str_at(a, &["displayName"])).map(str::to_string),
         created: str_at(f, &["created"]).unwrap_or("").to_string(),
         updated: str_at(f, &["updated"]).unwrap_or("").to_string(),
+        due_date: str_at(f, &["duedate"]).map(str::to_string),
+        project_key: str_at(f, &["project", "key"]).map(str::to_string)
+            .or_else(|| key_project(v)),
         changes,
     })
 }
 
-const FIELDS: &[&str] = &["summary", "status", "assignee", "updated", "created", "priority", "issuetype"];
+const FIELDS: &[&str] = &["summary", "status", "assignee", "updated", "created", "priority", "issuetype", "duedate", "project"];
+const MAX_OVERDUE: usize = 100;
+
+fn key_project(v: &Value) -> Option<String> {
+    v.get("key")?.as_str()?.split('-').next().map(str::to_string)
+}
 
 /// Дайджест: `since` — начало периода (YYYY-MM-DD), `until` — конец (обычно сегодня),
 /// `stale_before` — «застывшие» задачи: не обновлялись раньше этой даты.
@@ -234,8 +258,29 @@ pub async fn get_jira_digest(
         Err(e) => { errors.push(format!("застывшие задачи: {e}")); Vec::new() }
     };
 
-    // 3) Worklog за период.
-    let wl_scope = if !scope.project_keys.is_empty() {
+    // 3) Просроченные и без исполнителя (открытые задачи скоупа).
+    let open_scope = scope_clause(&scope, false)?;
+    let overdue_jql = format!(
+        "{open_scope} AND statusCategory != Done AND duedate < {} ORDER BY duedate ASC",
+        jql_quote(&until)
+    );
+    let overdue = match search_raw(&params, &ctx, &overdue_jql, FIELDS, false, MAX_OVERDUE).await {
+        Ok((raw, _)) => raw.iter().filter_map(|v| parse_issue(v, cloud, &since)).collect(),
+        Err(e) => { errors.push(format!("просроченные: {e}")); Vec::new() }
+    };
+    // Для команды «без исполнителя» по assignee теряет смысл — только для проектов/JQL.
+    let unassigned = if scope.user_ids.is_empty() || scope.jql.as_deref().is_some_and(|j| !j.trim().is_empty()) {
+        let jql = format!("{open_scope} AND statusCategory != Done AND assignee is EMPTY ORDER BY created ASC");
+        match search_raw(&params, &ctx, &jql, FIELDS, false, MAX_OVERDUE).await {
+            Ok((raw, _)) => raw.iter().filter_map(|v| parse_issue(v, cloud, &since)).collect(),
+            Err(e) => { errors.push(format!("без исполнителя: {e}")); Vec::new() }
+        }
+    } else {
+        Vec::new()
+    };
+
+    // 4) Worklog за период.
+    let wl_scope = if !scope.project_keys.is_empty() || scope.jql.as_deref().is_some_and(|j| !j.trim().is_empty()) {
         scope_clause(&scope, false)?
     } else {
         let users = scope.user_ids.iter().map(|u| jql_quote(u)).collect::<Vec<_>>().join(", ");
@@ -279,7 +324,7 @@ pub async fn get_jira_digest(
     }
     worklogs.sort_by(|a, b| b.started.cmp(&a.started));
 
-    Ok(DigestResult { updated, stale, worklogs, truncated, errors })
+    Ok(DigestResult { updated, stale, overdue, unassigned, worklogs, truncated, errors })
 }
 
 #[cfg(test)]
@@ -315,7 +360,7 @@ mod tests {
             instance_type: crate::jira_client::JiraInstanceType::Server, extra_root_ca_pem_path: None,
             proxy: None, user_timezone: None, accept_invalid_certs: false,
         };
-        let r = get_jira_digest(params, DigestScope { project_keys: vec!["SRM".into()], user_ids: vec![] },
+        let r = get_jira_digest(params, DigestScope { project_keys: vec!["SRM".into()], user_ids: vec![], jql: None },
             "2026-10-17".into(), "2026-10-24".into(), "2026-10-10".into()).await.unwrap();
         assert_eq!(r.updated.len(), 1);
         assert_eq!(r.stale[0].key, "SRM-9");
@@ -325,12 +370,14 @@ mod tests {
 
     #[test]
     fn scope_clause_project_and_team() {
-        let p = DigestScope { project_keys: vec!["SRM".into(), "OPS".into()], user_ids: vec![] };
+        let p = DigestScope { project_keys: vec!["SRM".into(), "OPS".into()], user_ids: vec![], jql: None };
         assert_eq!(scope_clause(&p, true).unwrap(), r#"project in ("SRM", "OPS")"#);
-        let t = DigestScope { project_keys: vec![], user_ids: vec!["ivan".into()] };
+        let t = DigestScope { project_keys: vec![], user_ids: vec!["ivan".into()], jql: None };
         assert_eq!(scope_clause(&t, false).unwrap(), r#"assignee in ("ivan")"#);
         assert!(scope_clause(&t, true).unwrap().contains("worklogAuthor"));
         assert!(scope_clause(&DigestScope::default(), true).is_err());
+        let j = DigestScope { jql: Some("\"Epic Link\" = SRM-1 ORDER BY rank".into()), ..Default::default() };
+        assert_eq!(scope_clause(&j, true).unwrap(), "(\"Epic Link\" = SRM-1)");
     }
 
     #[test]

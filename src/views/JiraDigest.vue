@@ -3,12 +3,14 @@
 // и задачи без движения (ни изменений, ни списаний).
 import { computed, onMounted, ref, watch } from 'vue';
 import ActionIcon from '../components/ActionIcon.vue';
+import IssueLink from '../components/IssueLink.vue';
+import { datesInRange } from '../utils/worklogChecks';
 import { useDigestStore } from '../store/digest';
 import { useTeamStore } from '../store/team';
 import { formatRuDate, parseIsoDate } from '../utils/time';
 import {
-  buildFeed, buildPeople, daysSince, fieldLabel, groupByDay, inProgressWithoutWorklog, summarize,
-  type DigestIssue,
+  activityByDay, buildFeed, buildPeople, byProject, daysSince, digestText, fieldLabel, groupByDay, highlights,
+  inProgressWithoutWorklog, plural, summarize, type DigestIssue,
 } from '../utils/digest';
 
 const store = useDigestStore();
@@ -32,11 +34,34 @@ const filteredProjects = computed(() => {
 });
 
 const summary = computed(() => (store.data ? summarize(store.data, store.since) : null));
+const feedQuery = ref('');
 const feed = computed(() => {
   if (!store.data) return [];
-  const all = buildFeed(store.data.updated);
-  return feedFilter.value === 'all' ? all : all.filter((e) => (feedFilter.value === 'other' ? e.kind === 'other' || e.kind === 'resolution' : e.kind === feedFilter.value));
+  const q = feedQuery.value.trim().toLowerCase();
+  return buildFeed(store.data.updated)
+    .filter((e) => feedFilter.value === 'all' || (feedFilter.value === 'other' ? e.kind === 'other' || e.kind === 'resolution' : e.kind === feedFilter.value))
+    .filter((e) => !q || `${e.issueKey} ${e.issueSummary} ${e.authorName ?? ''} ${e.to ?? ''} ${e.from ?? ''}`.toLowerCase().includes(q));
 });
+const isNew = (created: string) => !!store.previousSeen && new Date(created).getTime() > new Date(store.previousSeen).getTime();
+const newCount = computed(() => (store.previousSeen ? buildFeed(store.data?.updated ?? []).filter((e) => isNew(e.created)).length : 0));
+
+const hl = computed(() => (store.data ? highlights(store.data, people.value, store.prefs.scopeType === 'team') : []));
+const activity = computed(() => (store.data ? activityByDay(store.data, datesInRange(store.since, store.today)) : []));
+const maxChanges = computed(() => Math.max(1, ...activity.value.map((a) => a.changes)));
+const maxHours = computed(() => Math.max(1, ...activity.value.map((a) => a.hours)));
+const projects = computed(() => (store.data ? byProject(store.data) : []));
+
+const JQL_EXAMPLES = ['"Epic Link" = ABC-1', 'component = Backend', 'labels = release', 'sprint in openSprints()'];
+const copied = ref(false);
+async function copyDigest() {
+  if (!store.data || !summary.value) return;
+  const text = digestText(`Дайджест: ${store.scopeTitle}, ${formatRuDate(store.since)} — ${formatRuDate(store.today)}`, summary.value, hl.value);
+  try {
+    await navigator.clipboard.writeText(text);
+    copied.value = true;
+    window.setTimeout(() => { copied.value = false; }, 2000);
+  } catch { alert(text); }
+}
 const feedDays = computed(() => groupByDay(feed.value.slice(0, FEED_LIMIT)));
 const people = computed(() =>
   store.data ? buildPeople(store.data, store.prefs.scopeType === 'team' ? store.team?.members ?? [] : []) : [],
@@ -60,10 +85,7 @@ const dayTitle = (iso: string) => {
 };
 const ageClass = (days: number) => (days >= store.prefs.staleDays * 2 ? 'age--bad' : 'age--warn');
 const catClass = (i: DigestIssue) => `cat--${i.statusCategory || 'new'}`;
-const plural = (n: number, one: string, few: string, many: string) => {
-  const m10 = n % 10; const m100 = n % 100;
-  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
-};
+
 </script>
 
 <template>
@@ -75,6 +97,9 @@ const plural = (n: number, one: string, few: string, many: string) => {
       </div>
       <div class="dg-header__actions">
         <span v-if="store.loadedAt" class="dg-muted">Обновлено {{ new Date(store.loadedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }}</span>
+        <button class="dg-btn" :disabled="!store.data" @click="copyDigest">
+          <ActionIcon :name="copied ? 'check-circle' : 'duplicate'" :size="15" /> {{ copied ? 'Скопировано' : 'Копировать дайджест' }}
+        </button>
         <button class="dg-btn dg-btn--primary" :disabled="store.loading || !store.scopeReady" @click="store.load()">
           <ActionIcon name="refresh" :size="15" :class="{ 'dg-spin': store.loading }" /> {{ store.loading ? 'Загрузка…' : 'Показать' }}
         </button>
@@ -87,6 +112,7 @@ const plural = (n: number, one: string, few: string, many: string) => {
         <div class="dg-seg">
           <button class="dg-seg__btn" :class="{ 'is-on': store.prefs.scopeType === 'project' }" @click="store.prefs.scopeType = 'project'">Проекты</button>
           <button class="dg-seg__btn" :class="{ 'is-on': store.prefs.scopeType === 'team' }" @click="store.prefs.scopeType = 'team'">Команда</button>
+          <button class="dg-seg__btn" :class="{ 'is-on': store.prefs.scopeType === 'jql' }" @click="store.prefs.scopeType = 'jql'">Свой JQL</button>
         </div>
         <div class="dg-field">
           <span class="dg-label">Период</span>
@@ -112,6 +138,14 @@ const plural = (n: number, one: string, few: string, many: string) => {
             v-for="p in filteredProjects.slice(0, 40)" :key="p.key" class="dg-chip"
             :class="{ 'is-on': store.prefs.projectKeys.includes(p.key) }" :title="p.name" @click="store.toggleProject(p.key)"
           ><b>{{ p.key }}</b> {{ p.name }}</button>
+        </div>
+      </div>
+      <div v-else-if="store.prefs.scopeType === 'jql'" class="dg-projects">
+        <textarea v-model="store.prefs.jql" class="dg-jql" rows="2" placeholder='Например: project = ABC AND "Epic Link" = ABC-1' @keydown.ctrl.enter="store.load()"></textarea>
+        <div class="dg-chips">
+          <span class="dg-muted dg-small">Примеры:</span>
+          <button v-for="ex in JQL_EXAMPLES" :key="ex" class="dg-chip dg-chip--code" @click="store.prefs.jql = ex">{{ ex }}</button>
+          <span class="dg-muted dg-small">· Ctrl+Enter — показать</span>
         </div>
       </div>
       <div v-else class="dg-projects">
@@ -145,15 +179,61 @@ const plural = (n: number, one: string, few: string, many: string) => {
         <div class="dg-stat"><span class="dg-stat__label">Смен статуса</span><span class="dg-stat__value">{{ summary.transitions }}</span><span class="dg-stat__hint">закрыто: {{ summary.done }}</span></div>
         <div class="dg-stat"><span class="dg-stat__label">Списано</span><span class="dg-stat__value">{{ fmtH(summary.worklogHours) }}<small> ч</small></span><span class="dg-stat__hint">{{ store.data.worklogs.length }} записей</span></div>
         <div class="dg-stat" :class="{ 'dg-stat--alert': summary.stale > 0 }"><span class="dg-stat__label">Без движения</span><span class="dg-stat__value">{{ summary.stale }}</span><span class="dg-stat__hint">открытых задач &gt; {{ store.prefs.staleDays }} дн.</span></div>
+        <div class="dg-stat" :class="{ 'dg-stat--bad': (store.data.overdue?.length ?? 0) > 0 }"><span class="dg-stat__label">Просрочено</span><span class="dg-stat__value">{{ store.data.overdue?.length ?? 0 }}</span><span class="dg-stat__hint">открытых со сроком в прошлом</span></div>
         <div class="dg-stat" :class="{ 'dg-stat--alert': noWorklog.length > 0 }"><span class="dg-stat__label">В работе без списаний</span><span class="dg-stat__value">{{ noWorklog.length }}</span><span class="dg-stat__hint">за период</span></div>
         <div v-if="store.prefs.scopeType === 'team'" class="dg-stat" :class="{ 'dg-stat--alert': silentPeople.length > 0 }"><span class="dg-stat__label">Без активности</span><span class="dg-stat__value">{{ silentPeople.length }}</span><span class="dg-stat__hint">из {{ people.length }} участников</span></div>
       </section>
+
+      <!-- Главное -->
+      <section class="dg-card dg-highlights">
+        <div class="dg-card__head">
+          <h2>Главное за период</h2>
+          <span v-if="newCount" class="dg-new-pill">{{ newCount }} {{ plural(newCount, 'новое изменение', 'новых изменения', 'новых изменений') }} с прошлого просмотра</span>
+        </div>
+        <ul class="dg-hl">
+          <li v-for="(h, idx) in hl" :key="idx" :class="'tone--' + h.tone"><span class="dg-hl__dot"></span>{{ h.text }}</li>
+        </ul>
+      </section>
+
+      <div class="dg-row2">
+        <!-- Активность по дням -->
+        <section class="dg-card dg-activity">
+          <div class="dg-card__head">
+            <h2>Активность по дням</h2>
+            <span class="dg-legend"><i class="lg-changes"></i>изменения <i class="lg-hours"></i>часы</span>
+          </div>
+          <div class="dg-bars">
+            <div v-for="a in activity" :key="a.date" class="dg-bars__col" :title="`${formatRuDate(a.date)}: ${a.changes} изм., ${fmtH(a.hours)} ч`">
+              <div class="dg-bars__pair">
+                <span class="dg-bars__c" :style="{ height: (a.changes / maxChanges) * 100 + '%' }"></span>
+                <span class="dg-bars__h" :style="{ height: (a.hours / maxHours) * 100 + '%' }"></span>
+              </div>
+              <span class="dg-bars__label" :class="{ 'is-off': [0, 6].includes(parseIsoDate(a.date).getDay()) }">{{ a.date.slice(8, 10) }}</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- По проектам -->
+        <section v-if="projects.length > 1" class="dg-card dg-projects-card">
+          <h2>По проектам</h2>
+          <table class="dg-ptable">
+            <thead><tr><th>Проект</th><th>Задач</th><th>Изм.</th><th>Часы</th><th>Тишина</th></tr></thead>
+            <tbody>
+              <tr v-for="p in projects.slice(0, 10)" :key="p.key">
+                <td><b>{{ p.key }}</b></td><td>{{ p.updated }}</td><td>{{ p.changes }}</td><td>{{ fmtH(p.hours) }}</td>
+                <td :class="{ 'dg-c-warn': p.stale }">{{ p.stale }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
 
       <div class="dg-grid">
         <!-- Лента -->
         <section class="dg-card dg-feed">
           <div class="dg-card__head">
             <h2>Лента изменений</h2>
+            <input v-model="feedQuery" class="dg-feed-search" placeholder="Задача, человек, статус…" />
             <div class="dg-seg dg-seg--sm">
               <button class="dg-seg__btn" :class="{ 'is-on': feedFilter === 'all' }" @click="feedFilter = 'all'">Все</button>
               <button class="dg-seg__btn" :class="{ 'is-on': feedFilter === 'status' }" @click="feedFilter = 'status'">Статусы</button>
@@ -170,7 +250,10 @@ const plural = (n: number, one: string, few: string, many: string) => {
               <span class="dg-entry__time">{{ fmtTime(e.created) }}</span>
               <span class="dg-entry__dot"></span>
               <div class="dg-entry__body">
-                <div><b>{{ e.issueKey }}</b> <span class="dg-muted dg-ellipsis-inline">{{ e.issueSummary }}</span></div>
+                <div>
+                  <IssueLink :issue-key="e.issueKey" /> <span class="dg-muted dg-ellipsis-inline">{{ e.issueSummary }}</span>
+                  <span v-if="isNew(e.created)" class="dg-new">новое</span>
+                </div>
                 <div class="dg-entry__change">
                   <span class="dg-field-name">{{ fieldLabel(e.field) }}:</span>
                   <template v-if="e.kind === 'status' || e.kind === 'assignee' || e.kind === 'resolution'">
@@ -209,9 +292,34 @@ const plural = (n: number, one: string, few: string, many: string) => {
             <h2>В работе, но без списаний</h2>
             <div v-if="!noWorklog.length" class="dg-ok"><ActionIcon name="check-circle" :size="15" /> По всем задачам в работе есть списания.</div>
             <div v-for="i in noWorklog.slice(0, 30)" :key="i.key" class="dg-issue">
-              <div><b>{{ i.key }}</b> <span class="dg-cat" :class="catClass(i)">{{ i.status }}</span></div>
+              <div><IssueLink :issue-key="i.key" /> <span class="dg-cat" :class="catClass(i)">{{ i.status }}</span></div>
               <div class="dg-small dg-ellipsis">{{ i.summary }}</div>
               <div class="dg-small dg-muted">{{ i.assigneeName || 'не назначена' }} · обновлена {{ formatRuDate(i.updated).slice(0, 5) }}</div>
+            </div>
+          </section>
+
+          <!-- Просрочено -->
+          <section v-if="store.data.overdue?.length" class="dg-card">
+            <h2>Просрочено</h2>
+            <div v-for="i in store.data.overdue.slice(0, 30)" :key="i.key" class="dg-issue">
+              <div class="dg-issue__top">
+                <span><IssueLink :issue-key="i.key" /> <span class="dg-cat" :class="catClass(i)">{{ i.status }}</span></span>
+                <span class="dg-age age--bad">{{ i.dueDate ? daysSince(i.dueDate, store.today) + ' дн.' : '' }}</span>
+              </div>
+              <div class="dg-small dg-ellipsis">{{ i.summary }}</div>
+              <div class="dg-small dg-muted">{{ i.assigneeName || 'не назначена' }} · срок {{ i.dueDate ? formatRuDate(i.dueDate) : '—' }}</div>
+            </div>
+          </section>
+
+          <!-- Без исполнителя -->
+          <section v-if="store.data.unassigned?.length" class="dg-card">
+            <h2>Без исполнителя</h2>
+            <div v-for="i in store.data.unassigned.slice(0, 30)" :key="i.key" class="dg-issue">
+              <div class="dg-issue__top">
+                <span><IssueLink :issue-key="i.key" /> <span class="dg-cat" :class="catClass(i)">{{ i.status }}</span></span>
+                <span class="dg-muted dg-small">создана {{ daysSince(i.created, store.today) }} дн. назад</span>
+              </div>
+              <div class="dg-small dg-ellipsis">{{ i.summary }}</div>
             </div>
           </section>
 
@@ -221,7 +329,7 @@ const plural = (n: number, one: string, few: string, many: string) => {
             <div v-if="!staleSorted.length" class="dg-ok"><ActionIcon name="check-circle" :size="15" /> Застывших открытых задач нет.</div>
             <div v-for="i in staleSorted.slice(0, 40)" :key="i.key" class="dg-issue">
               <div class="dg-issue__top">
-                <span><b>{{ i.key }}</b> <span class="dg-cat" :class="catClass(i)">{{ i.status }}</span></span>
+                <span><IssueLink :issue-key="i.key" /> <span class="dg-cat" :class="catClass(i)">{{ i.status }}</span></span>
                 <span class="dg-age" :class="ageClass(daysSince(i.updated, store.today))">{{ daysSince(i.updated, store.today) }} дн.</span>
               </div>
               <div class="dg-small dg-ellipsis">{{ i.summary }}</div>
@@ -287,7 +395,7 @@ const plural = (n: number, one: string, few: string, many: string) => {
 .dg-empty p { color: var(--muted); max-width: 34rem; margin: 0 auto; }
 .dg-empty__icon { display: inline-flex; padding: 0.75rem; border-radius: 999px; background: var(--chip); color: var(--primary); }
 
-.dg-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.75rem; }
+.dg-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.75rem, 1fr)); gap: 0.75rem; }
 .dg-stat { display: flex; flex-direction: column; gap: 0.15rem; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.875rem 1rem; box-shadow: var(--shadow); }
 .dg-stat--alert { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); }
 .dg-stat--alert .dg-stat__value { color: var(--warning); }
@@ -339,4 +447,37 @@ const plural = (n: number, one: string, few: string, many: string) => {
 .dg-ok { display: flex; gap: 0.4rem; align-items: center; color: var(--success); font-size: 0.8125rem; font-weight: 600; }
 
 @media (max-width: 72rem) { .dg-grid { grid-template-columns: 1fr; } }
+.dg-jql { width: 100%; max-width: 48rem; padding: 0.55rem 0.7rem; font-family: ui-monospace, Consolas, monospace; font-size: 0.8125rem; resize: vertical; }
+.dg-chip--code { font-family: ui-monospace, Consolas, monospace; font-size: 0.75rem; }
+.dg-stat--bad { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); }
+.dg-stat--bad .dg-stat__value { color: var(--danger); }
+.dg-highlights { padding-bottom: 0.75rem; }
+.dg-hl { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: 0.4rem 1.5rem; }
+.dg-hl li { display: flex; gap: 0.55rem; align-items: baseline; font-size: 0.875rem; line-height: 1.4; }
+.dg-hl__dot { flex: 0 0 auto; width: 0.5rem; height: 0.5rem; border-radius: 999px; background: var(--muted); transform: translateY(-1px); }
+.tone--good .dg-hl__dot { background: var(--success); }
+.tone--warn .dg-hl__dot { background: var(--warning); }
+.tone--bad .dg-hl__dot { background: var(--danger); }
+.tone--info .dg-hl__dot { background: var(--primary); }
+.dg-new-pill { font-size: 0.75rem; font-weight: 700; color: var(--primary-strong); background: var(--chip); padding: 0.2rem 0.6rem; border-radius: 999px; }
+.dg-new { font-size: 0.625rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; background: var(--primary); border-radius: 999px; padding: 0.05rem 0.4rem; margin-left: 0.3rem; vertical-align: 1px; }
+.dg-row2 { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: stretch; }
+.dg-legend { display: inline-flex; gap: 0.4rem; align-items: center; font-size: 0.75rem; color: var(--muted); }
+.dg-legend i { display: inline-block; width: 0.625rem; height: 0.625rem; border-radius: 2px; margin-left: 0.4rem; }
+.lg-changes { background: var(--primary); }
+.lg-hours { background: var(--success); }
+.dg-bars { display: flex; gap: 0.25rem; align-items: flex-end; height: 7.5rem; }
+.dg-bars__col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.25rem; height: 100%; min-width: 0; }
+.dg-bars__pair { flex: 1; width: 100%; display: flex; gap: 2px; align-items: flex-end; justify-content: center; }
+.dg-bars__c, .dg-bars__h { width: 40%; max-width: 0.875rem; border-radius: 3px 3px 0 0; min-height: 2px; transition: height 200ms ease; }
+.dg-bars__c { background: var(--primary); }
+.dg-bars__h { background: var(--success); }
+.dg-bars__label { font-size: 0.6875rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dg-bars__label.is-off { opacity: 0.5; }
+.dg-ptable { border-collapse: collapse; font-size: 0.8125rem; min-width: 18rem; }
+.dg-ptable th { text-align: left; color: var(--muted); font-weight: 600; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
+.dg-ptable td { padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.dg-c-warn { color: var(--warning); font-weight: 700; }
+.dg-feed-search { margin-left: auto; width: 14rem; padding: 0.35rem 0.6rem; font-size: 0.8125rem; }
+@media (max-width: 72rem) { .dg-row2 { grid-template-columns: 1fr; } }
 </style>

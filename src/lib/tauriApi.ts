@@ -401,7 +401,7 @@ export const tauriApi = {
   // --- Дайджест активности ---
   getJiraDigest(
     params: JiraConnectionParams,
-    scope: { projectKeys?: string[]; userIds?: string[] },
+    scope: { projectKeys?: string[]; userIds?: string[]; jql?: string },
     since: string, until: string, staleBefore: string,
   ) {
     return invoke<DigestData>('get_jira_digest', { params, scope, since, until, staleBefore });
