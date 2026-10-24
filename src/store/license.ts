@@ -27,6 +27,8 @@ export const useLicenseStore = defineStore('license', () => {
 
   /** Вызывается когда бэкенд вернул LICENSE_REQUIRED */
   function requireLicense() {
+    // Бэкенд подтвердил: лицензии нет — дальнейшие действия блокируем сразу в UI.
+    isActive.value = false;
     showModal.value = true;
   }
 

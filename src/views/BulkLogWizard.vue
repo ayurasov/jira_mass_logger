@@ -345,7 +345,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
                     <small class="started-hint">{{ fmtStartedAt24h(row.startedAt) }}</small>
                   </td>
                   <td>
-                    <span class="badge warning" v-if="row.conflict">Уже есть worklog</span>
+                    <span class="badge warning" v-if="row.conflict" title="В этот день у вас уже есть запись по этой задаче">Уже есть ваш worklog</span>
                     <span class="badge" v-else>—</span>
                   </td>
                   <td>
