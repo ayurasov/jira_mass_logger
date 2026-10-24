@@ -55,10 +55,6 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         // Открытие системного браузера/файлов (используется в Profiles.vue для Graph OAuth)
         .plugin(tauri_plugin_opener::init())
-        // Автообновление через GitHub Releases (Промпт 10)
-        // installMode: quiet — обновление ставится в %LOCALAPPDATA% без UAC
-        // если NSIS установил приложение в currentUser режиме
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             db::init_db(app.handle())?;
 
@@ -160,6 +156,7 @@ fn main() {
             jira_client::get_issues_by_jql,
             jira_client::get_worklog,
             jira_client::get_worklog_by_id,
+            jira_client::get_my_worklogs_for_issue,
             jira_client::get_worklogs_since,
             jira_client::add_worklog,
             jira_client::update_worklog,

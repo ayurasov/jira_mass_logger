@@ -259,6 +259,8 @@ async function guardedInvoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       const { useLicenseStore } = await import('../store/license');
       const licenseStore = useLicenseStore();
       licenseStore.requireLicense();
+      // Понятный текст вместо кода — его покажут строки/экраны с ошибкой отправки.
+      throw new Error('Нужна активная лицензия: запись в Jira недоступна. Активируйте код в «О программе».');
     }
     throw err;
   }
@@ -296,6 +298,10 @@ export const tauriApi = {
 
   // --- Jira: worklog CRUD + инкрементальный sync ---
   getWorklog(params: JiraConnectionParams, issueKey: string) { return invoke<WorklogDto[]>('get_worklog', { params, issueKey }); },
+  /** Только свои worklog задачи (для пометки конфликтов в мастере). */
+  getMyWorklogsForIssue(params: JiraConnectionParams, issueKey: string) {
+    return invoke<WorklogDto[]>('get_my_worklogs_for_issue', { params, issueKey });
+  },
   getWorklogById(params: JiraConnectionParams, issueKey: string, worklogId: string) {
     return invoke<WorklogDto>('get_worklog_by_id', { params, issueKey, worklogId });
   },

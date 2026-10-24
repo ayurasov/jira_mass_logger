@@ -21,8 +21,6 @@ tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 # Открытие системного браузера/файлов (используется в Profiles.vue для Graph OAuth)
 tauri-plugin-opener = "2"
-# Автообновление через GitHub Releases (Промпт 10)
-tauri-plugin-updater = "2"
 # keyring v2: на Windows использует Windows Credential Manager через default features.
 # Фича 'windows-native' была удалена в keyring ещё до v2.0.0.
 keyring = "2"
