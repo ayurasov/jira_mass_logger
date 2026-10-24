@@ -78,7 +78,8 @@ pub fn resolve_series_key(subject: &str, series_master_id: Option<&str>) -> Stri
 }
 
 fn extract_prefix_issue_key(subject: &str) -> Option<String> {
-    let re = Regex::new(r"^\s*\[?([A-Z][A-Z0-9]+-\d+)\]?[:\s\-]").ok()?;
+    // Ключ в начале темы: «[ABC-12] …», «ABC-12: …» или тема целиком из ключа.
+    let re = Regex::new(r"^\s*\[?([A-Z][A-Z0-9]+-\d+)\]?(?:[:\s\-]|$)").ok()?;
     re.captures(subject)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
@@ -283,6 +284,7 @@ mod tests {
         assert_eq!(extract_prefix_issue_key("[PROJ-123] Обсуждение"), Some("PROJ-123".to_string()));
         assert_eq!(extract_prefix_issue_key("PROJ-45: демо"), Some("PROJ-45".to_string()));
         assert_eq!(extract_prefix_issue_key("Обычная встреча"), None);
+        assert_eq!(extract_prefix_issue_key("PROJ-7"), Some("PROJ-7".to_string()));
     }
     #[test]
     fn rounds_to_nearest_step() {

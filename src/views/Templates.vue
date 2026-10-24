@@ -223,7 +223,8 @@ async function deleteTemplate(id: number) {
 async function togglePin(t: TemplateItem) {
   try {
     await invoke('save_template', {
-      template: { id: t.id, name: t.name, text: t.text, isPinned: !t.isPinned },
+      // issueKey передаём явно — иначе закрепление стирало привязанную задачу.
+      template: { id: t.id, name: t.name, text: t.text, issueKey: t.issueKey ?? null, isPinned: !t.isPinned },
     });
     await loadTemplates();
   } catch (e) {

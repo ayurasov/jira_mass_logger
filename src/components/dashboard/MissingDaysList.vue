@@ -33,6 +33,7 @@
 </template>
 
 <script setup lang="ts">
+import { parseIsoDate } from '../../utils/time';
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import ActionIcon from '../ActionIcon.vue';
@@ -49,7 +50,7 @@ const currentMonthLabel = computed(() => {
 });
 
 function formatDate(d: string) {
-  return new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', weekday: 'short' });
+  return parseIsoDate(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', weekday: 'short' });
 }
 
 function goToWizard(date: string) {

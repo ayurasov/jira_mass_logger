@@ -21,12 +21,24 @@ function load(): FavoriteTask[] {
   } catch { return []; }
 }
 
+// Задачи, которые пользователь убрал крестиком: автоподбор их больше не возвращает.
+const DISMISSED_KEY = 'jiratime-favorite-tasks-dismissed';
+function loadDismissed(): string[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(DISMISSED_KEY) || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function saveDismissed(keys: string[]) {
+  try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(keys.slice(-200))); } catch { /* приватный режим */ }
+}
+
 function save(items: FavoriteTask[]) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); } catch { /* приватный режим */ }
 }
 
 export const useFavoriteTasksStore = defineStore('favoriteTasks', {
-  state: () => ({ items: load() as FavoriteTask[] }),
+  state: () => ({ items: load() as FavoriteTask[], dismissed: loadDismissed() }),
   getters: {
     has: (state) => state.items.length > 0,
   },
@@ -41,10 +53,18 @@ export const useFavoriteTasksStore = defineStore('favoriteTasks', {
       this.items.unshift({ issueKey: key, issueSummary: issueSummary ?? null, addedAt: new Date().toISOString() });
       this.items = this.items.slice(0, MAX_FAVORITES);
       save(this.items);
+      if (this.dismissed.includes(key)) {
+        this.dismissed = this.dismissed.filter((k) => k !== key);
+        saveDismissed(this.dismissed);
+      }
     },
     remove(issueKey: string) {
       this.items = this.items.filter((t) => t.issueKey !== issueKey);
       save(this.items);
+      if (!this.dismissed.includes(issueKey)) {
+        this.dismissed.push(issueKey);
+        saveDismissed(this.dismissed);
+      }
     },
     toggle(issueKey: string, issueSummary?: string | null) {
       if (this.isFavorite(issueKey)) this.remove(issueKey);
@@ -87,7 +107,7 @@ export const useFavoriteTasksStore = defineStore('favoriteTasks', {
         .map(([key, v]) => ({ issueKey: key, issueSummary: v.summary ?? null }));
       let changed = false;
       for (const t of top) {
-        if (!this.items.some((x) => x.issueKey === t.issueKey)) {
+        if (!this.items.some((x) => x.issueKey === t.issueKey) && !this.dismissed.includes(t.issueKey)) {
           this.items.push({ issueKey: t.issueKey, issueSummary: t.issueSummary, addedAt: new Date().toISOString() });
           changed = true;
         }
