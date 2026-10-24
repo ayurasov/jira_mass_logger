@@ -142,7 +142,8 @@ fn should_keep_event(ev: &CalendarEventDto, params: &ExchangeConnectionParams) -
 
     if exclude_declined {
         if let Some(rs) = &ev.response_status {
-            if rs.eq_ignore_ascii_case("declined") {
+            // Graph: "declined", EWS (MyResponseType): "Decline".
+            if rs.to_ascii_lowercase().starts_with("decline") {
                 return false;
             }
         }
@@ -157,6 +158,10 @@ fn should_keep_event(ev: &CalendarEventDto, params: &ExchangeConnectionParams) -
         if ev.subject.trim().is_empty() {
             return false;
         }
+    }
+    // Сутки и больше — целодневное событие (в т.ч. из старого кэша): не встреча.
+    if ev.duration_minutes >= 24 * 60 {
+        return false;
     }
     if min_minutes > 0 && ev.duration_minutes < min_minutes {
         return false;
@@ -184,6 +189,10 @@ struct GraphEventValue {
     show_as: Option<String>,
     #[serde(rename = "seriesMasterId")]
     series_master_id: Option<String>,
+    #[serde(rename = "isAllDay", default)]
+    is_all_day: bool,
+    #[serde(rename = "isCancelled", default)]
+    is_cancelled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,7 +248,7 @@ async fn fetch_graph_events(
     let mut url = format!(
         "https://graph.microsoft.com/v1.0/me/calendarview\
          ?startDateTime={date_from}&endDateTime={date_to}\
-         &$select=id,subject,start,end,attendees,categories,onlineMeetingUrl,responseStatus,showAs,seriesMasterId\
+         &$select=id,subject,start,end,attendees,categories,onlineMeetingUrl,responseStatus,showAs,seriesMasterId,isAllDay,isCancelled\
          &$top=100"
     );
 
@@ -259,6 +268,11 @@ async fn fetch_graph_events(
             .context("Graph calendarview JSON parse")?;
 
         for ev in resp.value.unwrap_or_default() {
+            // Целодневные (отпуск, командировка, праздник) и отменённые события —
+            // не встречи: иначе они превращались в «встречу» на 24 часа.
+            if ev.is_all_day || ev.is_cancelled {
+                continue;
+            }
             let start_dt = ev.start.as_ref().map(parse_graph_datetime).unwrap_or_else(Utc::now);
             let end_dt = ev.end.as_ref().map(parse_graph_datetime).unwrap_or(start_dt);
             let duration_minutes = (end_dt - start_dt).num_minutes().max(0);
@@ -386,6 +400,10 @@ fn ews_find_item_body(date_from: &str, date_to: &str) -> String {
           <t:FieldURI FieldURI="calendar:End"/>
           <t:FieldURI FieldURI="calendar:LegacyFreeBusyStatus"/>
           <t:FieldURI FieldURI="calendar:CalendarItemType"/>
+          <t:FieldURI FieldURI="calendar:MyResponseType"/>
+          <t:FieldURI FieldURI="calendar:IsAllDayEvent"/>
+          <t:FieldURI FieldURI="calendar:IsCancelled"/>
+          <t:FieldURI FieldURI="calendar:UID"/>
         </t:AdditionalProperties>
       </m:ItemShape>
       <m:CalendarView StartDate="{date_from}" EndDate="{date_to}" MaxEntriesReturned="1000"/>
@@ -406,6 +424,11 @@ struct EwsRawEvent {
     show_as: Option<String>,
     response_status: Option<String>,
     series_master_id: Option<String>,
+    is_all_day: bool,
+    is_cancelled: bool,
+    /// UID серии: у всех вхождений повторяющейся встречи он одинаковый.
+    uid: Option<String>,
+    item_type: Option<String>,
 }
 
 fn parse_ews_finditem_response(xml: &str) -> Vec<EwsRawEvent> {
@@ -423,6 +446,10 @@ fn parse_ews_finditem_response(xml: &str) -> Vec<EwsRawEvent> {
         show_as: None,
         response_status: None,
         series_master_id: None,
+        is_all_day: false,
+        is_cancelled: false,
+        uid: None,
+        item_type: None,
     };
     let mut out: Vec<EwsRawEvent> = Vec::new();
 
@@ -436,6 +463,7 @@ fn parse_ews_finditem_response(xml: &str) -> Vec<EwsRawEvent> {
                         id: String::new(), subject: String::new(),
                         start: String::new(), end: String::new(),
                         show_as: None, response_status: None, series_master_id: None,
+                        is_all_day: false, is_cancelled: false, uid: None, item_type: None,
                     };
                 }
                 if local == "ItemId" && in_item {
@@ -467,6 +495,10 @@ fn parse_ews_finditem_response(xml: &str) -> Vec<EwsRawEvent> {
                     "LegacyFreeBusyStatus"  => ev.show_as = Some(text),
                     "MyResponseType"        => ev.response_status = Some(text),
                     "RecurringMasterId"     => ev.series_master_id = Some(text),
+                    "IsAllDayEvent"         => ev.is_all_day = text.eq_ignore_ascii_case("true"),
+                    "IsCancelled"           => ev.is_cancelled = text.eq_ignore_ascii_case("true"),
+                    "UID"                   => ev.uid = Some(text),
+                    "CalendarItemType"      => ev.item_type = Some(text),
                     _ => {}
                 }
             }
@@ -479,6 +511,10 @@ fn parse_ews_finditem_response(xml: &str) -> Vec<EwsRawEvent> {
                         show_as: ev.show_as.clone(),
                         response_status: ev.response_status.clone(),
                         series_master_id: ev.series_master_id.clone(),
+                        is_all_day: ev.is_all_day,
+                        is_cancelled: ev.is_cancelled,
+                        uid: ev.uid.clone(),
+                        item_type: ev.item_type.clone(),
                     });
                 }
                 current_tag.clear();
@@ -518,6 +554,15 @@ async fn fetch_ews_events(
     let raw_events = parse_ews_finditem_response(&xml);
     let mut out = Vec::new();
     for r in raw_events {
+        if r.is_all_day || r.is_cancelled {
+            continue;
+        }
+        // Ключ серии: у вхождений повторяющейся встречи (Occurrence/Exception) общий UID —
+        // так сопоставление «встреча → задача» запоминается для всей серии.
+        let series_master_id = r.series_master_id.clone().or_else(|| {
+            let recurring = matches!(r.item_type.as_deref(), Some("Occurrence") | Some("Exception"));
+            if recurring { r.uid.clone().map(|u| format!("uid:{u}")) } else { None }
+        });
         let start_dt = DateTime::parse_from_rfc3339(&r.start)
             .map(|d| d.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
@@ -536,7 +581,7 @@ async fn fetch_ews_events(
             online_meeting_url: None,
             response_status: r.response_status,
             show_as: r.show_as,
-            series_master_id: r.series_master_id,
+            series_master_id,
         });
     }
     Ok(out)
@@ -1187,4 +1232,48 @@ async fn post_ews_request(
         }
     }
     Ok(resp)
+}
+
+#[cfg(test)]
+mod ews_parse_tests {
+    use super::*;
+
+    #[test]
+    fn ews_parser_reads_flags_and_response() {
+        let xml = r#"<s:Envelope xmlns:s="x" xmlns:t="t"><s:Body><m:FindItemResponse xmlns:m="m"><t:Items>
+          <t:CalendarItem><t:ItemId Id="A1"/><t:Subject>Daily &amp; sync</t:Subject>
+            <t:Start>2026-10-23T07:00:00Z</t:Start><t:End>2026-10-23T07:30:00Z</t:End>
+            <t:IsAllDayEvent>false</t:IsAllDayEvent><t:IsCancelled>false</t:IsCancelled>
+            <t:MyResponseType>Decline</t:MyResponseType><t:CalendarItemType>Occurrence</t:CalendarItemType>
+            <t:UID>U-1</t:UID></t:CalendarItem>
+          <t:CalendarItem><t:ItemId Id="A2"/><t:Subject>Отпуск</t:Subject>
+            <t:Start>2026-10-23T00:00:00Z</t:Start><t:End>2026-10-24T00:00:00Z</t:End>
+            <t:IsAllDayEvent>true</t:IsAllDayEvent></t:CalendarItem>
+        </t:Items></m:FindItemResponse></s:Body></s:Envelope>"#;
+        let evs = parse_ews_finditem_response(xml);
+        assert_eq!(evs.len(), 2);
+        assert_eq!(evs[0].id, "A1");
+        assert_eq!(evs[0].subject, "Daily & sync");
+        assert_eq!(evs[0].response_status.as_deref(), Some("Decline"));
+        assert_eq!(evs[0].uid.as_deref(), Some("U-1"));
+        assert!(!evs[0].is_all_day);
+        assert!(evs[1].is_all_day);
+    }
+
+    #[test]
+    fn declined_in_ews_and_graph_is_filtered() {
+        let mut ev = CalendarEventDto {
+            id: "1".into(), subject: "Встреча".into(), start_at: String::new(), end_at: String::new(),
+            duration_minutes: 30, attendees: vec![], category: None, color: None, online_meeting_url: None,
+            response_status: Some("Decline".into()), show_as: Some("Busy".into()), series_master_id: None,
+        };
+        let params: ExchangeConnectionParams = serde_json::from_value(serde_json::json!({
+            "authMode": "ews", "username": "u", "secretRef": "s"
+        })).unwrap();
+        assert!(!should_keep_event(&ev, &params));
+        ev.response_status = Some("declined".into());
+        assert!(!should_keep_event(&ev, &params));
+        ev.response_status = Some("Accept".into());
+        assert!(should_keep_event(&ev, &params));
+    }
 }

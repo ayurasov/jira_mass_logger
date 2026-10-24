@@ -152,7 +152,9 @@ export const useBulkWizardStore = defineStore('bulkWizard', {
         // + импортированный пользователем список.
         const holidays = [...settings.holidays.map((h) => h.date), ...this.holidays];
         const workingDates = buildWorkingDates(this.periodFrom, this.periodTo, this.weekdayFilter, this.excludeHolidays, holidays);
-        const existing = await tauriApi.getWorklog(params, this.issueKey).catch(() => []);
+        // Конфликт — только свои записи в этот день: чужие worklog в общих задачах (стендапы,
+        // поддержка) раньше помечали почти каждый день и маскировали настоящие дубли.
+        const existing = await tauriApi.getMyWorklogsForIssue(params, this.issueKey).catch(() => []);
         this.existingWorklogs = existing.map((item) => ({ startedDate: item.started.slice(0, 10), issueKey: this.issueKey }));
         const existingSet = new Set(this.existingWorklogs.map((item) => `${item.issueKey}|${item.startedDate}`));
         this.previewRows = workingDates.map((date) => {

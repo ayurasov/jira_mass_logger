@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { DigestData } from '../utils/digest';
 
 export type JiraInstanceType = 'cloud' | 'server' | 'server_basic';
 export type ExchangeAuthMode = 'graph' | 'ews';
@@ -258,6 +259,8 @@ async function guardedInvoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       const { useLicenseStore } = await import('../store/license');
       const licenseStore = useLicenseStore();
       licenseStore.requireLicense();
+      // Понятный текст вместо кода — его покажут строки/экраны с ошибкой отправки.
+      throw new Error('Нужна активная лицензия: запись в Jira недоступна. Активируйте код в «О программе».');
     }
     throw err;
   }
@@ -295,6 +298,10 @@ export const tauriApi = {
 
   // --- Jira: worklog CRUD + инкрементальный sync ---
   getWorklog(params: JiraConnectionParams, issueKey: string) { return invoke<WorklogDto[]>('get_worklog', { params, issueKey }); },
+  /** Только свои worklog задачи (для пометки конфликтов в мастере). */
+  getMyWorklogsForIssue(params: JiraConnectionParams, issueKey: string) {
+    return invoke<WorklogDto[]>('get_my_worklogs_for_issue', { params, issueKey });
+  },
   getWorklogById(params: JiraConnectionParams, issueKey: string, worklogId: string) {
     return invoke<WorklogDto>('get_worklog_by_id', { params, issueKey, worklogId });
   },
@@ -390,6 +397,14 @@ export const tauriApi = {
   },
   getTeamWorklogs(params: JiraConnectionParams, userIds: string[], dateFrom: string, dateTo: string) {
     return invoke<TeamWorklogsResult>('get_team_worklogs', { params, userIds, dateFrom, dateTo });
+  },
+  // --- Дайджест активности ---
+  getJiraDigest(
+    params: JiraConnectionParams,
+    scope: { projectKeys?: string[]; userIds?: string[]; jql?: string },
+    since: string, until: string, staleBefore: string,
+  ) {
+    return invoke<DigestData>('get_jira_digest', { params, scope, since, until, staleBefore });
   },
   // --- Планировщик: напоминание о незаполненном времени ---
   getSchedulerSettings() { return invoke<SchedulerSettings>('get_scheduler_settings'); },

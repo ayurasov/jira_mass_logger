@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive } from 'vue';
+import { computed, reactive } from 'vue';
 import { useSettingsStore } from '../../store/settings';
 
 const emit = defineEmits<{ done: [] }>();
@@ -27,7 +27,11 @@ function toggleDay(d: number) {
   else form.workdays.push(d);
 }
 
+// Без рабочих дней или с нулевой нормой дашборд и проверки заполнения теряют смысл.
+const valid = computed(() => form.workdays.length > 0 && form.workdayHours > 0 && form.workdayHours <= 24);
+
 function save() {
+  if (!valid.value) return;
   settings.setWorkSchedule({
     workdayHours: form.workdayHours,
     workdays: [...form.workdays],
@@ -83,7 +87,8 @@ function save() {
       </label>
 
       <div class="step-actions">
-        <button type="submit" class="btn btn-primary">Сохранить и продолжить</button>
+        <span v-if="!valid" class="schedule-hint">Выберите хотя бы один рабочий день и норму от 1 до 24 ч.</span>
+        <button type="submit" class="btn btn-primary" :disabled="!valid">Сохранить и продолжить</button>
       </div>
 
     </form>

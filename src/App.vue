@@ -14,7 +14,6 @@ import AboutPanel from './components/AboutPanel.vue';
 import LicenseRequiredModal from './components/LicenseRequiredModal.vue';
 import { usePowerEvents } from './composables/usePowerEvents';
 import { useHotkeys } from './composables/useHotkeys';
-import { useUpdater } from './composables/useUpdater';
 import './styles/theme.css';
 
 const settings = useSettingsStore();
@@ -72,8 +71,6 @@ usePowerEvents(() => { emit('system:possible_resume').catch(() => {}); });
 // Глобальные горячие клавиши: Ctrl+N, Ctrl+L, Ctrl+M
 useHotkeys();
 
-// Проверка обновлений при запуске (через tauri-plugin-updater)
-useUpdater();
 </script>
 
 <template>

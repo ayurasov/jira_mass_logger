@@ -691,6 +691,40 @@ pub async fn get_worklog(
     Ok(parse_worklogs(worklogs, Some(&issue_key)))
 }
 
+/// Worklog задачи, принадлежащие текущему пользователю (мастер массовой фиксации
+/// использует их для пометки конфликтов: чужие записи в общих задачах — не дубль).
+#[tauri::command]
+pub async fn get_my_worklogs_for_issue(
+    params: JiraConnectionParams,
+    issue_key: String,
+) -> Result<Vec<WorklogDto>, String> {
+    let ctx = init(&params).map_err(String::from)?;
+    let myself = fetch_myself(&ctx, &params).await.map_err(String::from)?;
+    let is_cloud = matches!(params.instance_type, JiraInstanceType::Cloud);
+    let candidates = if is_cloud { Vec::new() } else { server_author_candidates(&myself, &params.email) };
+    let endpoint = url(&params, &format!("issue/{issue_key}/worklog"));
+    let mut start_at: i64 = 0;
+    let mut mine: Vec<Value> = Vec::new();
+    loop {
+        let resp = send_with_retry(&ctx.client, || {
+            apply_auth(ctx.client.get(&endpoint), &params, &ctx.token)
+                .query(&[("startAt", start_at.to_string()), ("maxResults", "5000".to_string())])
+        }).await.map_err(String::from)?;
+        let body = ensure_json_success(resp).await?;
+        let page = body.get("worklogs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let total = body.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+        let page_len = page.len() as i64;
+        mine.extend(page.into_iter().filter(|v| if is_cloud {
+            cloud_author_matches(v, myself.account_id.as_deref().unwrap_or(""))
+        } else {
+            server_author_matches(v, &candidates)
+        }));
+        start_at += page_len;
+        if page_len == 0 || start_at >= total { break; }
+    }
+    Ok(parse_worklogs(mine, Some(&issue_key)))
+}
+
 #[tauri::command]
 pub async fn get_worklog_by_id(
     params: JiraConnectionParams,
@@ -1156,14 +1190,24 @@ fn parse_worklogs(values: Vec<Value>, fallback_issue_key: Option<&str>) -> Vec<W
     }).collect()
 }
 
+/// Запись в Jira разрешена только при активной лицензии. Проверка на бэкенде —
+/// чтобы ограничение нельзя было обойти экранами/путями, где нет проверки в UI.
+/// Ошибка "LICENSE_REQUIRED" показывает окно активации (guardedInvoke в tauriApi.ts).
+fn require_license(license: &tauri::State<'_, crate::license::LicenseDb>) -> Result<(), String> {
+    let conn = license.0.lock().map_err(|e| e.to_string())?;
+    crate::license::ensure_license_active(&conn)
+}
+
 #[tauri::command]
 pub async fn add_worklog(
+    license: tauri::State<'_, crate::license::LicenseDb>,
     params: JiraConnectionParams,
     issue_key: String,
     started_at: DateTime<Utc>,
     time_spent_seconds: i64,
     comment: Option<String>,
 ) -> Result<String, String> {
+    require_license(&license)?;
     let ctx = init(&params).map_err(String::from)?;
     let tz = params.user_timezone.clone().unwrap_or_else(|| "UTC".to_string());
     let started = format_started(started_at, &tz).map_err(String::from)?;
@@ -1180,6 +1224,7 @@ pub async fn add_worklog(
 
 #[tauri::command]
 pub async fn update_worklog(
+    license: tauri::State<'_, crate::license::LicenseDb>,
     params: JiraConnectionParams,
     issue_key: String,
     worklog_id: String,
@@ -1188,6 +1233,7 @@ pub async fn update_worklog(
     comment: Option<String>,
     expected_updated: Option<String>,
 ) -> Result<(), String> {
+    require_license(&license)?;
     let ctx = init(&params).map_err(String::from)?;
     if let Some(expected) = &expected_updated {
         let current = get_worklog_by_id(params.clone(), issue_key.clone(), worklog_id.clone()).await?;
@@ -1212,11 +1258,13 @@ pub async fn update_worklog(
 
 #[tauri::command]
 pub async fn delete_worklog(
+    license: tauri::State<'_, crate::license::LicenseDb>,
     params: JiraConnectionParams,
     issue_key: String,
     worklog_id: String,
     expected_updated: Option<String>,
 ) -> Result<(), String> {
+    require_license(&license)?;
     let ctx = init(&params).map_err(String::from)?;
     if let Some(expected) = &expected_updated {
         let current = get_worklog_by_id(params.clone(), issue_key.clone(), worklog_id.clone()).await?;
@@ -1236,9 +1284,11 @@ const BULK_CONCURRENCY: usize = 4;
 
 #[tauri::command]
 pub async fn bulk_add_worklogs(
+    license: tauri::State<'_, crate::license::LicenseDb>,
     params: JiraConnectionParams,
     entries: Vec<NewWorklogEntry>,
 ) -> Result<Vec<BulkResultItem>, String> {
+    require_license(&license)?;
     let ctx = Arc::new(init(&params).map_err(String::from)?);
     let params = Arc::new(params);
     let semaphore = Arc::new(Semaphore::new(BULK_CONCURRENCY));
@@ -1651,6 +1701,24 @@ mod tests {
     /// /myself → /worklog/updated → /worklog/list → /issue/{id} должен вернуть
     /// мои worklogs даже когда issue_keys_for_fallback пуст (главный баг «пустая таблица»).
     /// Воспроизводит реальный сетевой обмен через wiremock.
+    #[tokio::test]
+    async fn my_worklogs_for_issue_filters_out_colleagues() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/rest/api/2/myself"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "name": "ivan", "displayName": "Иван" })))
+            .mount(&server).await;
+        Mock::given(method("GET")).and(path("/rest/api/2/issue/OPS-1/worklog"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "total": 2, "worklogs": [
+                { "id": "1", "author": { "name": "ivan" }, "started": "2026-10-20T09:00:00.000+0300", "timeSpentSeconds": 900 },
+                { "id": "2", "author": { "name": "maria" }, "started": "2026-10-21T09:00:00.000+0300", "timeSpentSeconds": 900 }
+            ] })))
+            .mount(&server).await;
+        std::env::set_var("JIRATIME_TEST_SECRET_TEST_SECRET_REF", "dummy-pass");
+        let params = test_params(server.uri(), JiraInstanceType::Server);
+        let mine = get_my_worklogs_for_issue(params, "OPS-1".into()).await.unwrap();
+        assert_eq!(mine.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(), vec!["1"]);
+    }
+
     #[tokio::test]
     async fn get_worklogs_since_server_basic_full_bulk_path_no_fallback_keys() {
         use wiremock::matchers::query_param;

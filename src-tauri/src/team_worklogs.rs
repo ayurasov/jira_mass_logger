@@ -54,16 +54,16 @@ pub struct TeamWorklogsResult {
     pub errors: Vec<String>,
 }
 
-fn is_cloud(params: &JiraConnectionParams) -> bool {
+pub(crate) fn is_cloud(params: &JiraConnectionParams) -> bool {
     matches!(params.instance_type, JiraInstanceType::Cloud)
 }
 
-fn jql_quote(s: &str) -> String {
+pub(crate) fn jql_quote(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// Идентификатор автора worklog в той же форме, что и `JiraUserDto::id`.
-fn author_id(author: &Value, cloud: bool) -> Option<String> {
+pub(crate) fn author_id(author: &Value, cloud: bool) -> Option<String> {
     if cloud {
         author.get("accountId").and_then(|v| v.as_str()).map(str::to_string)
     } else {
@@ -210,7 +210,8 @@ async fn search_issues(
 }
 
 /// Worklog одной задачи, отфильтрованные по авторам и датам.
-async fn issue_worklogs(
+/// Пустой `authors` — без фильтра по автору (все worklog задачи за период).
+pub(crate) async fn issue_worklogs(
     params: &JiraConnectionParams,
     ctx: &crate::jira_client::AuthedClient,
     issue_key: &str,
@@ -237,7 +238,7 @@ async fn issue_worklogs(
         for w in &worklogs {
             let Some(author) = w.get("author") else { continue };
             let Some(aid) = author_id(author, cloud) else { continue };
-            if !authors.contains(&aid) {
+            if !authors.is_empty() && !authors.contains(&aid) {
                 continue;
             }
             let started = w.get("started").and_then(|v| v.as_str()).unwrap_or("");
