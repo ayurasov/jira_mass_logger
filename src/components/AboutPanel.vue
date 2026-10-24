@@ -343,9 +343,9 @@ async function activateCode() {
   border-radius: 999rem;
   white-space: nowrap;
 }
-.badge--ok    { background: #d4f0dc; color: #1a6e38; }
-.badge--warn  { background: #fff3cd; color: #8a6000; }
-.badge--expired { background: #fde8e8; color: #b91c1c; }
+.badge--ok    { background: var(--color-success-bg); color: var(--success); }
+.badge--warn  { background: var(--amber-bg); color: var(--amber-fg); }
+.badge--expired { background: var(--color-danger-bg); color: var(--danger); }
 .badge--none  { background: var(--chip, #eef0f5); color: var(--muted, #5d6475); }
 
 .license-expires {
@@ -400,8 +400,8 @@ async function activateCode() {
   border-radius: 0.35rem;
   padding: 0.35rem 0.6rem;
 }
-.license-msg--ok  { background: #d4f0dc; color: #1a6e38; }
-.license-msg--err { background: #fde8e8; color: #b91c1c; }
+.license-msg--ok  { background: var(--color-success-bg); color: var(--success); }
+.license-msg--err { background: var(--color-danger-bg); color: var(--danger); }
 /* ── /License block ─────────────────────────────────────────────────────── */
 
 .about-thanks {

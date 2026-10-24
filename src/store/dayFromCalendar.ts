@@ -1,3 +1,4 @@
+import { localIsoDate, daysAgoIso, addDaysIso, formatJiraStarted, zonedDayBounds } from '../utils/time';
 import { defineStore } from 'pinia';
 import {
   tauriApi,
@@ -39,9 +40,11 @@ export interface DayBulkPreviewItem {
   roundedSeconds: number;
 }
 
+let loadDaySeq = 0;
+
 export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
   state: () => ({
-    selectedDate: new Date().toISOString().slice(0, 10),
+    selectedDate: localIsoDate(),
     rows: [] as MeetingRow[],
     worklogTodaySeconds: 0,
     /** Кэш worklog за текущий день — для дедупликации (issueKey|date|HH:MM) */
@@ -95,21 +98,7 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
      * Формат результата: "2026-08-18T09:30:00.000+0300" — ровно то, что ждёт Jira worklog started.
      */
     toJiraStarted(utcIsoStr: string): string {
-      const tz = useSettingsStore().timezone;
-      const dt = new Date(utcIsoStr);
-      const offsetMs = getTimezoneOffsetMs(dt, tz);
-      const localMs = dt.getTime() + offsetMs;
-      const local = new Date(localMs);
-      const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-      const sign = offsetMs >= 0 ? '+' : '-';
-      const absMin = Math.abs(offsetMs) / 60000;
-      const hh = pad(Math.floor(absMin / 60));
-      const mm = pad(absMin % 60);
-      return (
-        `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}` +
-        `T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}.000` +
-        `${sign}${hh}${mm}`
-      );
+      return formatJiraStarted(new Date(utcIsoStr), useSettingsStore().timezone);
     },
 
     async loadRulesAndHistory() {
@@ -118,6 +107,9 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
     },
 
     async loadDay(date: string, forceRefresh = false) {
+      // Защита от гонки при быстрой навигации по дням: результат устаревшего
+      // запроса не должен перезаписать строки уже выбранного дня.
+      const token = ++loadDaySeq;
       this.loading = true;
       this.error = null;
       this.selectedDate = date;
@@ -131,12 +123,16 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
         if (!exchangeProfile)
           throw new Error('Нет активного профиля Exchange. Настройте в Настройках.');
         const connParams = tauriApi.profileToConnectionParams(exchangeProfile);
+        // Границы ЛОКАЛЬНОГО дня (часовой пояс из настроек), а не UTC-суток:
+        // иначе во Владивостоке встреча в 09:00 (= 23:00Z прошлого дня) терялась.
+        const bounds = zonedDayBounds(date, useSettingsStore().timezone);
         const events = await tauriApi.getCalendarEvents(
           connParams,
-          date + 'T00:00:00Z',
-          date + 'T23:59:59Z',
+          bounds.from,
+          bounds.to,
           forceRefresh,
         );
+        if (token !== loadDaySeq) return;
         const wls = await tauriApi.listCachedWorklogs(date, date);
         this.worklogTodaySeconds = wls.reduce((s, w) => s + w.timeSpentSeconds, 0);
         // Дедупликация: ключ issueKey|дата|HH:MM (нормализованное локальное время начала)
@@ -148,7 +144,7 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
           started: w.started,
           comment: w.comment ?? null,
         }));
-        this.rows = await Promise.all(
+        const rows = await Promise.all(
           events.map(async (ev) => {
             const suggestion = await tauriApi.suggestIssueForMeeting(
               ev.subject,
@@ -180,14 +176,16 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
             } as MeetingRow;
           }),
         );
+        if (token !== loadDaySeq) return;
+        this.rows = rows;
         // Параллельно подгружаем сводку недели (без блокировки дня)
         this.loadWeek().catch(() => {});
         this.seedFavoritesFromRecent().catch(() => {});
         try { localStorage.setItem('jiratime-calendar-date', date); } catch { /* private mode */ }
       } catch (e: unknown) {
-        this.error = String(e);
+        if (token === loadDaySeq) this.error = String(e);
       } finally {
-        this.loading = false;
+        if (token === loadDaySeq) this.loading = false;
       }
     },
 
@@ -348,8 +346,8 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
     /** Bootstrap «любимых задач» из кэша worklog за последние ~90 дней
      *  (только новые — не удаляет user-pinned). Вызывается при загрузке дня. */
     async seedFavoritesFromRecent() {
-      const to = new Date().toISOString().slice(0, 10);
-      const from = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+      const to = localIsoDate();
+      const from = daysAgoIso(90);
       const rows = await tauriApi.listCachedWorklogs(from, to);
       useFavoriteTasksStore().seedFromRecent(rows.map((r) => ({
         issueKey: r.issueKey,
@@ -558,44 +556,11 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
   },
 });
 
-/**
- * Вычисляет смещение часового пояса tz в мс для даты dt.
- * Использует Intl.DateTimeFormat — даёт точное DST-корректное смещение.
- */
-function getTimezoneOffsetMs(dt: Date, tz: string): number {
-  try {
-    const fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-      hour12: false,
-    });
-    const parts = Object.fromEntries(fmt.formatToParts(dt).map((p) => [p.type, p.value]));
-    const localMs = Date.UTC(
-      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
-      Number(parts.hour) % 24, Number(parts.minute), Number(parts.second),
-    );
-    return localMs - dt.getTime();
-  } catch {
-    return -dt.getTimezoneOffset() * 60000;
-  }
-}
-
 const WEEKDAY_RU_FULL = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
 
-function addDays(isoDate: string, days: number): string {
-  const d = new Date(isoDate + 'T12:00:00Z');
-  d.setUTCDate(d.getUTCDate() + days);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}
+const addDays = addDaysIso;
 
 function isoWeekStart(isoDate: string): string {
-  const d = new Date(isoDate + 'T12:00:00Z');
-  // Понедельник = 1 в UTC
-  const dow = d.getUTCDay();
-  const diff = dow === 0 ? -6 : 1 - dow; // к понедельнику
-  return addDays(isoDate, diff);
+  const dow = new Date(isoDate.slice(0, 10) + 'T12:00:00Z').getUTCDay();
+  return addDays(isoDate, dow === 0 ? -6 : 1 - dow); // к понедельнику
 }

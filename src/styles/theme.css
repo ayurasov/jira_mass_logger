@@ -1,38 +1,104 @@
 :root {
-  --bg: #ffffff;
-  --fg: #1a1a1a;
-  --muted: #5d6475;
+  /* Светлая тема: мягкий холодный фон + белые карточки. */
+  --bg: #f5f7fb;
+  --fg: #1b2333;
+  --muted: #5f6b80;
   --card: #ffffff;
-  --border: #d8deea;
-  --primary: #2a62ff;
-  --primary-strong: #1f4fd3;
-  --success: #1c8c4e;
-  --warning: #b97900;
-  --danger: #cb2b2b;
-  --chip: #eef3ff;
-  --shadow: 0 0.75rem 2rem rgba(42, 59, 88, 0.08);
+  --border: #dfe4ee;
+  --primary: #3461f5;
+  --primary-strong: #2449c9;
+  --primary-hover: #2a52dc;
+  --success: #17864a;
+  --warning: #b07400;
+  --danger: #cf3030;
+  --chip: #edf1fd;
+  --surface-sunken: #f7f9fc;
+  --row-hover: #f3f6fe;
+  --amber-bg: #fff7e0;
+  --amber-border: #f2cf72;
+  --amber-fg: #7a5600;
+  --avatar-fg-l: 32%;
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+  --radius: 0.625rem;
+  --shadow: 0 1px 2px rgba(27, 35, 51, 0.04), 0 0.5rem 1.5rem rgba(27, 35, 51, 0.06);
   /* базовый размер шрифта — остаётся 16px, масштабирование при 125/150/200% DPI обеспечивает сам Windows/OS,
      а мы не завязываемся на px — все размеры компонентов ниже заданы в rem. */
   font-size: 16px;
 }
 
+html.dark,
 .app.dark {
-  --bg: #1a1a1a;
-  --fg: #f0f0f0;
-  --muted: #9ba7c3;
-  --card: #161d2d;
-  --border: #2a344b;
-  --primary: #7ea2ff;
-  --primary-strong: #9ab6ff;
-  --success: #45c27a;
-  --warning: #ffbc4d;
-  --danger: #ff7a7a;
-  --chip: #1a2235;
-  --shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.28);
+  --bg: #0e131d;
+  --fg: #e7ebf3;
+  --muted: #94a0b8;
+  --card: #161d2b;
+  --border: #283248;
+  --primary: #5f7ffa;
+  --primary-strong: #a5bbff;
+  --primary-hover: #4d6ef2;
+  --success: #4cc584;
+  --warning: #f3b94a;
+  --danger: #ff7b7b;
+  --chip: #1d263c;
+  --surface-sunken: #121928;
+  --row-hover: #1a2234;
+  --amber-bg: #2a2412;
+  --amber-border: #5c4a17;
+  --amber-fg: #f1cf7c;
+  --avatar-fg-l: 78%;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0.75rem 2rem rgba(0, 0, 0, 0.28);
+}
+
+/* Псевдонимы токенов, которые используются в компонентах (исторически в коде
+   встречаются разные имена). Объявлены и на :root, и на .app — так они
+   пересчитываются от токенов текущей темы, и тёмная тема работает во всех
+   компонентах, а не только там, где у var() нет «светлого» fallback. */
+:root,
+.app {
+  --text: var(--fg);
+  --color-text: var(--fg);
+  --text-muted: var(--muted);
+  --text-faint: var(--muted);
+  --color-text-muted: var(--muted);
+  --color-bg: var(--bg);
+  --surface: var(--card);
+  --bg-elev: var(--card);
+  --input-bg: var(--card);
+  --color-surface: var(--card);
+  --surface2: var(--chip);
+  --bg-hover: var(--chip);
+  --color-surface-2: var(--chip);
+  --color-surface-alt: var(--chip);
+  --color-surface-offset: var(--chip);
+  --color-surface-dynamic: var(--chip);
+  --color-surface-strong: var(--border);
+  --color-border: var(--border);
+  --color-border-light: var(--border);
+  --color-divider: var(--border);
+  --accent: var(--primary);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-highlight: var(--chip);
+  --primary-soft: var(--chip);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-error: var(--danger);
+  --color-success-bg: color-mix(in srgb, var(--success) 14%, transparent);
+  --color-warning-bg: color-mix(in srgb, var(--warning) 14%, transparent);
+  --color-danger-bg: color-mix(in srgb, var(--danger) 12%, transparent);
+  --space-7: 1.75rem;
+  --transition-interactive: 160ms ease;
+}
+
+html.dark,
+.app.dark {
+  --heatmap-holiday: #6b5317;
+  --heatmap-holiday-fill: #a37a14;
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; font-family: 'Segoe UI', Inter, system-ui, sans-serif; }
+body { margin: 0; font-family: 'Segoe UI', Inter, system-ui, sans-serif; background: var(--bg); color: var(--fg); }
 
 .app {
   background: var(--bg);
@@ -44,6 +110,34 @@ a { color: inherit; text-decoration: none; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 code { background: var(--chip); padding: 0.125rem 0.375rem; border-radius: 0.375rem; }
+
+/* Базовые поля ввода: единый вид и в светлой, и в тёмной теме. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+textarea,
+select {
+  background-color: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
+input:not([type="checkbox"]):not([type="radio"]):focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--focus-ring);
+}
+input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+::selection { background: color-mix(in srgb, var(--primary) 25%, transparent); }
+
+/* Тонкие полосы прокрутки в тон теме */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
 
 /* --- Bulk Log Wizard --- */
 .bulk-wizard-page { max-width: 96rem; margin: 0 auto; padding: 1.5rem; }
@@ -202,7 +296,7 @@ code { background: var(--chip); padding: 0.125rem 0.375rem; border-radius: 0.375
 .ghost-btn:hover,
 .preset-btn:hover,
 .template-chip:hover { background: var(--chip); }
-.primary-btn:hover { background: var(--primary-strong); }
+.primary-btn:hover { background: var(--primary-hover); }
 .primary-btn:disabled,
 .secondary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .ghost-btn { border-color: transparent; background: transparent; padding: 0.4rem 0.6rem; min-height: auto; }
@@ -269,8 +363,10 @@ code { background: var(--chip); padding: 0.125rem 0.375rem; border-radius: 0.375
    за счёт основного devicePixelRatio увеличивает всё равномерно, без ручных media-хаков на dpi.
    Медиа-запросы ниже отвечают только за адаптивную сетку при узких логических видимых областях
    (например, ноутбук 13" при 150% DPI даёт меньшую логическую ширину окна). */
-@media (max-width: 80rem) {
+@media (max-width: 60rem) {
   .wizard-stepper { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 80rem) {
   .three-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .span-3 { grid-column: span 2; }
   .weekday-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }

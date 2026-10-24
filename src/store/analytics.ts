@@ -52,8 +52,9 @@ function parseIsoLocal(iso: string): Date {
 
 function isWorkday(date: string): boolean {
   const day = parseIsoLocal(date).getDay();
-  if (day === 0 || day === 6) return false;
   const settings = useSettingsStore();
+  // Рабочие дни — из графика пользователя (а не жёстко Пн–Пт).
+  if (!settings.workdays.includes(day)) return false;
   return !settings.isHoliday(date);
 }
 
@@ -356,13 +357,20 @@ export const useAnalyticsStore = defineStore('analytics', {
           true,
         );
 
-        const rows: CachedWorklogRow[] = rawWorklogs.map((w) => ({
-          rowKey: `jira:${w.id}`,
+        // Формат строк кэша — общий для всех экранов: rowKey `wl:<id>` и ПОЛНЫЙ
+        // started с временем (раньше здесь писалась только дата, и после синхронизации
+        // дашборда «Мой worklog» терял время начала, а дедуп календаря — совпадения).
+        const inRange = rawWorklogs.filter((w) => {
+          const day = w.started.slice(0, 10);
+          return day >= from && day <= to;
+        });
+        const rows: CachedWorklogRow[] = inRange.map((w) => ({
+          rowKey: `wl:${w.id}`,
           worklogId: w.id,
           issueKey: w.issueKey ?? '',
-          issueSummary: null,
+          issueSummary: w.issueSummary ?? null,
           projectKey: w.issueKey ? w.issueKey.split('-')[0] : null,
-          started: w.started.slice(0, 10),
+          started: w.started,
           timeSpentSeconds: w.timeSpentSeconds,
           comment: w.comment ?? null,
           updated: w.updated ?? null,

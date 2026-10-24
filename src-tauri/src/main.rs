@@ -18,12 +18,28 @@ mod network;
 mod logger;
 mod logger_noop;
 mod license;
+mod settings_cmd;
+mod team_worklogs;
+mod win_registry;
 
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, Emitter, tray::TrayIconBuilder, menu::{Menu, MenuItem}};
+use tauri::{
+    Manager, Emitter,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
 use crate::logger::AppLogger;
 use crate::network::NetworkMonitor;
 use crate::sync_queue::WakeSignal;
+
+/// Показывает и фокусирует главное окно (в т.ч. после скрытия по Ctrl+M).
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
 
 fn main() {
     tauri::Builder::default()
@@ -69,6 +85,9 @@ fn main() {
             app.manage(wake.clone());
 
             // ── Монитор сети ───────────────────────────────────────────────────────────
+            let wizard_db = app.state::<bulk_wizard::WizardDb>();
+            let db_arc: Arc<Mutex<rusqlite::Connection>> = wizard_db.0.clone();
+
             let net_monitor = Arc::new(NetworkMonitor::new());
             app.manage(net_monitor.clone());
 
@@ -77,11 +96,10 @@ fn main() {
                 wake.clone(),
                 app.handle().clone(),
                 app_logger.clone(),
+                db_arc.clone(),
             );
 
             // ── Воркер очереди синхронизации ───────────────────────────────────────
-            let wizard_db = app.state::<bulk_wizard::WizardDb>();
-            let db_arc: Arc<Mutex<rusqlite::Connection>> = wizard_db.0.clone();
             sync_queue::start_worker(db_arc, wake.clone(), app_logger.clone());
 
             // ── Планировщик (напоминания, автосинхронизация) ───────────────────────
@@ -89,21 +107,41 @@ fn main() {
             app.manage(sched_state);
 
             // ── Системный трей ───────────────────────────────────────────────────────────
+            let open = MenuItem::with_id(app, "open", "Открыть JiraTime", true, None::<&str>)?;
             let log_today = MenuItem::with_id(app, "log_today", "Залогировать сегодня", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&log_today, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &log_today, &quit])?;
 
-            let _tray = TrayIconBuilder::new()
+            let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
+                // Левый клик по значку показывает окно (меню — по правому клику).
+                .show_menu_on_left_click(false)
                 .tooltip("JiraTime")
                 .on_menu_event(|app, event| {
                     match event.id.as_ref() {
-                        "log_today" => { let _ = app.emit("tray:log_today", ()); }
+                        "open" => show_main_window(app),
+                        "log_today" => {
+                            show_main_window(app);
+                            let _ = app.emit("tray:log_today", ());
+                        }
                         "quit" => { app.exit(0); }
                         _ => {}
                     }
                 })
-                .build(app)?;
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            let _tray = tray.build(app)?;
 
             // ВАЖНО: on_window_event(Focused) намеренно НЕ используется.
             // Ретрансляция фокуса через Rust вызывала мигание на Windows при каждом
@@ -169,6 +207,7 @@ fn main() {
             // Network / sync status indicator
             network::get_sync_indicator,
             network::notify_system_resume,
+            network::set_monitor_connection,
             // Logger
             logger::read_log_tail,
             logger::get_log_dir_path,
@@ -190,6 +229,13 @@ fn main() {
             // License
             license::get_license_status,
             license::activate_license_code,
+            // Команда: worklog коллег
+            team_worklogs::search_jira_users,
+            team_worklogs::get_team_worklogs,
+            team_worklogs::get_current_jira_user,
+            // Settings
+            settings_cmd::get_system_theme,
+            settings_cmd::save_work_schedule,
         ])
         .run(tauri::generate_context!())
         .expect("error while running JiraTime");

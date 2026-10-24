@@ -1,6 +1,6 @@
 [package]
 name = "jiratime"
-version = "1.0.5"
+version = "1.0.6"
 description = "JiraTime - массовое логирование времени в Jira"
 edition = "2021"
 
@@ -62,6 +62,8 @@ data-encoding = "2"
 
 [target.'cfg(windows)'.dependencies]
 whoami = "1"
+# Прямое чтение реестра (прокси, тема) без запуска reg.exe — иначе мелькает консоль
+winreg = "0.55"
 
 [dev-dependencies]
 wiremock = "0.6"

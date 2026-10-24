@@ -370,7 +370,7 @@ function isoWeekNum(dateIso: string): string {
   gap: 0.3rem;
   font-size: 0.75rem;
   font-weight: 500;
-  color: var(--muted, #888);
+  color: var(--muted, var(--muted));
   background: transparent;
   border: 1px solid var(--border, rgba(0,0,0,0.12));
   border-radius: 4px;

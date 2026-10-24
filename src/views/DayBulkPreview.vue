@@ -11,6 +11,7 @@ const router = useRouter();
 const submitting = ref(false);
 const results = ref<{ issueKey: string; success: boolean; error?: string | null }[]>([]);
 const done = ref(false);
+const submitError = ref<string | null>(null);
 
 onMounted(() => {
   if (store.bulkPreview.length === 0) router.replace('/calendar');
@@ -24,6 +25,7 @@ function fmtDuration(sec: number) {
 
 async function submit() {
   submitting.value = true;
+  submitError.value = null;
   try {
     const res = await store.logBulk(store.bulkPreview);
     results.value = res.map((r) => ({
@@ -34,6 +36,9 @@ async function submit() {
     const successCount = res.filter((r) => r.success).length;
     if (successCount > 0) analyticsStore.trackCalendarEntries(successCount);
     done.value = true;
+  } catch (e) {
+    // Нет профиля Jira / лицензии / сети — показываем причину, а не молча ничего не делаем.
+    submitError.value = e instanceof Error ? e.message : String(e);
   } finally {
     submitting.value = false;
   }
@@ -49,6 +54,7 @@ async function submit() {
 
     <div v-if="!done">
       <p class="preview-hint">Проверьте список записей и нажмите «Залогировать всё».</p>
+      <p v-if="submitError" class="preview-error">{{ submitError }}</p>
       <table class="preview-table">
         <thead>
           <tr>
@@ -99,25 +105,26 @@ async function submit() {
 </template>
 
 <style scoped>
+.preview-error { color: var(--danger); margin: 0 0 12px; }
 .preview-page { padding: 16px; max-width: 960px; }
 .preview-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .btn-back {
-  background: none; border: 1px solid var(--border, #ddd);
+  background: none; border: 1px solid var(--border, var(--border));
   border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 13px;
 }
-.preview-hint { color: #666; font-size: 13px; margin-bottom: 8px; }
+.preview-hint { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
 .preview-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .preview-table th,
-.preview-table td { padding: 6px 10px; border: 1px solid var(--border, #ddd); text-align: left; }
-.preview-table thead { background: var(--surface2, #f4f5f7); }
-.td-summary { color: #666; font-size: 11px; }
+.preview-table td { padding: 6px 10px; border: 1px solid var(--border, var(--border)); text-align: left; }
+.preview-table thead { background: var(--surface2, var(--chip)); }
+.td-summary { color: var(--muted); font-size: 11px; }
 .td-mono { font-family: monospace; font-size: 12px; }
 .preview-footer {
   display: flex; justify-content: space-between; align-items: center;
-  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #ddd);
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, var(--border));
 }
 .btn-submit {
-  padding: 6px 20px; background: var(--accent, #0052cc); color: #fff;
+  padding: 6px 20px; background: var(--accent, var(--primary)); color: #fff;
   border: none; border-radius: 4px; cursor: pointer; font-size: 14px;
 }
 .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -126,8 +133,8 @@ async function submit() {
   display: flex; gap: 8px; align-items: center;
   padding: 6px 10px; border-radius: 4px; font-size: 13px;
 }
-.result-row.ok   { background: #d4edda; }
-.result-row.fail { background: #f8d7da; }
-.err-msg { color: #721c24; font-size: 11px; }
+.result-row.ok   { background: var(--color-success-bg); }
+.result-row.fail { background: var(--color-danger-bg); }
+.err-msg { color: var(--danger); font-size: 11px; }
 .btn-done { margin-top: 16px; }
 </style>

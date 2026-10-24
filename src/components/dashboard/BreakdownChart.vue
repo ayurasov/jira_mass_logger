@@ -4,12 +4,12 @@
       <span class="dash-card-title">Разбивка часов</span>
       <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
         <div class="dash-tab-group">
-          <button :class="['dash-tab', mode==='project' && 'active']" @click="setMode('project')">Project</button>
-          <button :class="['dash-tab', mode==='issue' && 'active']" @click="setMode('issue')">Issue</button>
+          <button :class="['dash-tab', mode==='project' && 'active']" @click="setMode('project')">Проекты</button>
+          <button :class="['dash-tab', mode==='issue' && 'active']" @click="setMode('issue')">Задачи</button>
         </div>
         <div class="dash-tab-group">
-          <button :class="['dash-tab', chartType==='donut' && 'active']" @click="chartType='donut'">Donut</button>
-          <button :class="['dash-tab', chartType==='bar' && 'active']" @click="chartType='bar'">Bar</button>
+          <button :class="['dash-tab', chartType==='donut' && 'active']" @click="chartType='donut'">Кольцо</button>
+          <button :class="['dash-tab', chartType==='bar' && 'active']" @click="chartType='bar'">Полосы</button>
         </div>
         <!-- Компактный диапазон дат в одну строку (без переноса и без раздутых полей) -->
         <div class="dash-date-range">
@@ -24,6 +24,7 @@
 </template>
 
 <script setup lang="ts">
+import { localIsoDate } from '../../utils/time';
 import { ref, watch, computed, toRef } from 'vue';
 import DatePicker from '../DatePicker.vue';
 import { PieChart, BarChart } from 'echarts/charts';
@@ -47,8 +48,8 @@ const chartType = ref<'donut' | 'bar'>('donut');
 
 const now = new Date();
 const defaultFrom = new Date(now); defaultFrom.setDate(now.getDate() - 30);
-const from = ref(defaultFrom.toISOString().slice(0, 10));
-const to   = ref(now.toISOString().slice(0, 10));
+const from = ref(localIsoDate(defaultFrom));
+const to   = ref(localIsoDate(now));
 
 function setMode(m: 'project' | 'issue') {
   mode.value = m;

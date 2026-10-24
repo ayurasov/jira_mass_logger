@@ -116,7 +116,7 @@ function goToStep(idx: number) {
   padding: var(--space-3, 0.75rem) var(--space-2, 0.5rem);
   border-radius: var(--radius-lg, 0.75rem);
   border: 1.5px solid var(--color-border, var(--border, #d8deea));
-  background: var(--color-surface-offset, var(--card, #f7f8fa));
+  background: var(--color-surface-offset, var(--card, var(--chip)));
   color: var(--color-text-muted, var(--muted, #5d6475));
   font-size: var(--text-xs, 0.75rem);
   line-height: 1.3;

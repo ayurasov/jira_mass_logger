@@ -1,7 +1,14 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, watch } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
+import { emit, listen } from '@tauri-apps/api/event';
+import { useRouter } from 'vue-router';
+import { useDayFromCalendarStore } from './store/dayFromCalendar';
+import { useMyWorklogStore } from './store/myWorklog';
+import { localIsoDate } from './utils/time';
 import { useSettingsStore } from './store/settings';
 import { useLicenseStore } from './store/license';
+import { useJiraProfilesStore } from './store/jiraProfiles';
 import SyncStatusIndicator from './components/SyncStatusIndicator.vue';
 import AboutPanel from './components/AboutPanel.vue';
 import LicenseRequiredModal from './components/LicenseRequiredModal.vue';
@@ -12,14 +19,55 @@ import './styles/theme.css';
 
 const settings = useSettingsStore();
 const license = useLicenseStore();
+const jiraProfiles = useJiraProfilesStore();
+const router = useRouter();
+
+// Тик планировщика / кнопка «Синхронизировать сейчас» в индикаторе: отправляем
+// офлайн-очередь; ручной запуск дополнительно обновляет worklog из Jira.
+listen<{ manual?: boolean }>('sync_tick', async (e) => {
+  const worklog = useMyWorklogStore();
+  await worklog.drainSyncQueue().catch(() => {});
+  if (e.payload?.manual) await worklog.refreshFromJira().catch(() => {});
+}).catch(() => {});
+
+// Пункт трея «Залогировать сегодня» — открываем день из календаря на сегодня.
+listen('tray:log_today', async () => {
+  const today = localIsoDate();
+  try { localStorage.setItem('jiratime-calendar-date', today); } catch { /* private mode */ }
+  if (router.currentRoute.value.name === 'calendar') {
+    await useDayFromCalendarStore().loadDay(today);
+  } else {
+    await router.push({ name: 'calendar' });
+  }
+}).catch(() => {});
 
 onMounted(() => {
   settings.loadTheme();
   license.load();
+  jiraProfiles.ensureLoaded();
 });
 
-// Пробуждение Windows / sleep-wake цикл
-usePowerEvents();
+// Тема дублируется на <html>: фон body, полосы прокрутки и элементы вне .app
+// (модалки, выпадающие списки) тоже становятся тёмными, без белых полей.
+watch(
+  () => settings.theme,
+  (t) => {
+    document.documentElement.classList.toggle('dark', t === 'dark');
+    document.documentElement.style.colorScheme = t;
+  },
+  { immediate: true },
+);
+
+// Индикатор сети в шапке проверяет доступность именно активного Jira-профиля.
+watch(
+  () => jiraProfiles.activeConnectionParams,
+  (params) => { invoke('set_monitor_connection', { params }).catch(() => {}); },
+  { deep: true },
+);
+
+// Пробуждение Windows / возврат из свёрнутого состояния: экраны, которым нужно
+// обновиться (например, «Мой worklog»), слушают 'system:possible_resume'.
+usePowerEvents(() => { emit('system:possible_resume').catch(() => {}); });
 
 // Глобальные горячие клавиши: Ctrl+N, Ctrl+L, Ctrl+M
 useHotkeys();

@@ -25,7 +25,7 @@
             </td>
             <td class="name-cell">{{ p.name }}</td>
             <td class="url-cell">{{ p.baseUrl }}</td>
-            <td><span class="badge" :class="p.instanceType">{{ p.instanceType }}</span></td>
+            <td><span class="badge" :class="p.instanceType">{{ p.instanceType === 'cloud' ? 'Cloud' : 'Server / DC' }}</span></td>
             <td>{{ p.email }}</td>
             <td>
               <span class="badge" :class="p.authType || 'token'">{{ authTypeLabel(p.authType) }}</span>
@@ -133,7 +133,7 @@
         <label v-if="jiraForm.instanceType === 'cloud' || jiraForm.authType === 'pat'">
           {{ jiraForm.instanceType === 'cloud' ? 'API Token' : 'Personal Access Token (PAT)' }}
           <input v-model="jiraForm.token" type="password"
-            :placeholder="jiraForm.instanceType === 'cloud' ? 'Atlassian API token' : 'Jira Server PAT'"
+            :placeholder="jiraForm.id ? 'оставьте пустым, если не меняли' : (jiraForm.instanceType === 'cloud' ? 'Atlassian API token' : 'Jira Server PAT')"
             autocomplete="new-password" />
           <span class="hint" v-if="jiraForm.instanceType === 'cloud'">
             Получить: <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank">id.atlassian.com → API tokens</a>
@@ -146,8 +146,12 @@
         <label v-else-if="jiraForm.authType === 'server_basic'">
           Пароль
           <input v-model="jiraForm.token" type="password"
-            placeholder="Пароль от учётной записи Jira"
+            :placeholder="jiraForm.id ? 'оставьте пустым, если не меняли' : 'Пароль от учётной записи Jira'"
             autocomplete="new-password" />
+        </label>
+        <label v-if="jiraForm.instanceType !== 'cloud'" class="checkbox-label">
+          <input v-model="jiraForm.acceptInvalidCerts" type="checkbox" />
+          Доверять самоподписанному сертификату сервера
         </label>
 
         <label class="checkbox-label">
@@ -247,6 +251,9 @@ import { ref, reactive, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import ActionIcon from '../components/ActionIcon.vue';
+import { useJiraProfilesStore } from '../store/jiraProfiles';
+
+const jiraProfilesStore = useJiraProfilesStore();
 
 // ────────── Types ──────────
 
@@ -260,6 +267,7 @@ interface JiraProfile {
   email: string;
   secretRef: string;
   isActive: boolean;
+  acceptInvalidCerts?: boolean;
 }
 
 interface ExchProfile {
@@ -300,6 +308,7 @@ const jiraForm = reactive({
   email: '',
   token: '',
   isActive: false,
+  acceptInvalidCerts: false,
 });
 
 // Exchange form
@@ -380,6 +389,9 @@ async function loadProfiles() {
   } catch (e) {
     console.error('list_jira_profiles:', e);
   }
+  // Общий стор профилей кэширует список на сеанс — обновляем его, иначе остальные
+  // экраны продолжали бы работать со старым/удалённым активным профилем до перезапуска.
+  jiraProfilesStore.loadProfiles().catch(() => {});
   try {
     exchProfiles.value = await invoke<ExchProfile[]>('list_exchange_profiles');
   } catch (e) {
@@ -403,6 +415,7 @@ function openJiraForm(p: JiraProfile | null) {
       email: p.email,
       token: '',
       isActive: p.isActive,
+      acceptInvalidCerts: !!p.acceptInvalidCerts,
     });
   } else {
     Object.assign(jiraForm, {
@@ -414,6 +427,7 @@ function openJiraForm(p: JiraProfile | null) {
       email: '',
       token: '',
       isActive: false,
+      acceptInvalidCerts: false,
     });
   }
   jiraFormOpen.value = true;
@@ -425,7 +439,8 @@ async function saveJiraProfile() {
     jiraFormError.value = 'Заполните название, URL и логин/email.';
     return;
   }
-  if (!jiraForm.token) {
+  // При редактировании пустое поле = оставить сохранённый токен/пароль (бэкенд его не трогает).
+  if (!jiraForm.token && !jiraForm.id) {
     const credLabel = jiraForm.authType === 'server_basic' ? 'пароль' : 'токен';
     jiraFormError.value = `Введите ${credLabel} (поле не может быть пустым при сохранении новых учётных данных).`;
     return;
@@ -438,10 +453,11 @@ async function saveJiraProfile() {
         name: jiraForm.name,
         instanceType: jiraForm.instanceType,
         authType: jiraForm.instanceType === 'cloud' ? 'token' : jiraForm.authType,
-        baseUrl: jiraForm.baseUrl,
-        email: jiraForm.email,
+        baseUrl: jiraForm.baseUrl.trim().replace(/\/+$/, ''),
+        email: jiraForm.email.trim(),
         token: jiraForm.token || null,
         isActive: jiraForm.isActive,
+        acceptInvalidCerts: jiraForm.instanceType !== 'cloud' && jiraForm.acceptInvalidCerts,
       },
     });
     jiraFormOpen.value = false;
@@ -674,53 +690,53 @@ async function startOAuth() {
 .card { background: var(--surface, #fff); border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); padding: 1.2rem 1.4rem; }
 .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
 .card-title { font-size: 1.05rem; font-weight: 600; }
-.btn { padding: .4rem .9rem; border-radius: 6px; border: 1px solid var(--border, #d0d5dd); cursor: pointer; font-size: .9rem; background: var(--surface, #fff); }
-.btn-primary { background: #0052cc; color: #fff; border-color: #0052cc; }
+.btn { padding: .4rem .9rem; border-radius: 6px; border: 1px solid var(--border, var(--border)); cursor: pointer; font-size: .9rem; background: var(--surface, #fff); }
+.btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
 .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
-.btn-secondary { background: #f0f0f0; border-color: #bbb; display: inline-flex; align-items: center; gap: .35rem; }
+.btn-secondary { background: var(--chip); border-color: var(--border); display: inline-flex; align-items: center; gap: .35rem; }
 .profile-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
-.profile-table th, .profile-table td { padding: .45rem .6rem; text-align: left; border-bottom: 1px solid var(--border, #eee); }
-.profile-table tr.active td { background: #f0f8ff; }
-.profile-table tr:hover td { background: #fafafa; }
+.profile-table th, .profile-table td { padding: .45rem .6rem; text-align: left; border-bottom: 1px solid var(--border, var(--border)); }
+.profile-table tr.active td { background: var(--chip); }
+.profile-table tr:hover td { background: var(--chip); }
 .name-cell { font-weight: 600; }
-.url-cell { color: #555; font-size: .82rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.badge { font-size: .75rem; padding: .15rem .5rem; border-radius: 4px; background: #e0e8ff; color: #1a3a8f; }
-.badge.cloud { background: #e0f0e8; color: #186a3b; }
-.badge.server { background: #fde8cc; color: #7d4500; }
-.badge.ews { background: #fde8cc; color: #7d4500; }
-.badge.graph { background: #e0f0e8; color: #186a3b; }
-.badge.token { background: #e0e8ff; color: #1a3a8f; }
-.badge.pat { background: #f0e8ff; color: #5a1a8f; }
-.badge.server_basic { background: #fff3cd; color: #664d03; }
+.url-cell { color: var(--muted); font-size: .82rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { font-size: .75rem; padding: .15rem .5rem; border-radius: 4px; background: var(--chip); color: var(--primary-strong); }
+.badge.cloud { background: var(--color-success-bg); color: var(--success); }
+.badge.server { background: var(--amber-bg); color: var(--amber-fg); }
+.badge.ews { background: var(--amber-bg); color: var(--amber-fg); }
+.badge.graph { background: var(--color-success-bg); color: var(--success); }
+.badge.token { background: var(--chip); color: var(--primary-strong); }
+.badge.pat { background: var(--chip); color: var(--primary-strong); }
+.badge.server_basic { background: var(--amber-bg); color: #664d03; }
 .actions-cell { white-space: nowrap; }
 .icon-btn { background: none; border: none; cursor: pointer; font-size: 1rem; padding: .2rem .3rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
-.icon-btn:hover { background: #f0f0f0; }
-.icon-btn.danger:hover { background: #fee2e2; }
-.status-ok { color: #15803d; font-size: .85rem; display: inline-flex; align-items: center; gap: .25rem; }
-.status-err { color: #dc2626; font-size: .85rem; display: inline-flex; align-items: center; gap: .25rem; }
-.status-testing { color: #888; font-size: .85rem; }
-.status-none { color: #bbb; font-size: .85rem; }
+.icon-btn:hover { background: var(--chip); }
+.icon-btn.danger:hover { background: var(--color-danger-bg); }
+.status-ok { color: var(--success); font-size: .85rem; display: inline-flex; align-items: center; gap: .25rem; }
+.status-err { color: var(--danger); font-size: .85rem; display: inline-flex; align-items: center; gap: .25rem; }
+.status-testing { color: var(--muted); font-size: .85rem; }
+.status-none { color: var(--border); font-size: .85rem; }
 .err-row td.err-detail {
-  color: #b91c1c; font-size: .8rem; line-height: 1.35;
-  background: #fef2f2; padding: .4rem .75rem;
+  color: var(--danger); font-size: .8rem; line-height: 1.35;
+  background: var(--color-danger-bg); padding: .4rem .75rem;
   border-bottom: 1px solid #fecaca; white-space: pre-wrap; word-break: break-word;
 }
-.empty-hint { color: #999; font-size: .9rem; padding: .5rem 0; }
+.empty-hint { color: var(--muted); font-size: .9rem; padding: .5rem 0; }
 
 /* Modal */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .modal { background: var(--surface, #fff); border-radius: 12px; padding: 1.8rem; min-width: 460px; max-width: 540px; box-shadow: 0 8px 32px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: .75rem; max-height: 92vh; overflow-y: auto; }
 .modal h2 { margin: 0 0 .5rem; font-size: 1.1rem; }
 .modal label { display: flex; flex-direction: column; gap: .2rem; font-size: .88rem; font-weight: 500; }
-.modal input, .modal select { padding: .38rem .6rem; border: 1px solid var(--border, #d0d5dd); border-radius: 6px; font-size: .9rem; background: var(--input-bg, #fafafa); }
+.modal input, .modal select { padding: .38rem .6rem; border: 1px solid var(--border, var(--border)); border-radius: 6px; font-size: .9rem; background: var(--input-bg, var(--chip)); }
 .checkbox-label { flex-direction: row !important; align-items: center; gap: .5rem; font-weight: 400; }
 .modal-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .5rem; }
-.form-error { color: #dc2626; font-size: .85rem; }
-.filters-section { border-top: 1px solid #eee; padding-top: .75rem; display: flex; flex-direction: column; gap: .4rem; }
-.filters-title { font-size: .82rem; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
-.oauth-hint { font-size: .82rem; color: #888; }
-.status-dot--active { color: #15803d; fill: currentColor; }
-.status-dot--inactive { color: #ccc; fill: currentColor; }
+.form-error { color: var(--danger); font-size: .85rem; }
+.filters-section { border-top: 1px solid var(--border); padding-top: .75rem; display: flex; flex-direction: column; gap: .4rem; }
+.filters-title { font-size: .82rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.oauth-hint { font-size: .82rem; color: var(--muted); }
+.status-dot--active { color: var(--success); fill: currentColor; }
+.status-dot--inactive { color: var(--border); fill: currentColor; }
 .auth-hint {
   font-size: .82rem;
   line-height: 1.45;
@@ -732,8 +748,8 @@ async function startOAuth() {
 }
 .hint {
   font-size: .78rem;
-  color: var(--color-text-muted, #6b7280);
+  color: var(--color-text-muted, var(--muted));
   line-height: 1.35;
 }
-.hint a { color: #0052cc; }
+.hint a { color: var(--primary); }
 </style>

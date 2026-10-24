@@ -213,91 +213,56 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
     client
 }
 
-/// Читаем системный прокси Windows через WinINet/реестр.
+/// Читаем системный прокси Windows (WinINet) напрямую из реестра HKCU.
 ///
-/// Формат вывода `reg query`:
-///     HKCU\...ИмяКлюча
-///         ИмяЗначения    REG_SZ    Данные
+/// Никаких внешних процессов (`reg.exe`) — их запуск из GUI-приложения на Windows
+/// создаёт мелькающее консольное окно при каждом запросе в Jira.
 ///
-/// Требуется брать часть после "REG_SZ", а не последнее слово строки
-/// (иначе получаем "REG_SZ" вместо значения при пустом значении или если значение
-/// совпадает с последним токеном строки).
-///
-/// Также проверяем ProxyEnable=1, чтобы не использовать прокси когда он отключён.
+/// Учитываем ProxyEnable=1, чтобы не использовать прокси, когда он отключён.
+/// ProxyServer бывает двух видов:
+///   * `host:port` — один прокси для всех протоколов;
+///   * `http=h1:p1;https=h2:p2;ftp=...` — по протоколам (берём https, затем http).
 #[cfg(target_os = "windows")]
 fn read_windows_system_proxy() -> Option<String> {
-    use std::process::Command;
+    const KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
-    // Проверяем, включён ли прокси (ProxyEnable = 1)
-    let enable_output = Command::new("reg")
-        .args([
-            "query",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyEnable",
-        ])
-        .output()
-        .ok()?;
-    let enable_text = String::from_utf8_lossy(&enable_output.stdout);
-    let proxy_enabled = enable_text
-        .lines()
-        .find(|l| l.contains("ProxyEnable"))
-        .and_then(|line| parse_reg_value(line))
-        .map(|v| v.trim() == "0x1")
-        .unwrap_or(false);
-
-    if !proxy_enabled {
-        eprintln!("[jira_client] Windows system proxy: ProxyEnable=0, skipping");
+    if crate::win_registry::hkcu_dword(KEY, "ProxyEnable").unwrap_or(0) != 1 {
+        log::debug!("[jira_client] Windows system proxy: ProxyEnable!=1, skipping");
         return None;
     }
-
-    // Читаем ProxyServer
-    let server_output = Command::new("reg")
-        .args([
-            "query",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyServer",
-        ])
-        .output()
-        .ok()?;
-    if !server_output.status.success() {
-        return None;
-    }
-    let server_text = String::from_utf8_lossy(&server_output.stdout);
-    let value = server_text
-        .lines()
-        .find(|l| l.contains("ProxyServer"))
-        .and_then(|line| parse_reg_value(line))?;
-
-    let value = value.trim();
-    if value.is_empty() {
-        return None;
-    }
-    eprintln!("[jira_client] Windows system proxy value: '{value}'");
-    if value.starts_with("http://") || value.starts_with("https://") {
-        Some(value.to_string())
-    } else {
-        Some(format!("http://{value}"))
-    }
+    let raw = crate::win_registry::hkcu_string(KEY, "ProxyServer")?;
+    let value = normalize_proxy_server(&raw);
+    log::debug!("[jira_client] Windows system proxy value: {value:?}");
+    value
 }
 
-/// Извлекает значение из строки вывода `reg query`:
-///   "    Имя    REG_SZ    Значение"
-/// Возвращает текст после типа данных (REG_SZ, REG_DWORD, ...).
-/// Если значения нет (тип последний токен) — возвращает None.
-#[cfg(target_os = "windows")]
-fn parse_reg_value(line: &str) -> Option<String> {
-    // Строка: "    ProxyServer    REG_SZ    proxy.corp.local:8080"
-    // Ищем REG_* тип и берём всё что после него.
-    // Типы: REG_SZ, REG_DWORD, REG_EXPAND_SZ, REG_BINARY...
-    let types = ["REG_SZ", "REG_DWORD", "REG_EXPAND_SZ", "REG_BINARY", "REG_MULTI_SZ", "REG_QWORD"];
-    for t in &types {
-        if let Some(pos) = line.find(t) {
-            let after = &line[pos + t.len()..];
-            let value = after.trim();
-            return Some(value.to_string());
-        }
+/// Приводит значение ProxyServer к URL, пригодному для `reqwest::Proxy::all`.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn normalize_proxy_server(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
     }
-    None
+    let server = if raw.contains('=') {
+        let lookup = |proto: &str| {
+            raw.split(';').find_map(|part| {
+                let (k, v) = part.split_once('=')?;
+                (k.trim().eq_ignore_ascii_case(proto) && !v.trim().is_empty())
+                    .then(|| v.trim().to_string())
+            })
+        };
+        lookup("https").or_else(|| lookup("http"))?
+    } else {
+        raw.split(';').next()?.trim().to_string()
+    };
+    if server.is_empty() {
+        return None;
+    }
+    if server.starts_with("http://") || server.starts_with("https://") {
+        Some(server)
+    } else {
+        Some(format!("http://{server}"))
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -331,7 +296,7 @@ fn api_base(params: &JiraConnectionParams) -> &'static str {
     }
 }
 
-fn apply_auth(
+pub(crate) fn apply_auth(
     req: reqwest::RequestBuilder,
     params: &JiraConnectionParams,
     token: &str,
@@ -343,7 +308,7 @@ fn apply_auth(
     }
 }
 
-fn url(params: &JiraConnectionParams, path: &str) -> String {
+pub(crate) fn url(params: &JiraConnectionParams, path: &str) -> String {
     format!(
         "{}/{}/{}",
         params.base_url.trim_end_matches('/'),
@@ -486,7 +451,7 @@ pub struct BulkResultItem {
 const MAX_RETRIES: u32 = 5;
 const BASE_BACKOFF_MS: u64 = 500;
 
-async fn send_with_retry(
+pub(crate) async fn send_with_retry(
     #[allow(unused_variables)]
     client: &reqwest::Client,
     mut build_request: impl FnMut() -> reqwest::RequestBuilder,
@@ -541,9 +506,9 @@ async fn send_with_retry(
     }
 }
 
-struct AuthedClient {
-    client: reqwest::Client,
-    token: String,
+pub(crate) struct AuthedClient {
+    pub(crate) client: reqwest::Client,
+    pub(crate) token: String,
 }
 
 /// Минимальный набор идентификаторов текущего пользователя из `/myself`.
@@ -616,7 +581,7 @@ fn server_author_matches(v: &Value, candidates: &[String]) -> bool {
     false
 }
 
-fn init(params: &JiraConnectionParams) -> Result<AuthedClient, JiraError> {
+pub(crate) fn init(params: &JiraConnectionParams) -> Result<AuthedClient, JiraError> {
     let client = build_http_client(params)?;
     let token = get_secret(&params.secret_ref)?;
     Ok(AuthedClient { client, token })
@@ -625,6 +590,19 @@ fn init(params: &JiraConnectionParams) -> Result<AuthedClient, JiraError> {
 // ---------------------------------------------------------------------------
 // Tauri-команды
 // ---------------------------------------------------------------------------
+
+/// Лёгкая проверка доступности Jira для индикатора сети: любой HTTP-ответ < 500
+/// (включая 401/403) означает, что сервер достижим. Без повторов.
+pub async fn ping(params: &JiraConnectionParams) -> bool {
+    let Ok(ctx) = init(params) else { return false };
+    let endpoint = url(params, "serverInfo");
+    apply_auth(ctx.client.get(&endpoint), params, &ctx.token)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map(|r| r.status().as_u16() < 500)
+        .unwrap_or(false)
+}
 
 #[tauri::command]
 pub async fn test_connection(params: JiraConnectionParams) -> Result<bool, String> {
@@ -913,7 +891,7 @@ pub async fn get_worklogs_since(
 /// парсятся как success-JSON, тело без поля `values` трактуется как «нет данных», и
 /// пользователь видит «соединение есть, часов нет». Возвращает Err с HTTP-кодом и
 /// фрагментом тела, если статус не 2xx.
-async fn ensure_json_success(resp: reqwest::Response) -> Result<Value, String> {
+pub(crate) async fn ensure_json_success(resp: reqwest::Response) -> Result<Value, String> {
     let status = resp.status();
     if !status.is_success() {
         let body = truncate_chars(&resp.text().await.unwrap_or_default(), 300);
@@ -1444,25 +1422,25 @@ mod tests {
         assert!(msg.to_lowercase().contains("certificate"));
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
-    fn parse_reg_value_extracts_after_reg_sz() {
-        let line = "    ProxyServer    REG_SZ    proxy.corp.local:8080";
-        assert_eq!(super::parse_reg_value(line), Some("proxy.corp.local:8080".to_string()));
+    fn normalize_proxy_server_plain_host_port() {
+        assert_eq!(super::normalize_proxy_server("proxy.corp.local:8080"),
+                   Some("http://proxy.corp.local:8080".to_string()));
+        assert_eq!(super::normalize_proxy_server("https://p:1"), Some("https://p:1".to_string()));
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
-    fn parse_reg_value_empty_value_returns_empty_string() {
-        let line = "    ProxyServer    REG_SZ    ";
-        assert_eq!(super::parse_reg_value(line), Some("".to_string()));
+    fn normalize_proxy_server_empty_is_none() {
+        assert_eq!(super::normalize_proxy_server("   "), None);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
-    fn parse_reg_value_dword() {
-        let line = "    ProxyEnable    REG_DWORD    0x1";
-        assert_eq!(super::parse_reg_value(line), Some("0x1".to_string()));
+    fn normalize_proxy_server_per_protocol_prefers_https() {
+        assert_eq!(super::normalize_proxy_server("http=h1:80;https=h2:443;ftp=f:21"),
+                   Some("http://h2:443".to_string()));
+        assert_eq!(super::normalize_proxy_server("http=h1:80;ftp=f:21"),
+                   Some("http://h1:80".to_string()));
+        assert_eq!(super::normalize_proxy_server("ftp=f:21"), None);
     }
 
     fn test_params(base_url: String, instance_type: JiraInstanceType) -> JiraConnectionParams {

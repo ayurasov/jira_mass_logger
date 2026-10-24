@@ -1,21 +1,17 @@
 //! Монитор сети и обработчик событий сна/пробуждения.
 //!
-//! Стратегия определения сети:
-//!  1. reqwest health-check к /rest/api/2/serverInfo активного профиля Jira —
-//!     это надёжнее, чем проверка наличия сетевого интерфейса (NLA).
-//!  2. Клиент reqwest создаётся один раз и переиспользуется (Arc<reqwest::Client>),
-//!     чтобы избежать пересоздания schannel/rustls-контекста на каждой проверке
-//!     (что на Windows вызывало мигание консольного окна).
-//!
-//! События Windows:
-//!  - WM_WTSSESSION_CHANGE / WM_POWERBROADCAST (сон/пробуждение) обрабатываются
-//!    через tauri plugin-level событие "system:resume" (тригерит wake-сигнал).
+//!  - Раз в минуту — лёгкий GET /serverInfo к активному Jira-профилю (параметры
+//!    профиля передаёт UI через `set_monitor_connection`), плюс счётчики очереди.
+//!    Результат уходит во фронтенд событием `sync-status-changed`.
+//!  - Пробуждение системы: фронтенд (usePowerEvents, visibilitychange) вызывает
+//!    `notify_system_resume` → событие "backend:resume" → wake-сигнал воркеру очереди.
 
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Listener};
 
 use crate::logger::{AppLogger, LogSink};
+use crate::jira_client::JiraConnectionParams;
 use crate::sync_queue::WakeSignal;
 
 // ──────────────────────────────────────────────────────
@@ -44,25 +40,14 @@ pub struct SyncIndicator {
 }
 
 pub struct NetworkMonitor {
-    status:   Arc<Mutex<SyncIndicator>>,
-    jira_url: Arc<Mutex<String>>,
-    email:    Arc<Mutex<String>>,
-    token:    Arc<Mutex<String>>,
-    /// Переиспользуемый HTTP-клиент — создаётся один раз, не пересоздаётся каждые 15 с
-    client:   Arc<reqwest::Client>,
+    status: Arc<Mutex<SyncIndicator>>,
+    /// Параметры активного Jira-профиля — передаются из UI (set_monitor_connection).
+    /// Пока профиль не задан, health-check не выполняется.
+    connection: Arc<Mutex<Option<JiraConnectionParams>>>,
 }
 
 impl NetworkMonitor {
     pub fn new() -> Self {
-        // Клиент создаётся один раз при старте приложения.
-        // use_rustls_tls() на Windows при многократном Client::build() может
-        // порождать мигание консольного окна через schannel-дочерние процессы.
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .use_rustls_tls()
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
         Self {
             status: Arc::new(Mutex::new(SyncIndicator {
                 net_status:    NetStatus::Offline,
@@ -70,32 +55,25 @@ impl NetworkMonitor {
                 failed_count:  0,
                 last_error:    None,
             })),
-            jira_url: Arc::new(Mutex::new(String::new())),
-            email:    Arc::new(Mutex::new(String::new())),
-            token:    Arc::new(Mutex::new(String::new())),
-            client:   Arc::new(client),
+            connection: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Обновить учётные данные для health-check
-    pub fn set_credentials(&self, jira_url: &str, email: &str, token: &str) {
-        *self.jira_url.lock().unwrap() = jira_url.to_string();
-        *self.email.lock().unwrap()    = email.to_string();
-        *self.token.lock().unwrap()    = token.to_string();
+    pub fn set_connection(&self, params: Option<JiraConnectionParams>) {
+        *self.connection.lock().unwrap() = params;
+    }
+
+    fn connection(&self) -> Option<JiraConnectionParams> {
+        self.connection.lock().unwrap().clone()
     }
 
     pub fn get_status(&self) -> SyncIndicator {
         self.status.lock().unwrap().clone()
     }
 
-    pub fn set_syncing(&self) {
-        let mut s = self.status.lock().unwrap();
-        s.net_status = NetStatus::Syncing;
-    }
-
     pub fn set_online(&self) {
         let mut s = self.status.lock().unwrap();
-        s.net_status = NetStatus::Online;
+        s.net_status = if s.failed_count > 0 { NetStatus::Error } else { NetStatus::Online };
     }
 
     pub fn set_offline(&self) {
@@ -108,18 +86,42 @@ impl NetworkMonitor {
         s.pending_count = pending;
         s.failed_count  = failed;
         s.last_error    = last_err;
-        if failed > 0 { s.net_status = NetStatus::Error; }
-    }
-
-    /// Переиспользуемый HTTP-клиент для health-check
-    pub fn http_client(&self) -> Arc<reqwest::Client> {
-        self.client.clone()
+        if failed > 0 && s.net_status == NetStatus::Online { s.net_status = NetStatus::Error; }
+        if failed == 0 && s.net_status == NetStatus::Error { s.net_status = NetStatus::Online; }
     }
 }
 
+/// Счётчики очереди синхронизации для индикатора: (ожидают, исчерпали попытки, последняя ошибка).
+fn queue_counts(db: &Mutex<rusqlite::Connection>) -> Option<(usize, usize, Option<String>)> {
+    let conn = db.lock().ok()?;
+    let (pending, failed): (i64, i64) = conn
+        .query_row(
+            "SELECT
+                COALESCE(SUM(CASE WHEN status <> 'synced' AND attempts < ?1 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status <> 'synced' AND attempts >= ?1 THEN 1 ELSE 0 END), 0)
+             FROM sync_queue",
+            rusqlite::params![crate::sync_queue::MAX_ATTEMPTS],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ok()?;
+    let last_error: Option<String> = conn
+        .query_row(
+            "SELECT last_error FROM sync_queue WHERE last_error IS NOT NULL AND status <> 'synced'
+             ORDER BY updated_at DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    Some((pending as usize, failed as usize, last_error))
+}
+
 // ──────────────────────────────────────────────────────
-// Фоновый монитор: reqwest health-check + эмит события Tauri
+// Фоновый монитор: health-check активного профиля + эмит события Tauri
 // ──────────────────────────────────────────────────────
+
+/// Интервал health-check. Проверка — один лёгкий GET к Jira; процессов не порождает
+/// (системный прокси читается из реестра напрямую, см. win_registry.rs).
+const HEALTH_CHECK_SECS: u64 = 60;
 
 /// Запустить периодический health-check и обработчик событий в Tauri.
 pub fn start_network_monitor(
@@ -127,67 +129,41 @@ pub fn start_network_monitor(
     wake:    WakeSignal,
     app:     AppHandle,
     logger:  Arc<AppLogger>,
+    db:      Arc<Mutex<rusqlite::Connection>>,
 ) {
-    // Периодический health-check (каждые 15 с).
-    // Клиент берётся из Arc — не пересоздаётся каждую итерацию.
     let m2 = monitor.clone();
     let app2 = app.clone();
     let lg2 = logger.clone();
     let wake2 = wake.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
-            let (url, email, token) = {
-                let u = m2.jira_url.lock().unwrap().clone();
-                let e = m2.email.lock().unwrap().clone();
-                let t = m2.token.lock().unwrap().clone();
-                (u, e, t)
-            };
-            if url.is_empty() { continue; }
-
-            // Переиспользуем уже созданный клиент
-            let client = m2.http_client();
-            let reachable = client
-                .get(format!("{url}/rest/api/2/serverInfo"))
-                .basic_auth(&email, Some(&token))
-                .send()
-                .await
-                .map(|r| r.status().as_u16() < 500)
-                .unwrap_or(false);
-
-            if reachable {
-                m2.set_online();
-                lg2.debug("network_monitor", "Jira reachable");
-                // Триггерим воркер очереди
-                wake2.notify_one();
-            } else {
-                m2.set_offline();
-                lg2.debug("network_monitor", "Jira unreachable");
+            if let Some(params) = m2.connection() {
+                if crate::jira_client::ping(&params).await {
+                    m2.set_online();
+                    lg2.debug("network_monitor", "Jira reachable");
+                    wake2.notify_one();
+                } else {
+                    m2.set_offline();
+                    lg2.debug("network_monitor", "Jira unreachable");
+                }
             }
-            // Эмитим событие во фронтенд
-            let payload = serde_json::json!(m2.get_status());
-            let _ = app2.emit("sync-status-changed", payload);
+            if let Some((pending, failed, last_err)) = queue_counts(&db) {
+                m2.update_queue_counts(pending, failed, last_err);
+            }
+            let _ = app2.emit("sync-status-changed", m2.get_status());
+            tokio::time::sleep(tokio::time::Duration::from_secs(HEALTH_CHECK_SECS)).await;
         }
     });
 
-    // Слушаем событие Windows sleep/resume через Tauri app-window events
+    // Пробуждение системы: фронтенд (usePowerEvents) вызывает notify_system_resume,
+    // та эмитит "backend:resume" — будим воркер очереди.
     let m3 = monitor.clone();
-    let app3 = app.clone();
     let lg3 = logger.clone();
     let wake3 = wake.clone();
-    tauri::async_runtime::spawn(async move {
-        // WM_POWERBROADCAST / PBT_APMRESUMESUSPEND триггерится через tauri system "resume"
-        // В Tauri v2 слушаем через on_system_tray / global shortcut или Window event:
-        // app.listen_global(в v2 = app.listen("событие"))
-        // Здесь регистрируем Rust-слушатель события "system:resume" от фронтенда (emit JS)
-        // Фронтенд слушает визуальные события Tauri window и ретранслирует в бэкенд через invoke
-        app3.listen("backend:resume", move |_event| {
-            lg3.info("network_monitor", "system resume event received");
-            m3.set_online();
-            wake3.notify_one();
-        });
-        // задача не завершается, поэтому бесконечно ждём
-        std::future::pending::<()>().await;
+    app.listen("backend:resume", move |_event| {
+        lg3.info("network_monitor", "system resume event received");
+        m3.set_online();
+        wake3.notify_one();
     });
 }
 
@@ -201,6 +177,15 @@ pub fn get_sync_indicator(
     monitor: tauri::State<'_, Arc<NetworkMonitor>>,
 ) -> SyncIndicator {
     monitor.get_status()
+}
+
+/// UI сообщает параметры активного Jira-профиля для health-check индикатора сети.
+#[tauri::command]
+pub fn set_monitor_connection(
+    monitor: tauri::State<'_, Arc<NetworkMonitor>>,
+    params:  Option<JiraConnectionParams>,
+) {
+    monitor.set_connection(params);
 }
 
 /// Фронтенд сообщает о восстановлении Windows из сна/гибернации
