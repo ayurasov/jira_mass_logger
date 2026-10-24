@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { DigestData } from '../utils/digest';
 
 export type JiraInstanceType = 'cloud' | 'server' | 'server_basic';
 export type ExchangeAuthMode = 'graph' | 'ews';
@@ -390,6 +391,14 @@ export const tauriApi = {
   },
   getTeamWorklogs(params: JiraConnectionParams, userIds: string[], dateFrom: string, dateTo: string) {
     return invoke<TeamWorklogsResult>('get_team_worklogs', { params, userIds, dateFrom, dateTo });
+  },
+  // --- Дайджест активности ---
+  getJiraDigest(
+    params: JiraConnectionParams,
+    scope: { projectKeys?: string[]; userIds?: string[] },
+    since: string, until: string, staleBefore: string,
+  ) {
+    return invoke<DigestData>('get_jira_digest', { params, scope, since, until, staleBefore });
   },
   // --- Планировщик: напоминание о незаполненном времени ---
   getSchedulerSettings() { return invoke<SchedulerSettings>('get_scheduler_settings'); },

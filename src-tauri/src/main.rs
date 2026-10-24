@@ -20,6 +20,7 @@ mod logger_noop;
 mod license;
 mod settings_cmd;
 mod team_worklogs;
+mod jira_digest;
 mod win_registry;
 
 use std::sync::{Arc, Mutex};
@@ -233,6 +234,7 @@ fn main() {
             team_worklogs::search_jira_users,
             team_worklogs::get_team_worklogs,
             team_worklogs::get_current_jira_user,
+            jira_digest::get_jira_digest,
             // Settings
             settings_cmd::get_system_theme,
             settings_cmd::save_work_schedule,
