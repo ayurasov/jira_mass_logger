@@ -125,7 +125,8 @@ export const useComposeStore = defineStore('compose', {
       this.error = null;
       this.submitMessage = null;
       this.rowErrors = {};
-      // Новый день — новые правки.
+      // Новый день — новые правки; старое предложение сразу убираем.
+      this.proposal = [];
       this.userItems = [];
       this.dismissedKeys = [];
       this.dismissedMeetings = [];
@@ -183,7 +184,7 @@ export const useComposeStore = defineStore('compose', {
           if (!key) continue;
           if (!s.issueKey) guessed++;
           out.push({
-            id: ev.id, issueKey: key, issueSummary: (s.issueKey ? s.issueSummary : fallbackSummary) ?? null, subject: ev.subject,
+            id: ev.id, seriesId: ev.seriesMasterId ?? null, issueKey: key, issueSummary: (s.issueKey ? s.issueSummary : fallbackSummary) ?? null, subject: ev.subject,
             start: startMinutesOf(formatJiraStarted(new Date(ev.startAt), tz)), minutes: ev.durationMinutes,
             guessed: !s.issueKey,
           });
@@ -233,12 +234,14 @@ export const useComposeStore = defineStore('compose', {
      * Правка строки (время, длительность, задача, описание): строка фиксируется,
      * остальное автоматически перестраивается под цель.
      */
-    editItem(id: string, patch: Partial<Pick<ProposalItem, 'start' | 'minutes' | 'issueKey' | 'comment'>>) {
+    editItem(id: string, patch: Partial<Pick<ProposalItem, 'start' | 'minutes' | 'issueKey' | 'comment'>>): string | null {
       const current = this.proposal.find((p) => p.id === id);
-      if (!current) return;
+      if (!current) return null;
       let item = this.userItems.find((u) => u.id === id);
       if (!item) {
-        item = { ...current, locked: true };
+        // Новая правка получает собственный id: автоматические id (a1, a2…) переиспользуются
+        // при каждой пересборке и иначе совпадали бы с id правки.
+        item = { ...current, id: `u${++manualSeq}`, locked: true };
         this.userItems.push(item);
       }
       if (patch.issueKey !== undefined && patch.issueKey.trim().toUpperCase() !== item.issueKey) {
@@ -248,6 +251,14 @@ export const useComposeStore = defineStore('compose', {
         item.issueKey = key;
         item.issueSummary = habit?.issueSummary ?? null;
         item.guessed = false;
+        // Задачу для встречи выбрали вручную — запоминаем для этой встречи/серии,
+        // чтобы в следующий раз она подставилась сама (как на экране календаря).
+        const meeting = item.meetingId ? this.meetings.find((m) => m.id === item!.meetingId) : null;
+        if (meeting && /^[A-Z][A-Z0-9_]+-\d+$/.test(key)) {
+          tauriApi.rememberMeetingIssueMatch(meeting.subject, meeting.seriesId ?? null, key, item.issueSummary).catch(() => {});
+          meeting.issueKey = key;
+          meeting.guessed = false;
+        }
         // Описание было автоматическим (или пустым) — подставляем типичное для новой задачи.
         if (!item.comment || item.comment === prevAuto) {
           item.comment = this.suggestionsFor(key)[0] ?? habit?.issueSummary ?? item.comment;
@@ -256,7 +267,8 @@ export const useComposeStore = defineStore('compose', {
       if (patch.comment !== undefined) item.comment = patch.comment;
       if (patch.start !== undefined) item.start = Math.max(0, Math.min(24 * 60 - 15, Math.round(patch.start / 15) * 15));
       if (patch.minutes !== undefined) item.minutes = Math.max(15, Math.round(patch.minutes / 15) * 15);
-      this.rebuild(id);
+      this.rebuild(item.id);
+      return item.id;
     },
 
     /** Убрать строку: её задача/встреча больше не предлагается до «Пересобрать». */

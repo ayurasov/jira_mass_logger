@@ -37,6 +37,8 @@ export interface HabitTask {
 export interface ComposerMeeting {
   /** id события календаря — чтобы убранная встреча не возвращалась при пересборке. */
   id?: string;
+  /** Ключ серии повторяющейся встречи (для запоминания выбранной задачи). */
+  seriesId?: string | null;
   issueKey: string;
   issueSummary?: string | null;
   subject: string;
@@ -233,7 +235,9 @@ export function composeDay(
   const loggedToday = new Set(existing.map((w) => w.issueKey));
   const out: ProposalItem[] = [];
   let seq = 0;
-  const id = () => `p${++seq}`;
+  // Префикс «a» — автоматические строки; правки пользователя получают свои id (u…/m…),
+  // поэтому id после пересборки не совпадают с id правок.
+  const id = () => `a${++seq}`;
 
   // 1) Встречи — в их реальное время (если не пересекаются с уже залогированным).
   for (const m of [...meetings].sort((a, b) => a.start - b.start)) {
@@ -260,6 +264,9 @@ export function composeDay(
   let chosen = pool.filter((h) => h.frequency >= 0.4 || h.sameWeekdayFrequency >= 0.6)
     .map((h) => ({ h, minutes: h.typicalMinutes }));
   if (chosen.length === 0 && pool.length) chosen = [{ h: pool[0], minutes: pool[0].typicalMinutes }];
+  // Все привычные задачи уже есть в дне (правками/встречами) — добиваем самой привычной,
+  // даже если она уже встречается: сумма дня должна дойти до цели.
+  if (chosen.length === 0 && habits.length) chosen = [{ h: habits[0], minutes: remaining }];
   if (chosen.length === 0) return out.sort((a, b) => a.start - b.start);
 
   // 3) Подгонка суммы: «наполнитель» — самая объёмная задача, она сжимается или
@@ -306,7 +313,10 @@ function mergeAdjacent(items: ProposalItem[]): ProposalItem[] {
   const res: ProposalItem[] = [];
   for (const it of items) {
     const prev = res[res.length - 1];
-    if (prev && prev.issueKey === it.issueKey && prev.source === it.source && prev.start + prev.minutes === it.start) {
+    // Склеиваем только куски одной привычной задачи. Встречи — никогда: у каждой свой
+    // id и тема, иначе после правки «склеенного» блока вторая встреча возвращалась дублем.
+    if (prev && it.source === 'habit' && prev.source === 'habit' && prev.issueKey === it.issueKey
+      && prev.comment === it.comment && prev.start + prev.minutes === it.start) {
       prev.minutes += it.minutes;
     } else {
       res.push({ ...it });
@@ -376,11 +386,17 @@ export function buildPlan(input: PlanInput): ProposalItem[] {
       u.minutes -= cut;
       over -= cut;
     }
+    // Даже последняя правка не может вывести день за цель — урезаем и её.
+    const pinned = user.find((u) => u.id === input.pinnedId);
+    if (over > 0 && pinned) pinned.minutes = Math.max(0, pinned.minutes - over);
     user = user.filter((u) => u.minutes > 0);
   }
 
   const busy = [...existing, ...user.map((u) => toBusyWorklog(u, opts.date))];
-  const meetings = input.meetings.filter((m) => !(m.id && input.dismissedMeetings.has(m.id)));
+  // Встреча, которую пользователь уже правил (перенёс/растянул), представлена его правкой —
+  // повторно её не добавляем, даже если исходный слот освободился.
+  const editedMeetings = new Set(user.map((u) => u.meetingId).filter((x): x is string => !!x));
+  const meetings = input.meetings.filter((m) => !(m.id && (input.dismissedMeetings.has(m.id) || editedMeetings.has(m.id))));
   const habits = input.habits.filter((h) => !input.dismissedKeys.has(h.issueKey));
   const auto = composeDay(busy, meetings, habits, opts);
   return [...user, ...auto].sort((a, b) => a.start - b.start);
