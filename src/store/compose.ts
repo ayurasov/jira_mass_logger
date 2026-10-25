@@ -1,5 +1,9 @@
 // Стор экрана «Собрать день»: загрузка уже залогированного, истории привычных задач
 // и встреч календаря, сборка предложения (utils/dayComposer) и отправка в Jira.
+//
+// Модель: правки пользователя (userItems) фиксируются, всё остальное — автоматическое
+// и пересобирается после каждой правки или смены цели, так что сумма дня всегда
+// равна цели. «Пересобрать» сбрасывает правки и убранные задачи.
 import { defineStore } from 'pinia';
 import { tauriApi, type CachedWorklogRow, type BulkResultItem } from '../lib/tauriApi';
 import { useJiraProfilesStore } from './jiraProfiles';
@@ -9,8 +13,8 @@ import { useAnalyticsStore } from './analytics';
 import { addDaysIso, formatJiraStarted, jiraStartedFromLocal, localIsoDate, zonedDayBounds } from '../utils/time';
 import { datesInRange, isWorkingDay } from '../utils/worklogChecks';
 import {
-  composeDay, findHabits, hhmmToMinutes, minutesToHHMM, startMinutesOf,
-  type ComposerMeeting, type HabitTask, type ProposalItem,
+  buildPlan, commentSuggestions, findHabits, hhmmToMinutes, minutesToHHMM, startMinutesOf, unfilledDays,
+  type ComposeOptions, type ComposerMeeting, type HabitTask, type ProposalItem,
 } from '../utils/dayComposer';
 
 const PREFS_KEY = 'jiratime-compose-prefs';
@@ -23,11 +27,13 @@ interface ComposePrefs {
   lunchEnd: string;
   historyWeeks: number;
   useMeetings: boolean;
+  /** После успешной отправки сразу открывать следующий незаполненный день. */
+  autoAdvance: boolean;
 }
 
 const DEFAULT_PREFS: ComposePrefs = {
   dayStart: '09:00', dayEnd: '18:00', lunchEnabled: true, lunchStart: '13:00', lunchEnd: '14:00',
-  historyWeeks: 4, useMeetings: true,
+  historyWeeks: 4, useMeetings: true, autoAdvance: true,
 };
 
 function loadPrefs(): ComposePrefs {
@@ -52,6 +58,12 @@ export const useComposeStore = defineStore('compose', {
     meetings: [] as ComposerMeeting[],
     meetingsNote: '' as string,
     proposal: [] as ProposalItem[],
+    /** Строки, которые правил пользователь: при пересборке не меняются. */
+    userItems: [] as ProposalItem[],
+    dismissedKeys: [] as string[],
+    dismissedMeetings: [] as string[],
+    /** Незаполненные рабочие дни за последние 2 недели (для быстрого перехода). */
+    unfilled: [] as { date: string; minutes: number }[],
     loading: false,
     refreshingHistory: false,
     submitting: false,
@@ -65,7 +77,21 @@ export const useComposeStore = defineStore('compose', {
       return Math.round(state.existing.reduce((s, w) => s + w.timeSpentSeconds, 0) / 60);
     },
     proposedMinutes(state): number {
-      return state.proposal.filter((p) => p.include).reduce((s, p) => s + (Number(p.minutes) || 0), 0);
+      return state.proposal.reduce((s, p) => s + (Number(p.minutes) || 0), 0);
+    },
+    composeOptions(state): ComposeOptions {
+      return {
+        date: state.date,
+        targetHours: Number(state.targetHours) || 0,
+        stepMinutes: 15,
+        dayStart: hhmmToMinutes(state.prefs.dayStart),
+        dayEnd: hhmmToMinutes(state.prefs.dayEnd),
+        lunch: state.prefs.lunchEnabled ? [hhmmToMinutes(state.prefs.lunchStart), hhmmToMinutes(state.prefs.lunchEnd)] : null,
+      };
+    },
+    /** Следующий незаполненный день (кроме текущего) — для перехода после отправки. */
+    nextUnfilled(state): string | null {
+      return state.unfilled.find((d) => d.date !== state.date)?.date ?? null;
     },
     targetMinutes(state): number {
       return Math.round((Number(state.targetHours) || 0) * 60);
@@ -99,6 +125,10 @@ export const useComposeStore = defineStore('compose', {
       this.error = null;
       this.submitMessage = null;
       this.rowErrors = {};
+      // Новый день — новые правки.
+      this.userItems = [];
+      this.dismissedKeys = [];
+      this.dismissedMeetings = [];
       try {
         const jp = useJiraProfilesStore();
         await jp.ensureLoaded();
@@ -121,7 +151,8 @@ export const useComposeStore = defineStore('compose', {
 
         this.meetings = this.prefs.useMeetings ? await this.loadMeetings(date) : [];
         if (token !== seq) return;
-        this.compose();
+        this.rebuild();
+        this.refreshUnfilled().catch(() => {});
       } catch (e) {
         if (token === seq) this.error = e instanceof Error ? e.message : String(e);
       } finally {
@@ -138,17 +169,26 @@ export const useComposeStore = defineStore('compose', {
         const tz = useSettingsStore().timezone;
         const bounds = zonedDayBounds(date, tz);
         const events = await tauriApi.getCalendarEvents(tauriApi.profileToConnectionParams(profile), bounds.from, bounds.to, false);
+        // Задача «по умолчанию» для встреч без правила: самая частая из истории встреч,
+        // иначе самая привычная задача — чтобы день собирался без ручного выбора.
+        const meetingHistory = await tauriApi.getMeetingIssueHistory().catch(() => []);
+        const fallback = [...meetingHistory].sort((a, b) => b.useCount - a.useCount)[0];
+        const fallbackKey = fallback?.issueKey ?? this.habits[0]?.issueKey ?? null;
+        const fallbackSummary = fallback?.issueSummary ?? this.habits[0]?.issueSummary ?? null;
         const out: ComposerMeeting[] = [];
-        let unmatched = 0;
+        let guessed = 0;
         for (const ev of events) {
           const s = await tauriApi.suggestIssueForMeeting(ev.subject, ev.seriesMasterId ?? null);
-          if (!s.issueKey) { unmatched++; continue; }
+          const key = s.issueKey ?? fallbackKey;
+          if (!key) continue;
+          if (!s.issueKey) guessed++;
           out.push({
-            issueKey: s.issueKey, issueSummary: s.issueSummary ?? null, subject: ev.subject,
+            id: ev.id, issueKey: key, issueSummary: (s.issueKey ? s.issueSummary : fallbackSummary) ?? null, subject: ev.subject,
             start: startMinutesOf(formatJiraStarted(new Date(ev.startAt), tz)), minutes: ev.durationMinutes,
+            guessed: !s.issueKey,
           });
         }
-        if (unmatched) this.meetingsNote = `${unmatched} встреч(и) без задачи — сопоставьте их на экране «Календарь → Jira».`;
+        if (guessed) this.meetingsNote = `${guessed} встреч(и) без правила — подставлена задача ${fallbackKey}; проверьте отмеченные строки.`;
         return out;
       } catch (e) {
         this.meetingsNote = `Календарь недоступен: ${e instanceof Error ? e.message : e}`;
@@ -156,23 +196,109 @@ export const useComposeStore = defineStore('compose', {
       }
     },
 
-    /** Пересобирает предложение по текущим данным и настройкам. */
-    compose() {
+    /** Пересчитывает план: правки пользователя + автоматическое остальное (сумма = цели). */
+    rebuild(pinnedId?: string) {
       this.savePrefs();
+      this.proposal = buildPlan({
+        existing: this.existing,
+        meetings: this.meetings,
+        habits: this.habits,
+        opts: this.composeOptions,
+        userItems: this.userItems,
+        dismissedKeys: new Set(this.dismissedKeys),
+        dismissedMeetings: new Set(this.dismissedMeetings),
+        pinnedId,
+      });
+      // Правки, урезанные до нуля при переборе, убираем и из списка правок.
+      const alive = new Set(this.proposal.map((p) => p.id));
+      this.userItems = this.userItems.filter((u) => alive.has(u.id))
+        .map((u) => ({ ...u, minutes: this.proposal.find((p) => p.id === u.id)!.minutes }));
+    },
+
+    /** «Пересобрать»: забыть правки и убранные задачи, собрать день заново. */
+    reset() {
+      this.userItems = [];
+      this.dismissedKeys = [];
+      this.dismissedMeetings = [];
       this.rowErrors = {};
-      this.proposal = composeDay(
-        this.existing,
-        this.meetings,
-        this.habits,
-        {
-          date: this.date,
-          targetHours: Number(this.targetHours) || 0,
-          stepMinutes: 15,
-          dayStart: hhmmToMinutes(this.prefs.dayStart),
-          dayEnd: hhmmToMinutes(this.prefs.dayEnd),
-          lunch: this.prefs.lunchEnabled ? [hhmmToMinutes(this.prefs.lunchStart), hhmmToMinutes(this.prefs.lunchEnd)] : null,
-        },
-      );
+      this.rebuild();
+    },
+
+    /** Подсказки описания для задачи — из прошлых описаний. */
+    suggestionsFor(issueKey: string): string[] {
+      return commentSuggestions([...this.history, ...this.existing], issueKey.trim().toUpperCase());
+    },
+
+    /**
+     * Правка строки (время, длительность, задача, описание): строка фиксируется,
+     * остальное автоматически перестраивается под цель.
+     */
+    editItem(id: string, patch: Partial<Pick<ProposalItem, 'start' | 'minutes' | 'issueKey' | 'comment'>>) {
+      const current = this.proposal.find((p) => p.id === id);
+      if (!current) return;
+      let item = this.userItems.find((u) => u.id === id);
+      if (!item) {
+        item = { ...current, locked: true };
+        this.userItems.push(item);
+      }
+      if (patch.issueKey !== undefined && patch.issueKey.trim().toUpperCase() !== item.issueKey) {
+        const key = patch.issueKey.trim().toUpperCase();
+        const prevAuto = this.suggestionsFor(item.issueKey)[0] ?? '';
+        const habit = this.habits.find((h) => h.issueKey === key);
+        item.issueKey = key;
+        item.issueSummary = habit?.issueSummary ?? null;
+        item.guessed = false;
+        // Описание было автоматическим (или пустым) — подставляем типичное для новой задачи.
+        if (!item.comment || item.comment === prevAuto) {
+          item.comment = this.suggestionsFor(key)[0] ?? habit?.issueSummary ?? item.comment;
+        }
+      }
+      if (patch.comment !== undefined) item.comment = patch.comment;
+      if (patch.start !== undefined) item.start = Math.max(0, Math.min(24 * 60 - 15, Math.round(patch.start / 15) * 15));
+      if (patch.minutes !== undefined) item.minutes = Math.max(15, Math.round(patch.minutes / 15) * 15);
+      this.rebuild(id);
+    },
+
+    /** Убрать строку: её задача/встреча больше не предлагается до «Пересобрать». */
+    removeItem(id: string) {
+      const p = this.proposal.find((x) => x.id === id);
+      if (!p) return;
+      this.userItems = this.userItems.filter((u) => u.id !== id);
+      if (p.meetingId) this.dismissedMeetings.push(p.meetingId);
+      else if (p.source !== 'manual') this.dismissedKeys.push(p.issueKey);
+      this.rebuild();
+    },
+
+    addRow(habit?: HabitTask) {
+      const lastEnd = [...this.existing.map((w) => startMinutesOf(w.started) + Math.round(w.timeSpentSeconds / 60)),
+        ...this.proposal.map((p) => p.start + p.minutes)].reduce((m, v) => Math.max(m, v), hhmmToMinutes(this.prefs.dayStart));
+      const id = `m${++manualSeq}`;
+      const key = habit?.issueKey ?? '';
+      this.userItems.push({
+        id,
+        issueKey: key,
+        issueSummary: habit?.issueSummary ?? null,
+        start: Math.min(lastEnd, 24 * 60 - 60),
+        minutes: habit?.typicalMinutes ?? 60,
+        comment: key ? (this.suggestionsFor(key)[0] ?? habit?.typicalComment ?? '') : '',
+        source: 'manual',
+        reason: habit ? 'добавлено из привычных' : 'добавлено вручную',
+        include: true,
+        locked: true,
+      });
+      if (habit) this.dismissedKeys = this.dismissedKeys.filter((k) => k !== habit.issueKey);
+      this.rebuild(id);
+    },
+
+    /** Незаполненные рабочие дни за 2 недели до сегодня. */
+    async refreshUnfilled() {
+      const settings = useSettingsStore();
+      const today = localIsoDate();
+      const from = addDaysIso(today, -13);
+      const rows = await tauriApi.listCachedWorklogs(from, today);
+      const holidays = new Set(settings.holidays.map((h) => h.date));
+      const workdays = datesInRange(from, today).filter((d) => isWorkingDay(d, { workdays: settings.workdays, holidays }));
+      this.unfilled = unfilledDays(rows, workdays, today, (settings.workdayHours || 8) * 60).reverse();
     },
 
     /** Подтягивает историю за окно из Jira и пересобирает (если кэш неполный). */
@@ -187,34 +313,13 @@ export const useComposeStore = defineStore('compose', {
       }
     },
 
-    addRow(habit?: HabitTask) {
-      const lastEnd = [...this.existing.map((w) => startMinutesOf(w.started) + Math.round(w.timeSpentSeconds / 60)),
-        ...this.proposal.map((p) => p.start + p.minutes)].reduce((m, v) => Math.max(m, v), hhmmToMinutes(this.prefs.dayStart));
-      const remaining = Math.max(15, this.targetMinutes - this.filledMinutes - this.proposedMinutes);
-      this.proposal.push({
-        id: `m${++manualSeq}`,
-        issueKey: habit?.issueKey ?? '',
-        issueSummary: habit?.issueSummary ?? null,
-        start: lastEnd,
-        minutes: Math.min(habit?.typicalMinutes ?? remaining, remaining),
-        comment: habit?.typicalComment ?? '',
-        source: 'manual',
-        reason: habit ? 'добавлено вручную из привычных' : 'добавлено вручную',
-        include: true,
-      });
-    },
-
-    removeRow(id: string) {
-      this.proposal = this.proposal.filter((p) => p.id !== id);
-    },
-
     async submit(): Promise<BulkResultItem[]> {
       const jp = useJiraProfilesStore();
       await jp.ensureLoaded();
       const params = jp.activeConnectionParams;
       if (!params) throw new Error('Нет активного профиля Jira');
       const tz = useSettingsStore().timezone;
-      const rows = this.proposal.filter((p) => p.include && p.issueKey.trim() && p.minutes > 0);
+      const rows = this.proposal.filter((p) => p.issueKey.trim() && p.minutes > 0);
       if (!rows.length) return [];
       this.submitting = true;
       this.submitMessage = null;
@@ -247,8 +352,12 @@ export const useComposeStore = defineStore('compose', {
           }
         }
         if (okIds.size) useAnalyticsStore().trackBulkEntries(okIds.size);
-        this.proposal = this.proposal.filter((p) => !okIds.has(p.id));
         this.existing = (await tauriApi.listCachedWorklogs(this.date, this.date)).sort((a, b) => a.started.localeCompare(b.started));
+        // Отправленное стало «уже залогированным»; неотправленные строки остаются правками.
+        const failedRows = rows.filter((p) => !okIds.has(p.id));
+        this.userItems = failedRows.map((p) => ({ ...p, locked: true }));
+        this.rebuild();
+        await this.refreshUnfilled().catch(() => {});
         const failed = results.length - okIds.size;
         this.submitMessage = failed
           ? { ok: false, text: `Залогировано ${okIds.size}, с ошибкой ${failed} — исправьте отмеченные строки и повторите.` }

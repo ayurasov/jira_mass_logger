@@ -1,19 +1,22 @@
 <script setup lang="ts">
-// «Собрать день»: добивка дня привычными задачами до выбранного числа часов.
-import { computed, onMounted, watch } from 'vue';
+// «Собрать день»: автоматическое заполнение дня до цели — встречи календаря,
+// привычные задачи и описания из прошлых записей. Любая правка (в таблице или
+// перетаскиванием на шкале) фиксируется, остальное подстраивается под цель само.
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import ActionIcon from '../components/ActionIcon.vue';
 import DatePicker from '../components/DatePicker.vue';
 import { useComposeStore } from '../store/compose';
 import { useLicenseStore } from '../store/license';
 import { addDaysIso, formatRuDate, parseIsoDate } from '../utils/time';
-import { describeHabit, findOverlaps, hhmmToMinutes, minutesToHHMM, startMinutesOf } from '../utils/dayComposer';
+import { describeHabit, findOverlaps, hhmmToMinutes, minutesToHHMM, startMinutesOf, type ProposalItem } from '../utils/dayComposer';
 
 const store = useComposeStore();
 const license = useLicenseStore();
 const route = useRoute();
 
 const WD_FULL = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+const WD_SHORT = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const fmtDur = (m: number) => {
   const h = Math.floor(m / 60);
   const mm = Math.round(m % 60);
@@ -25,23 +28,27 @@ onMounted(() => {
   store.load(q && /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : store.date);
 });
 
-function setDate(d: string) { if (d) store.load(d); }
+function setDate(d: string) { if (d && d !== store.date) store.load(d); }
 function shiftDay(delta: number) { store.load(addDaysIso(store.date, delta)); }
 
-// ── Шкала дня ───────────────────────────────────────────────────────
+// Цель и рабочее время — автоматическая пересборка (с небольшой задержкой на ввод).
+let rebuildTimer: number | null = null;
+watch(
+  () => [store.targetHours, store.prefs.dayStart, store.prefs.dayEnd, store.prefs.lunchEnabled, store.prefs.lunchStart, store.prefs.lunchEnd],
+  () => {
+    if (store.loading) return;
+    if (rebuildTimer) window.clearTimeout(rebuildTimer);
+    rebuildTimer = window.setTimeout(() => store.rebuild(), 250);
+  },
+);
+watch(() => [store.prefs.historyWeeks, store.prefs.useMeetings], () => store.load(store.date, false));
+
+// ── Шкала дня (с перетаскиванием) ───────────────────────────────────
 const scale = computed(() => {
-  const starts = [
-    hhmmToMinutes(store.prefs.dayStart),
-    ...store.existing.map((w) => startMinutesOf(w.started)),
-    ...store.proposal.map((p) => p.start),
-  ];
-  const ends = [
-    hhmmToMinutes(store.prefs.dayEnd),
-    ...store.existing.map((w) => startMinutesOf(w.started) + w.timeSpentSeconds / 60),
-    ...store.proposal.map((p) => p.start + p.minutes),
-  ];
-  const from = Math.floor(Math.min(...starts) / 60) * 60;
-  const to = Math.ceil(Math.max(...ends) / 60) * 60;
+  const starts = [hhmmToMinutes(store.prefs.dayStart), ...store.existing.map((w) => startMinutesOf(w.started)), ...store.proposal.map((p) => p.start)];
+  const ends = [hhmmToMinutes(store.prefs.dayEnd), ...store.existing.map((w) => startMinutesOf(w.started) + w.timeSpentSeconds / 60), ...store.proposal.map((p) => p.start + p.minutes)];
+  const from = Math.max(0, Math.floor(Math.min(...starts) / 60) * 60);
+  const to = Math.min(24 * 60, Math.ceil(Math.max(...ends) / 60) * 60);
   return { from, to: Math.max(to, from + 60) };
 });
 const pct = (m: number) => ((m - scale.value.from) / (scale.value.to - scale.value.from)) * 100;
@@ -51,45 +58,80 @@ const hours = computed(() => {
   return out;
 });
 
-const overlaps = computed(() =>
-  findOverlaps(store.proposal.filter((p) => p.include), store.existing.map((w) => ({ ...w, issueKey: w.issueKey }))),
-);
+const track = ref<HTMLElement | null>(null);
+type DragMode = 'move' | 'start' | 'end';
+const drag = ref<{ id: string; mode: DragMode; x0: number; start0: number; minutes0: number; start: number; minutes: number; scale: { from: number; to: number }; moved: boolean } | null>(null);
+
+function onBlockDown(e: PointerEvent, p: ProposalItem, mode: DragMode) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  drag.value = { id: p.id, mode, x0: e.clientX, start0: p.start, minutes0: p.minutes, start: p.start, minutes: p.minutes, scale: { ...scale.value }, moved: false };
+}
+function onBlockMove(e: PointerEvent) {
+  const d = drag.value;
+  if (!d || !track.value) return;
+  const pxPerMin = track.value.clientWidth / (d.scale.to - d.scale.from);
+  const delta = Math.round((e.clientX - d.x0) / pxPerMin / 15) * 15;
+  if (delta !== 0) d.moved = true;
+  if (d.mode === 'move') {
+    d.start = Math.max(0, Math.min(24 * 60 - d.minutes0, d.start0 + delta));
+  } else if (d.mode === 'end') {
+    d.minutes = Math.max(15, d.minutes0 + delta);
+  } else {
+    const start = Math.min(d.start0 + d.minutes0 - 15, Math.max(0, d.start0 + delta));
+    d.start = start;
+    d.minutes = d.start0 + d.minutes0 - start;
+  }
+}
+function onBlockUp() {
+  const d = drag.value;
+  drag.value = null;
+  if (!d || !d.moved) return;
+  store.editItem(d.id, { start: d.start, minutes: d.minutes });
+}
+const shown = (p: ProposalItem) => (drag.value?.id === p.id ? { start: drag.value.start, minutes: drag.value.minutes } : p);
+onBeforeUnmount(() => { drag.value = null; });
+
+const overlaps = computed(() => findOverlaps(store.proposal, store.existing));
 
 // ── Итоги ───────────────────────────────────────────────────────────
 const totalMinutes = computed(() => store.filledMinutes + store.proposedMinutes);
 const diffMinutes = computed(() => totalMinutes.value - store.targetMinutes);
 const barScale = computed(() => Math.max(store.targetMinutes, totalMinutes.value, 1));
+const sorted = computed(() => [...store.proposal].sort((a, b) => a.start - b.start));
 
 const invalidRows = computed(() =>
-  store.proposal.filter((p) => p.include && (!/^[A-Za-z][A-Za-z0-9_]+-\d+$/.test(p.issueKey.trim()) || !(p.minutes > 0))),
+  store.proposal.filter((p) => !/^[A-Za-z][A-Za-z0-9_]+-\d+$/.test(p.issueKey.trim()) || !(p.minutes > 0)),
 );
-const canSubmit = computed(() =>
-  !store.submitting && store.proposal.some((p) => p.include) && invalidRows.value.length === 0,
-);
+const guessedCount = computed(() => store.proposal.filter((p) => p.guessed).length);
+const canSubmit = computed(() => !store.submitting && !store.loading && store.proposal.length > 0 && invalidRows.value.length === 0);
 
 function setRowTime(id: string, value: string) {
-  const p = store.proposal.find((x) => x.id === id);
-  if (p && /^\d{2}:\d{2}$/.test(value)) p.start = hhmmToMinutes(value);
+  if (/^\d{2}:\d{2}$/.test(value)) store.editItem(id, { start: hhmmToMinutes(value) });
 }
 function setRowHours(id: string, value: string) {
-  const p = store.proposal.find((x) => x.id === id);
   const h = Number(String(value).replace(',', '.'));
-  if (p && h > 0 && h <= 24) p.minutes = Math.round(h * 60);
+  if (h > 0 && h <= 24) store.editItem(id, { minutes: Math.round(h * 60) });
 }
 
 async function submit() {
   if (!license.guardWrite() || !canSubmit.value) return;
   try {
     await store.submit();
+    // Полная автоматизация: после успешной отправки — сразу следующий незаполненный день.
+    if (store.submitMessage?.ok && store.prefs.autoAdvance && store.nextUnfilled) {
+      const next = store.nextUnfilled;
+      window.setTimeout(() => store.load(next), 900);
+    }
   } catch (e) {
     store.submitMessage = { ok: false, text: e instanceof Error ? e.message : String(e) };
   }
 }
 
 const usedKeys = computed(() => new Set([...store.existing.map((w) => w.issueKey), ...store.proposal.map((p) => p.issueKey)]));
-
-// Пересборка при смене цели/настроек — по кнопке, а изменение окна истории требует перезагрузки.
-watch(() => store.prefs.historyWeeks, () => store.load(store.date, false));
+const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${formatRuDate(iso).slice(0, 5)}`;
 </script>
 
 <template>
@@ -97,7 +139,7 @@ watch(() => store.prefs.historyWeeks, () => store.load(store.date, false));
     <header class="cd-header">
       <div>
         <h1>Собрать день</h1>
-        <p class="cd-sub">Добить день привычными задачами и встречами до нужного числа часов — с проверкой и правкой перед отправкой</p>
+        <p class="cd-sub">День собирается автоматически: встречи, привычные задачи и их обычные описания — ровно до цели. Двигайте и растягивайте блоки на шкале — остальное подстроится само.</p>
       </div>
     </header>
 
@@ -147,12 +189,12 @@ watch(() => store.prefs.historyWeeks, () => store.load(store.date, false));
           <option :value="6">6 недель</option>
           <option :value="8">8 недель</option>
         </select>
-        <label class="cd-check cd-check--sm"><input v-model="store.prefs.useMeetings" type="checkbox" @change="store.load(store.date, false)" /> встречи календаря</label>
+        <label class="cd-check cd-check--sm"><input v-model="store.prefs.useMeetings" type="checkbox" /> встречи календаря</label>
       </div>
 
       <div class="cd-actions">
-        <button class="cd-btn cd-btn--primary" :disabled="store.loading" @click="store.compose()">
-          <ActionIcon name="sparkles" :size="15" /> Собрать день
+        <button class="cd-btn" :disabled="store.loading" title="Забыть правки и собрать день заново" @click="store.reset()">
+          <ActionIcon name="sparkles" :size="15" /> Пересобрать
         </button>
         <button class="cd-btn" :disabled="store.refreshingHistory || store.loading" title="Загрузить worklog за окно истории из Jira" @click="store.refreshHistory()">
           <ActionIcon name="refresh" :size="15" :class="{ 'cd-spin': store.refreshingHistory }" /> История из Jira
@@ -160,10 +202,19 @@ watch(() => store.prefs.historyWeeks, () => store.load(store.date, false));
       </div>
     </section>
 
+    <!-- Незаполненные дни -->
+    <div v-if="store.unfilled.length" class="cd-unfilled">
+      <span class="cd-muted cd-small">Не заполнено за 2 недели:</span>
+      <button
+        v-for="d in store.unfilled" :key="d.date" class="cd-day-chip"
+        :class="{ 'is-current': d.date === store.date }" @click="setDate(d.date)"
+      >{{ dayLabel(d.date) }} <span>{{ fmtDur(d.minutes) }}</span></button>
+    </div>
+
     <div v-if="store.error" class="cd-alert cd-alert--error"><ActionIcon name="warning" :size="15" /> {{ store.error }}</div>
     <div v-if="store.meetingsNote" class="cd-alert cd-alert--info"><ActionIcon name="info" :size="15" /> {{ store.meetingsNote }}</div>
 
-    <!-- Итог -->
+    <!-- Итог + шкала + главная кнопка -->
     <section class="cd-card cd-summary" :class="{ 'cd-loading': store.loading }">
       <div class="cd-summary__nums">
         <div><span class="cd-dot cd-dot--done"></span>Уже заполнено <b>{{ fmtDur(store.filledMinutes) }}</b></div>
@@ -174,6 +225,10 @@ watch(() => store.prefs.historyWeeks, () => store.load(store.date, false));
           <template v-else-if="diffMinutes > 0">перебор {{ fmtDur(diffMinutes) }}</template>
           <template v-else>не хватает {{ fmtDur(-diffMinutes) }}</template>
         </div>
+        <button class="cd-btn cd-btn--primary cd-cta" :disabled="!canSubmit" @click="submit">
+          <ActionIcon name="play" :size="14" />
+          {{ store.submitting ? 'Отправка…' : store.proposal.length ? `Залогировать ${fmtDur(store.proposedMinutes)}` : 'Нечего отправлять' }}
+        </button>
       </div>
       <div class="cd-bar">
         <span class="cd-bar__done" :style="{ width: (store.filledMinutes / barScale) * 100 + '%' }"></span>
@@ -181,9 +236,8 @@ watch(() => store.prefs.historyWeeks, () => store.load(store.date, false));
         <span class="cd-bar__target" :style="{ left: (store.targetMinutes / barScale) * 100 + '%' }" title="Цель"></span>
       </div>
 
-      <!-- Шкала дня -->
       <div class="cd-timeline">
-        <div class="cd-timeline__track">
+        <div ref="track" class="cd-timeline__track" :class="{ 'is-dragging': !!drag }">
           <span
             v-if="store.prefs.lunchEnabled" class="cd-tl cd-tl--lunch"
             :style="{ left: pct(hhmmToMinutes(store.prefs.lunchStart)) + '%', width: pct(hhmmToMinutes(store.prefs.lunchEnd)) - pct(hhmmToMinutes(store.prefs.lunchStart)) + '%' }"
@@ -195,15 +249,29 @@ watch(() => store.prefs.historyWeeks, () => store.load(store.date, false));
             :title="`${w.issueKey} · ${w.started.slice(11, 16)} · ${fmtDur(w.timeSpentSeconds / 60)} (уже залогировано)`"
           >{{ w.issueKey }}</span>
           <span
-            v-for="p in store.proposal.filter((x) => x.include)" :key="p.id" class="cd-tl cd-tl--plan"
-            :class="{ 'cd-tl--meeting': p.source === 'meeting', 'cd-tl--bad': overlaps.has(p.id) }"
-            :style="{ left: pct(p.start) + '%', width: pct(p.start + p.minutes) - pct(p.start) + '%' }"
-            :title="`${p.issueKey} · ${minutesToHHMM(p.start)} · ${fmtDur(p.minutes)}`"
-          >{{ p.issueKey }}</span>
+            v-for="p in store.proposal" :key="p.id" class="cd-tl cd-tl--plan"
+            :class="{ 'cd-tl--meeting': p.source === 'meeting', 'cd-tl--bad': overlaps.has(p.id), 'cd-tl--locked': p.locked, 'cd-tl--active': drag?.id === p.id }"
+            :style="{ left: pct(shown(p).start) + '%', width: pct(shown(p).start + shown(p).minutes) - pct(shown(p).start) + '%' }"
+            :title="`${p.issueKey} · ${minutesToHHMM(shown(p).start)}–${minutesToHHMM(shown(p).start + shown(p).minutes)} · ${fmtDur(shown(p).minutes)}\nПеретащите, чтобы сдвинуть; края — чтобы изменить длительность`"
+            @pointerdown="onBlockDown($event, p, 'move')" @pointermove="onBlockMove" @pointerup="onBlockUp" @pointercancel="onBlockUp"
+          >
+            <i class="cd-tl__h cd-tl__h--l" @pointerdown="onBlockDown($event, p, 'start')"></i>
+            <span class="cd-tl__label">{{ p.issueKey }}<small v-if="drag?.id === p.id"> {{ minutesToHHMM(shown(p).start) }} · {{ fmtDur(shown(p).minutes) }}</small></span>
+            <i class="cd-tl__h cd-tl__h--r" @pointerdown="onBlockDown($event, p, 'end')"></i>
+          </span>
         </div>
         <div class="cd-timeline__hours">
           <span v-for="h in hours" :key="h" :style="{ left: pct(h) + '%' }">{{ minutesToHHMM(h) }}</span>
         </div>
+      </div>
+      <div class="cd-summary__foot">
+        <span v-if="guessedCount" class="cd-warn"><ActionIcon name="warning" :size="13" /> {{ guessedCount }} {{ guessedCount === 1 ? 'встреча' : 'встречи' }} с задачей по умолчанию — проверьте</span>
+        <span v-if="invalidRows.length" class="cd-err">Укажите задачу в строках без ключа.</span>
+        <span v-if="store.submitMessage" :class="store.submitMessage.ok ? 'cd-ok' : 'cd-err'">
+          {{ store.submitMessage.text }}
+          <template v-if="store.submitMessage.ok && store.prefs.autoAdvance && store.nextUnfilled"> Открываю {{ dayLabel(store.nextUnfilled) }}…</template>
+        </span>
+        <label class="cd-check cd-check--sm cd-auto"><input v-model="store.prefs.autoAdvance" type="checkbox" @change="store.savePrefs()" /> после отправки — к следующему незаполненному дню</label>
       </div>
     </section>
 
@@ -228,64 +296,60 @@ watch(() => store.prefs.historyWeeks, () => store.load(store.date, false));
         <div v-if="!store.loading && store.proposal.length === 0" class="cd-empty">
           <template v-if="store.targetMinutes > 0 && store.filledMinutes >= store.targetMinutes">
             <ActionIcon name="check-circle" :size="18" /> День уже заполнен — добавлять нечего.
+            <button v-if="store.nextUnfilled" class="cd-btn cd-btn--sm" @click="setDate(store.nextUnfilled)">К {{ dayLabel(store.nextUnfilled) }} →</button>
           </template>
           <template v-else-if="!store.habits.length">
             Недостаточно истории, чтобы найти привычные задачи. Нажмите «История из Jira» или добавьте строку вручную.
           </template>
-          <template v-else>Нажмите «Собрать день», чтобы получить предложение.</template>
+          <template v-else>Нажмите «Пересобрать», чтобы получить предложение.</template>
         </div>
 
         <table v-else class="cd-table">
           <colgroup>
-            <col style="width: 2rem" /><col style="width: 7.25rem" /><col style="width: 4.75rem" />
+            <col style="width: 7.25rem" /><col style="width: 4.75rem" />
             <col style="width: 8.75rem" /><col /><col style="width: 2.25rem" />
           </colgroup>
           <thead>
-            <tr><th></th><th>Начало</th><th>Часы</th><th>Задача</th><th>Описание и основание</th><th></th></tr>
+            <tr><th>Начало</th><th>Часы</th><th>Задача</th><th>Описание и основание</th><th></th></tr>
           </thead>
           <tbody>
-            <tr
-              v-for="p in [...store.proposal].sort((a, b) => a.start - b.start)" :key="p.id"
-              :class="{ 'is-off': !p.include, 'is-bad': overlaps.has(p.id) || !!store.rowErrors[p.id] }"
-            >
-              <td><input v-model="p.include" type="checkbox" :title="p.include ? 'Не отправлять' : 'Отправлять'" /></td>
-              <td><input :value="minutesToHHMM(p.start)" type="time" class="cd-time" @change="setRowTime(p.id, ($event.target as HTMLInputElement).value)" /></td>
+            <tr v-for="p in sorted" :key="p.id" :class="{ 'is-bad': overlaps.has(p.id) || !!store.rowErrors[p.id], 'is-guess': p.guessed }">
+              <td><input :value="minutesToHHMM(p.start)" type="time" step="900" class="cd-time" @change="setRowTime(p.id, ($event.target as HTMLInputElement).value)" /></td>
               <td><input :value="(p.minutes / 60).toFixed(2).replace(/\.?0+$/, '')" type="number" min="0.25" step="0.25" class="cd-hours" @change="setRowHours(p.id, ($event.target as HTMLInputElement).value)" /></td>
               <td>
-                <input v-model="p.issueKey" class="cd-key" placeholder="ABC-123" list="cd-habit-keys" />
+                <input :value="p.issueKey" class="cd-key" placeholder="ABC-123" list="cd-habit-keys" @change="store.editItem(p.id, { issueKey: ($event.target as HTMLInputElement).value })" />
                 <small v-if="p.issueSummary" class="cd-muted cd-ellipsis">{{ p.issueSummary }}</small>
               </td>
               <td>
-                <input v-model="p.comment" class="cd-comment" placeholder="Описание" />
+                <input
+                  :value="p.comment" class="cd-comment" placeholder="Описание" :list="`cd-sugg-${p.id}`"
+                  @change="store.editItem(p.id, { comment: ($event.target as HTMLInputElement).value })"
+                />
+                <datalist :id="`cd-sugg-${p.id}`">
+                  <option v-for="c in store.suggestionsFor(p.issueKey)" :key="c" :value="c" />
+                </datalist>
                 <small class="cd-why">
                   <span class="cd-src" :class="'cd-src--' + p.source">{{ p.source === 'meeting' ? 'встреча' : p.source === 'habit' ? 'привычка' : 'вручную' }}</span>
+                  <span v-if="p.locked" class="cd-src cd-src--locked" title="Строку правили — при пересборке она не меняется">правка</span>
                   <span class="cd-muted">{{ p.reason }}</span>
+                  <span v-if="p.guessed" class="cd-warn">проверьте задачу</span>
+                  <span v-if="overlaps.has(p.id)" class="cd-err">пересекается по времени</span>
+                  <span v-if="store.rowErrors[p.id]" class="cd-err">{{ store.rowErrors[p.id] }}</span>
                 </small>
-                <small v-if="overlaps.has(p.id)" class="cd-err">пересекается по времени</small>
-                <small v-if="store.rowErrors[p.id]" class="cd-err">{{ store.rowErrors[p.id] }}</small>
               </td>
-              <td><button class="cd-icon cd-icon--danger" title="Убрать" @click="store.removeRow(p.id)"><ActionIcon name="close" :size="14" /></button></td>
+              <td><button class="cd-icon cd-icon--danger" title="Убрать (остальное подстроится)" @click="store.removeItem(p.id)"><ActionIcon name="close" :size="14" /></button></td>
             </tr>
           </tbody>
         </table>
         <datalist id="cd-habit-keys">
           <option v-for="h in store.habits" :key="h.issueKey" :value="h.issueKey">{{ h.issueSummary }}</option>
         </datalist>
-
-        <footer class="cd-footer">
-          <span v-if="invalidRows.length" class="cd-err">Проверьте ключ задачи и часы в отмеченных строках.</span>
-          <span v-if="store.submitMessage" :class="store.submitMessage.ok ? 'cd-ok' : 'cd-err'">{{ store.submitMessage.text }}</span>
-          <button class="cd-btn cd-btn--primary" :disabled="!canSubmit" @click="submit">
-            <ActionIcon name="play" :size="14" />
-            {{ store.submitting ? 'Отправка…' : `Залогировать ${store.proposal.filter((p) => p.include).length} · ${fmtDur(store.proposedMinutes)}` }}
-          </button>
-        </footer>
       </section>
 
       <!-- Привычные задачи -->
       <aside class="cd-card cd-habits">
         <h2>Привычные задачи</h2>
-        <p class="cd-muted cd-small">За {{ store.prefs.historyWeeks }} нед. до {{ formatRuDate(addDaysIso(store.date, -1)) }}</p>
+        <p class="cd-muted cd-small">За {{ store.prefs.historyWeeks }} нед. до {{ formatRuDate(addDaysIso(store.date, -1)) }} · клик — добавить</p>
         <div v-if="!store.habits.length" class="cd-muted cd-small">Пока нет данных.</div>
         <button
           v-for="h in store.habits.slice(0, 12)" :key="h.issueKey" class="cd-habit"
@@ -417,4 +481,28 @@ watch(() => store.prefs.historyWeeks, () => store.load(store.date, false));
   .cd-grid { grid-template-columns: 1fr; }
   .cd-actions { margin-left: 0; }
 }
+/* v2: интерактивная шкала, незаполненные дни, CTA */
+.cd-cta { margin-left: 0.5rem; }
+.cd-summary__foot { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; font-size: 0.8125rem; }
+.cd-auto { margin-left: auto; }
+.cd-warn { color: var(--amber-fg); background: var(--amber-bg); border-radius: 999px; padding: 0.05rem 0.5rem; font-size: 0.75rem; display: inline-flex; gap: 0.3rem; align-items: center; }
+.cd-unfilled { display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; }
+.cd-day-chip { border: 1px dashed color-mix(in srgb, var(--warning) 60%, var(--border)); background: var(--card); color: var(--fg); border-radius: 999px; padding: 0.2rem 0.65rem; font-size: 0.8125rem; font-weight: 600; }
+.cd-day-chip span { color: var(--muted); font-weight: 500; margin-left: 0.25rem; }
+.cd-day-chip:hover { border-style: solid; border-color: var(--primary); }
+.cd-day-chip.is-current { background: var(--chip); border-style: solid; border-color: var(--primary); }
+.cd-timeline__track { height: 3rem !important; user-select: none; touch-action: none; }
+.cd-tl--plan { cursor: grab; padding: 0 0.5rem; }
+.cd-timeline__track.is-dragging .cd-tl--plan { cursor: grabbing; }
+.cd-tl--locked { border-style: solid; box-shadow: inset 0 -2px 0 var(--primary); }
+.cd-tl--active { z-index: 3; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); }
+.cd-tl__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.cd-tl__label small { font-weight: 600; opacity: 0.85; }
+.cd-tl__h { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; }
+.cd-tl__h--l { left: 0; }
+.cd-tl__h--r { right: 0; }
+.cd-tl__h::after { content: ''; position: absolute; top: 30%; bottom: 30%; left: 2px; width: 2px; border-radius: 2px; background: currentColor; opacity: 0; transition: opacity 120ms ease; }
+.cd-tl--plan:hover .cd-tl__h::after { opacity: 0.6; }
+.cd-src--locked { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary-strong); }
+.cd-table tr.is-guess td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
 </style>

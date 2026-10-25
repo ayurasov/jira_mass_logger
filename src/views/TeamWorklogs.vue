@@ -7,7 +7,7 @@ import DatePicker from '../components/DatePicker.vue';
 import { useTeamStore, PERIOD_PRESETS, type TeamMember } from '../store/team';
 import { tauriApi, type JiraUserDto } from '../lib/tauriApi';
 import { formatRuDate, parseIsoDate } from '../utils/time';
-import { ISSUE_LABELS, type CheckIssue, type DayCell, type Severity } from '../utils/worklogChecks';
+import { ISSUE_LABELS, unfilledReportText, type CheckIssue, type DayCell, type Severity } from '../utils/worklogChecks';
 
 const team = useTeamStore();
 
@@ -157,6 +157,17 @@ const fillClass = (fill: number) => (fill >= 0.98 ? 'fill--ok' : fill >= 0.75 ? 
 
 // ── Сводка в буфер обмена (для чата команды) ───────────────────────
 const copied = ref(false);
+const copiedUnfilled = ref(false);
+async function copyUnfilled() {
+  const text = unfilledReportText(team.reports, `«${team.activeTeam?.name ?? ''}», ${periodLabel.value}`, team.checkOptions);
+  try {
+    await navigator.clipboard.writeText(text);
+    copiedUnfilled.value = true;
+    window.setTimeout(() => { copiedUnfilled.value = false; }, 2000);
+  } catch {
+    alert(text);
+  }
+}
 async function copySummary() {
   const lines = [`Worklog «${team.activeTeam?.name ?? ''}» за ${periodLabel.value}`];
   for (const r of team.reports) {
@@ -218,6 +229,9 @@ async function exportCsv() {
         </button>
         <button class="tm-btn" :disabled="!team.reports.length" :title="copied ? 'Скопировано' : 'Текстовая сводка для мессенджера'" @click="copySummary">
           <ActionIcon :name="copied ? 'check-circle' : 'duplicate'" :size="15" /> {{ copied ? 'Скопировано' : 'Копировать сводку' }}
+        </button>
+        <button class="tm-btn" :disabled="!team.reports.length" title="Кто и какие дни периода не заполнил — текст для командного чата" @click="copyUnfilled">
+          <ActionIcon :name="copiedUnfilled ? 'check-circle' : 'warning'" :size="15" /> {{ copiedUnfilled ? 'Скопировано' : 'Копировать незаполненное' }}
         </button>
         <button class="tm-btn tm-btn--primary" :disabled="!team.reports.length" @click="exportCsv">
           <ActionIcon name="download" :size="15" /> Экспорт CSV
