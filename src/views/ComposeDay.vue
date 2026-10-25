@@ -63,11 +63,21 @@ type DragMode = 'move' | 'start' | 'end';
 const drag = ref<{ id: string; mode: DragMode; x0: number; start0: number; minutes0: number; start: number; minutes: number; scale: { from: number; to: number }; moved: boolean } | null>(null);
 
 function onBlockDown(e: PointerEvent, p: ProposalItem, mode: DragMode) {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || store.loading) return;
   e.preventDefault();
   e.stopPropagation();
-  (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   drag.value = { id: p.id, mode, x0: e.clientX, start0: p.start, minutes0: p.minutes, start: p.start, minutes: p.minutes, scale: { ...scale.value }, moved: false };
+  // Слушаем всё окно: отпускание мыши вне блока/шкалы не должно «залипать» в перетаскивании.
+  window.addEventListener('pointermove', onBlockMove);
+  window.addEventListener('pointerup', onBlockUp);
+  window.addEventListener('pointercancel', cancelDrag);
+  window.addEventListener('blur', cancelDrag);
+}
+function stopListening() {
+  window.removeEventListener('pointermove', onBlockMove);
+  window.removeEventListener('pointerup', onBlockUp);
+  window.removeEventListener('pointercancel', cancelDrag);
+  window.removeEventListener('blur', cancelDrag);
 }
 function onBlockMove(e: PointerEvent) {
   const d = drag.value;
@@ -78,7 +88,7 @@ function onBlockMove(e: PointerEvent) {
   if (d.mode === 'move') {
     d.start = Math.max(0, Math.min(24 * 60 - d.minutes0, d.start0 + delta));
   } else if (d.mode === 'end') {
-    d.minutes = Math.max(15, d.minutes0 + delta);
+    d.minutes = Math.max(15, Math.min(24 * 60 - d.start0, d.minutes0 + delta));
   } else {
     const start = Math.min(d.start0 + d.minutes0 - 15, Math.max(0, d.start0 + delta));
     d.start = start;
@@ -87,12 +97,40 @@ function onBlockMove(e: PointerEvent) {
 }
 function onBlockUp() {
   const d = drag.value;
+  stopListening();
   drag.value = null;
-  if (!d || !d.moved) return;
+  if (!d || !d.moved || !store.proposal.some((p) => p.id === d.id)) return;
   store.editItem(d.id, { start: d.start, minutes: d.minutes });
 }
+function cancelDrag() {
+  stopListening();
+  drag.value = null;
+}
 const shown = (p: ProposalItem) => (drag.value?.id === p.id ? { start: drag.value.start, minutes: drag.value.minutes } : p);
-onBeforeUnmount(() => { drag.value = null; });
+// Смена дня/перезагрузка — любое незавершённое перетаскивание сбрасываем.
+watch(() => [store.date, store.loading], cancelDrag);
+onBeforeUnmount(cancelDrag);
+
+// Пересекающиеся блоки — в две дорожки, чтобы не рисовались друг на друге.
+const lanes = computed(() => {
+  const items = [
+    ...store.existing.map((w) => ({ id: w.rowKey, start: startMinutesOf(w.started), end: startMinutesOf(w.started) + w.timeSpentSeconds / 60 })),
+    ...store.proposal.map((p) => ({ id: p.id, start: shown(p).start, end: shown(p).start + shown(p).minutes })),
+  ].sort((a, b) => a.start - b.start);
+  const laneEnd = [-1, -1];
+  const res = new Map<string, number>();
+  let split = false;
+  for (const it of items) {
+    const lane = it.start >= laneEnd[0] ? 0 : it.start >= laneEnd[1] ? 1 : 0;
+    if (lane === 1 || it.start < laneEnd[0]) split = true;
+    laneEnd[lane] = Math.max(laneEnd[lane], it.end);
+    res.set(it.id, lane);
+  }
+  return { of: (id: string) => res.get(id) ?? 0, split };
+});
+const laneStyle = (id: string) => (lanes.value.split
+  ? { top: lanes.value.of(id) === 0 ? '3px' : '50%', bottom: lanes.value.of(id) === 0 ? '50%' : '3px' }
+  : {});
 
 const overlaps = computed(() => findOverlaps(store.proposal, store.existing));
 
@@ -245,15 +283,15 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
           ></span>
           <span
             v-for="w in store.existing" :key="w.rowKey" class="cd-tl cd-tl--done"
-            :style="{ left: pct(startMinutesOf(w.started)) + '%', width: pct(startMinutesOf(w.started) + w.timeSpentSeconds / 60) - pct(startMinutesOf(w.started)) + '%' }"
+            :style="{ ...laneStyle(w.rowKey), left: pct(startMinutesOf(w.started)) + '%', width: pct(startMinutesOf(w.started) + w.timeSpentSeconds / 60) - pct(startMinutesOf(w.started)) + '%' }"
             :title="`${w.issueKey} · ${w.started.slice(11, 16)} · ${fmtDur(w.timeSpentSeconds / 60)} (уже залогировано)`"
           >{{ w.issueKey }}</span>
           <span
             v-for="p in store.proposal" :key="p.id" class="cd-tl cd-tl--plan"
             :class="{ 'cd-tl--meeting': p.source === 'meeting', 'cd-tl--bad': overlaps.has(p.id), 'cd-tl--locked': p.locked, 'cd-tl--active': drag?.id === p.id }"
-            :style="{ left: pct(shown(p).start) + '%', width: pct(shown(p).start + shown(p).minutes) - pct(shown(p).start) + '%' }"
+            :style="{ ...laneStyle(p.id), left: pct(shown(p).start) + '%', width: pct(shown(p).start + shown(p).minutes) - pct(shown(p).start) + '%' }"
             :title="`${p.issueKey} · ${minutesToHHMM(shown(p).start)}–${minutesToHHMM(shown(p).start + shown(p).minutes)} · ${fmtDur(shown(p).minutes)}\nПеретащите, чтобы сдвинуть; края — чтобы изменить длительность`"
-            @pointerdown="onBlockDown($event, p, 'move')" @pointermove="onBlockMove" @pointerup="onBlockUp" @pointercancel="onBlockUp"
+            @pointerdown="onBlockDown($event, p, 'move')"
           >
             <i class="cd-tl__h cd-tl__h--l" @pointerdown="onBlockDown($event, p, 'start')"></i>
             <span class="cd-tl__label">{{ p.issueKey }}<small v-if="drag?.id === p.id"> {{ minutesToHHMM(shown(p).start) }} · {{ fmtDur(shown(p).minutes) }}</small></span>
