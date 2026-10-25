@@ -183,3 +183,35 @@ export function buildMemberReport(authorId: string, dates: string[], worklogs: C
     issues: days.flatMap((d) => d.issues),
   };
 }
+
+/**
+ * Текст «что не заполнено» для командного чата: у кого и какие рабочие дни
+ * периода пустые или недозаполнены (будущие дни не учитываются).
+ */
+export function unfilledReportText(
+  reports: (MemberReport & { member: { displayName: string } })[],
+  title: string,
+  opts: Pick<CheckOptions, 'normHours' | 'today'>,
+): string {
+  const WD = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+  const day = (iso: string) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return `${WD[new Date(y, m - 1, d).getDay()]} ${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')}`;
+  };
+  const h = (v: number) => String(Math.round(v * 100) / 100).replace('.', ',');
+  const lines = [`Незаполненный worklog — ${title}`];
+  const ok: string[] = [];
+  for (const r of reports) {
+    const gaps = r.days.filter((d) => d.status === 'missing' || d.status === 'under');
+    if (!gaps.length) { ok.push(r.member.displayName); continue; }
+    const deficit = gaps.reduce((s, d) => s + Math.max(0, opts.normHours - d.hours), 0);
+    const parts = gaps.map((d) => {
+      const today = d.date === opts.today ? ' (сегодня)' : '';
+      return d.hours > 0 ? `${day(d.date)} — ${h(d.hours)} из ${h(opts.normHours)} ч${today}` : `${day(d.date)} — пусто${today}`;
+    });
+    lines.push(`• ${r.member.displayName}: не хватает ${h(deficit)} ч — ${parts.join('; ')}`);
+  }
+  if (lines.length === 1) lines.push('✅ За период всё заполнено.');
+  else if (ok.length) lines.push(`✅ Всё заполнено: ${ok.join(', ')}`);
+  return lines.join('\n');
+}
