@@ -35,12 +35,16 @@ export interface HabitTask {
 }
 
 export interface ComposerMeeting {
+  /** id события календаря — чтобы убранная встреча не возвращалась при пересборке. */
+  id?: string;
   issueKey: string;
   issueSummary?: string | null;
   subject: string;
   /** Начало в минутах от полуночи (локально). */
   start: number;
   minutes: number;
+  /** Задача не подобрана правилом/историей — подставлена «по умолчанию», стоит проверить. */
+  guessed?: boolean;
 }
 
 export type ProposalSource = 'meeting' | 'habit' | 'manual';
@@ -56,6 +60,12 @@ export interface ProposalItem {
   /** Пояснение, почему задача предложена. */
   reason: string;
   include: boolean;
+  /** Строку правил пользователь (время, длительность, задача) — при пересборке она не меняется. */
+  locked?: boolean;
+  /** Для встреч — id события календаря. */
+  meetingId?: string;
+  /** Задача подставлена по умолчанию — подсветить для проверки. */
+  guessed?: boolean;
 }
 
 export interface ComposeOptions {
@@ -230,8 +240,15 @@ export function composeDay(
     if (remaining <= 0) break;
     const minutes = Math.min(roundTo(m.minutes, step), remaining);
     const clash = busy.some((b) => b !== lunch && m.start < b.end && m.start + minutes > b.start);
-    if (clash) continue;
-    out.push({ id: id(), issueKey: m.issueKey, issueSummary: m.issueSummary ?? null, start: m.start, minutes, comment: m.subject, source: 'meeting', reason: 'встреча в календаре', include: true });
+    // Встреча уже залогирована (в другое время) — та же задача и тема в описании.
+    const subj = m.subject.trim().toLowerCase();
+    const alreadyLogged = !!subj && existing.some((w) => w.issueKey === m.issueKey && (w.comment ?? '').toLowerCase().includes(subj));
+    if (clash || alreadyLogged) continue;
+    out.push({
+      id: id(), issueKey: m.issueKey, issueSummary: m.issueSummary ?? null, start: m.start, minutes, comment: m.subject,
+      source: 'meeting', reason: m.guessed ? 'встреча · задача по умолчанию' : 'встреча в календаре', include: true,
+      meetingId: m.id, guessed: m.guessed,
+    });
     busy.push({ start: m.start, end: m.start + minutes });
     remaining -= minutes;
   }
@@ -312,4 +329,89 @@ export function findOverlaps(items: { id: string; start: number; minutes: number
     }
   }
   return bad;
+}
+
+// ── Автоматическая пересборка с учётом правок пользователя ──────────
+
+export interface PlanInput {
+  existing: HistoryWorklog[];
+  meetings: ComposerMeeting[];
+  habits: HabitTask[];
+  opts: ComposeOptions;
+  /** Строки, которые пользователь правил/добавил: остаются как есть. */
+  userItems: ProposalItem[];
+  /** Задачи, убранные пользователем, — не предлагать снова. */
+  dismissedKeys: Set<string>;
+  /** Встречи, убранные пользователем. */
+  dismissedMeetings: Set<string>;
+  /** Строка, которую правили последней: при переборе её не урезаем. */
+  pinnedId?: string;
+}
+
+const toBusyWorklog = (p: ProposalItem, date: string): HistoryWorklog => ({
+  issueKey: p.issueKey, started: `${date}T${minutesToHHMM(p.start)}:00.000+0000`, timeSpentSeconds: p.minutes * 60,
+});
+
+/**
+ * План дня = правки пользователя + автоматически подобранное остальное, так чтобы
+ * сумма (с уже залогированным) всегда равнялась цели:
+ *  - автоматические строки пересобираются вокруг уже залогированного и правок;
+ *  - если правки сами превышают цель — урезаем другие правки (кроме последней),
+ *    начиная с самых поздних.
+ */
+export function buildPlan(input: PlanInput): ProposalItem[] {
+  const { opts, existing } = input;
+  const step = opts.stepMinutes;
+  const target = Math.round((opts.targetHours * 60) / step) * step;
+  const filled = existing.reduce((s, w) => s + w.timeSpentSeconds / 60, 0);
+  let user = input.userItems.filter((u) => u.minutes > 0).map((u) => ({ ...u, locked: true }));
+
+  // Правки превышают цель — урезаем поздние (кроме последней правки).
+  let over = filled + user.reduce((s, u) => s + u.minutes, 0) - target;
+  if (over > 0) {
+    const order = [...user].filter((u) => u.id !== input.pinnedId).sort((a, b) => b.start - a.start);
+    for (const u of order) {
+      if (over <= 0) break;
+      const cut = Math.min(u.minutes, over);
+      u.minutes -= cut;
+      over -= cut;
+    }
+    user = user.filter((u) => u.minutes > 0);
+  }
+
+  const busy = [...existing, ...user.map((u) => toBusyWorklog(u, opts.date))];
+  const meetings = input.meetings.filter((m) => !(m.id && input.dismissedMeetings.has(m.id)));
+  const habits = input.habits.filter((h) => !input.dismissedKeys.has(h.issueKey));
+  const auto = composeDay(busy, meetings, habits, opts);
+  return [...user, ...auto].sort((a, b) => a.start - b.start);
+}
+
+/** Подсказки описаний для задачи из прошлых записей: сначала частые, затем свежие. */
+export function commentSuggestions(history: HistoryWorklog[], issueKey: string, limit = 6): string[] {
+  const stats = new Map<string, { n: number; last: string }>();
+  for (const w of history) {
+    if (w.issueKey !== issueKey) continue;
+    const c = (w.comment ?? '').trim();
+    if (!c) continue;
+    const st = stats.get(c) ?? { n: 0, last: '' };
+    st.n++;
+    if (w.started > st.last) st.last = w.started;
+    stats.set(c, st);
+  }
+  return [...stats.entries()]
+    .sort((a, b) => b[1].n - a[1].n || b[1].last.localeCompare(a[1].last))
+    .slice(0, limit)
+    .map(([c]) => c);
+}
+
+/** Рабочие дни (до `today` включительно), где залогировано меньше цели. */
+export function unfilledDays(
+  worklogs: HistoryWorklog[], workdays: string[], today: string, targetMinutes: number, tolerance = 5,
+): { date: string; minutes: number }[] {
+  const byDay = new Map<string, number>();
+  for (const w of worklogs) byDay.set(w.started.slice(0, 10), (byDay.get(w.started.slice(0, 10)) ?? 0) + w.timeSpentSeconds / 60);
+  return workdays
+    .filter((d) => d <= today)
+    .map((d) => ({ date: d, minutes: Math.round(byDay.get(d) ?? 0) }))
+    .filter((d) => d.minutes < targetMinutes - tolerance);
 }
