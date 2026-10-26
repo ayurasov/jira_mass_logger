@@ -1,12 +1,18 @@
 // Стор экрана «Дайджест»: скоуп (проекты или команда), период, порог «тишины».
 import { defineStore } from 'pinia';
-import { tauriApi, type ProjectDto } from '../lib/tauriApi';
+import { tauriApi, type JiraFilterDto, type ProjectDto } from '../lib/tauriApi';
 import { useJiraProfilesStore } from './jiraProfiles';
 import { useTeamStore } from './team';
 import { addDaysIso, localIsoDate } from '../utils/time';
 import type { DigestData } from '../utils/digest';
 
 const PREFS_KEY = 'jiratime-digest-prefs';
+
+export interface SavedJql { id: string; name: string; jql: string }
+
+/** Варианты лимита загрузки (изменённые задачи и задачи с worklog). */
+export const LIMIT_OPTIONS = [50, 100, 300, 500, 1000] as const;
+const RECENT_MAX = 6;
 
 interface DigestPrefs {
   scopeType: 'project' | 'team' | 'jql';
@@ -15,12 +21,25 @@ interface DigestPrefs {
   teamId: string;
   periodDays: number;
   staleDays: number;
+  /** Сколько максимум задач грузить в тяжёлых запросах. */
+  limit: number;
+  /** Сохранённые пользователем JQL-запросы. */
+  savedJql: SavedJql[];
+  /** Последние выполненные JQL (без дублей, новые первыми). */
+  recentJql: string[];
 }
 
 function loadPrefs(): DigestPrefs {
-  const def: DigestPrefs = { scopeType: 'project', jql: '', projectKeys: [], teamId: '', periodDays: 7, staleDays: 14 };
+  const def: DigestPrefs = {
+    scopeType: 'project', jql: '', projectKeys: [], teamId: '', periodDays: 7, staleDays: 14,
+    limit: 300, savedJql: [], recentJql: [],
+  };
   try { return { ...def, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }; } catch { return def; }
 }
+
+/** Проект, в который вы чаще всего списываете время. */
+export interface PopularProject { key: string; hours: number; lastDate: string }
+const POPULAR_DAYS = 90;
 
 let seq = 0;
 
@@ -37,6 +56,11 @@ export const useDigestStore = defineStore('digest', {
     prefs: loadPrefs(),
     projects: [] as ProjectDto[],
     projectsError: '' as string,
+    /** Ваши проекты по собственным списаниям за 90 дней (из локального кэша worklog). */
+    popular: [] as PopularProject[],
+    filters: [] as JiraFilterDto[],
+    filtersLoading: false,
+    filtersError: '' as string,
     data: null as DigestData | null,
     loading: false,
     error: null as string | null,
@@ -88,6 +112,72 @@ export const useDigestStore = defineStore('digest', {
       }
     },
 
+    /** Подсказки «ваши проекты»: часы по проекту из собственного worklog за 90 дней. */
+    async loadPopular() {
+      try {
+        const today = localIsoDate();
+        const rows = await tauriApi.listCachedWorklogs(addDaysIso(today, -POPULAR_DAYS), today);
+        const map = new Map<string, PopularProject>();
+        for (const r of rows) {
+          const key = (r.projectKey || r.issueKey.split('-')[0] || '').toUpperCase();
+          if (!key) continue;
+          const p = map.get(key) ?? { key, hours: 0, lastDate: '' };
+          p.hours += r.timeSpentSeconds / 3600;
+          if (r.started.slice(0, 10) > p.lastDate) p.lastDate = r.started.slice(0, 10);
+          map.set(key, p);
+        }
+        this.popular = [...map.values()]
+          .map((p) => ({ ...p, hours: Math.round(p.hours * 10) / 10 }))
+          .sort((a, b) => b.hours - a.hours)
+          .slice(0, 8);
+      } catch {
+        this.popular = [];
+      }
+    },
+
+    /** Сохранённые фильтры Jira (избранные, свои, командные). */
+    async loadFilters(force = false) {
+      if (this.filtersLoading || (this.filters.length && !force)) return;
+      const jp = useJiraProfilesStore();
+      await jp.ensureLoaded();
+      if (!jp.activeConnectionParams) { this.filtersError = 'Нет активного профиля Jira'; return; }
+      this.filtersLoading = true;
+      try {
+        this.filters = await tauriApi.getJiraFilters(jp.activeConnectionParams);
+        this.filtersError = '';
+      } catch (e) {
+        this.filtersError = e instanceof Error ? e.message : String(e);
+      } finally {
+        this.filtersLoading = false;
+      }
+    },
+
+    /** Подставить JQL (из сохранённых, недавних или фильтра Jira) и сразу показать. */
+    useJql(jql: string) {
+      this.prefs.jql = jql;
+      this.load();
+    },
+
+    saveJql(name: string) {
+      const jql = this.prefs.jql.trim();
+      if (!jql) return;
+      const title = name.trim() || jql.slice(0, 40);
+      const existing = this.prefs.savedJql.find((q) => q.jql === jql || q.name === title);
+      if (existing) { existing.name = title; existing.jql = jql; }
+      else this.prefs.savedJql.unshift({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: title, jql });
+      this.savePrefs();
+    },
+
+    deleteSavedJql(id: string) {
+      this.prefs.savedJql = this.prefs.savedJql.filter((q) => q.id !== id);
+      this.savePrefs();
+    },
+
+    setLimit(n: number) {
+      this.prefs.limit = n;
+      this.load();
+    },
+
     toggleProject(key: string) {
       const set = new Set(this.prefs.projectKeys);
       if (set.has(key)) set.delete(key); else set.add(key);
@@ -111,8 +201,13 @@ export const useDigestStore = defineStore('digest', {
       this.loading = true;
       this.error = null;
       try {
-        const data = await tauriApi.getJiraDigest(params, scope, this.since, this.today, this.staleBefore);
+        const data = await tauriApi.getJiraDigest(params, scope, this.since, this.today, this.staleBefore, this.prefs.limit);
         if (token !== seq) return;
+        if (this.prefs.scopeType === 'jql') {
+          const q = this.prefs.jql.trim();
+          this.prefs.recentJql = [q, ...this.prefs.recentJql.filter((x) => x !== q)].slice(0, RECENT_MAX);
+          this.savePrefs();
+        }
         this.data = data;
         this.loadedAt = new Date().toISOString();
         // «Новое с прошлого просмотра»: запоминаем момент просмотра для этого скоупа.

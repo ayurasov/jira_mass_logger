@@ -153,6 +153,7 @@ fn main() {
             // Jira
             jira_client::test_connection,
             jira_client::get_projects,
+            jira_client::get_jira_filters,
             jira_client::get_issues_by_jql,
             jira_client::get_worklog,
             jira_client::get_worklog_by_id,
