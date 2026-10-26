@@ -269,7 +269,8 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
               <div v-if="wizard.textTemplates.length" class="text-template-list">
                 <button v-for="tpl in wizard.textTemplates" :key="tpl.id ?? tpl.name"
                   class="text-template-tag" :title="tpl.text" @click="wizard.applyTextTemplate(tpl)">
-                  {{ tpl.name }}
+                  <span class="text-template-tag__name">{{ tpl.name }}</span>
+                  <span class="text-template-tag__text">{{ tpl.text }}</span>
                 </button>
               </div>
               <small v-else class="muted-hint">Шаблонов пока нет — создайте их на странице «Шаблоны».</small>
@@ -450,47 +451,50 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
 .weekday-chip:hover { background: var(--color-surface-dynamic, #e6e4df); color: var(--color-text, #28251d); }
 .weekday-chip--active:hover { background: var(--color-primary-highlight, #cedcd8); color: var(--color-primary-hover, #0c4e54); }
 
-/* ── Теги шаблонов — 2 колонки через grid ── */
+/* ── Шаблоны текста: спокойный список строк «название — текст» ── */
 .text-template-list {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  align-self: start;
+  gap: 0.25rem;
   margin-top: 0.4rem;
-  max-height: 10rem;
+  max-height: 9rem;
   overflow-y: auto;
 }
 
 .text-template-tag {
   display: flex;
-  align-items: center;
-  padding: 0.22rem 0.6rem;
-  border-radius: var(--radius-full, 9999px);
-  font-size: 0.78rem;
-  font-weight: 500;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--fg);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  text-align: left;
   cursor: pointer;
-  user-select: none;
-  background: var(--color-surface-offset, #f0f0ee);
-  color: var(--color-text-muted, var(--muted));
-  border: none;
-  transition: background 120ms, color 120ms;
-  line-height: 1.4;
+  transition: border-color 120ms, background 120ms;
+}
+.text-template-tag__name { flex: none; font-weight: 600; }
+.text-template-tag__text {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
 }
-.text-template-tag:hover { background: var(--color-surface-dynamic, #e6e4df); color: var(--color-text, #28251d); }
-.text-template-tag:active { opacity: 0.75; }
+.text-template-tag:hover { border-color: var(--primary); background: var(--primary-soft); }
+.text-template-tag:active { opacity: 0.8; }
 
-.text-template-tag--master {
-  background: var(--color-primary-highlight, #cedcd8);
-  color: var(--color-primary, #01696f);
-  font-weight: 600;
-}
-.text-template-tag--master:hover {
-  background: color-mix(in srgb, var(--color-primary, #01696f) 16%, var(--color-surface, #fff));
-  color: var(--color-primary-hover, #0c4e54);
-}
+/* Шаблоны мастера — компактные чипы в строку. */
+.text-template-list:has(.text-template-tag--master) { flex-direction: row; flex-wrap: wrap; max-height: none; }
+.text-template-tag--master { width: auto; font-weight: 500; }
 
 .license-banner {
   display: flex;

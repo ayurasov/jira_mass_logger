@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="full-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2447e0"/><stop offset="1" stop-color="#1fbf9f"/>
+    </linearGradient>
+    <linearGradient id="full-gl" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".16"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <mask id="full-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <rect width="64" height="64" fill="#fff"/>
+      <circle cx="47" cy="47" r="12.4" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="13" fill="url(#full-bg)"/>
+  <rect x="1" y="1" width="62" height="62" rx="13" fill="url(#full-gl)"/>
+  <g mask="url(#full-cut)" stroke="#fff" stroke-linecap="round" fill="none">
+    <circle cx="32" cy="32" r="22" stroke-width="3.6"/>
+    <line x1="32" y1="10" x2="32" y2="14.2" stroke-width="2.6"/><line x1="54" y1="32" x2="49.8" y2="32" stroke-width="2.6"/><line x1="32" y1="54" x2="32" y2="49.8" stroke-width="2.6"/><line x1="10" y1="32" x2="14.2" y2="32" stroke-width="2.6"/>
+    <line x1="32" y1="32" x2="47.24" y2="23.20" stroke-width="3.6"/>
+    <line x1="32" y1="32" x2="21.33" y2="25.84" stroke-width="3.6"/>
+    <circle cx="32" cy="32" r="2.9" fill="#fff" stroke="none"/>
+  </g>
+  <circle cx="47" cy="47" r="10" fill="#fff"/>
+  <path d="M42.30 47.30 L45.60 50.60 L51.90 44.10" fill="none" stroke="#0f7a55" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
