@@ -17,9 +17,13 @@ use tokio::sync::Semaphore;
 use crate::jira_client::{apply_auth, ensure_json_success, init, send_with_retry, url, AuthedClient, JiraConnectionParams};
 use crate::team_worklogs::{author_id, is_cloud, issue_worklogs, jql_quote, TeamWorklogDto};
 
-const MAX_UPDATED: usize = 300;
-const MAX_STALE: usize = 100;
-const MAX_WORKLOG_ISSUES: usize = 300;
+/// Лимит по умолчанию для тяжёлых запросов (задачи с историей, задачи с worklog).
+const DEFAULT_LIMIT: usize = 300;
+/// Пользовательский лимит зажимается в эти рамки.
+const LIMIT_RANGE: (usize, usize) = (20, 2000);
+/// «Без движения», «просрочено», «без исполнителя» грузятся целиком (лёгкие поля, без истории);
+/// это лишь страховка от бесконечной выборки — точное число всё равно берём из Jira.
+const MAX_LIST: usize = 5000;
 const CONCURRENCY: usize = 6;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -77,6 +81,12 @@ pub struct DigestResult {
     /// Открытые задачи без исполнителя.
     pub unassigned: Vec<DigestIssue>,
     pub worklogs: Vec<TeamWorklogDto>,
+    /// Точное число задач в Jira по каждому списку (может быть больше загруженного).
+    pub stale_total: usize,
+    pub overdue_total: usize,
+    pub unassigned_total: usize,
+    /// Применённый лимит для изменённых задач и задач с worklog.
+    pub limit: usize,
     pub truncated: bool,
     pub errors: Vec<String>,
 }
@@ -104,7 +114,14 @@ fn scope_clause(scope: &DigestScope, worklog_too: bool) -> Result<String, String
     Err("Выберите проект или команду".into())
 }
 
-/// Поиск задач с полями/expand; лимит `limit`. Возвращает (issues, truncated).
+/// Результат постраничного поиска: задачи, «есть ещё» и точное число совпадений (если известно).
+struct SearchPage {
+    issues: Vec<Value>,
+    more: bool,
+    total: Option<usize>,
+}
+
+/// Поиск задач с полями/expand; лимит `limit`.
 async fn search_raw(
     params: &JiraConnectionParams,
     ctx: &AuthedClient,
@@ -112,13 +129,17 @@ async fn search_raw(
     fields: &[&str],
     expand_changelog: bool,
     limit: usize,
-) -> Result<(Vec<Value>, bool), String> {
+) -> Result<SearchPage, String> {
     let cloud = is_cloud(params);
     let mut out: Vec<Value> = Vec::new();
+    let mut total: Option<usize> = None;
+    // Без changelog страницы можно брать крупнее: Jira сама урежет до своего максимума,
+    // а цикл ниже опирается на фактическую длину страницы.
+    let max_page = if expand_changelog { 100 } else { 500 };
     let mut start_at: i64 = 0;
     let mut next_token: Option<String> = None;
     loop {
-        let page_size = (limit - out.len()).min(100);
+        let page_size = (limit - out.len()).min(max_page);
         let (endpoint, body) = if cloud {
             let mut b = json!({ "jql": jql, "fields": fields, "maxResults": page_size });
             if expand_changelog { b["expand"] = json!("changelog"); }
@@ -142,17 +163,53 @@ async fn search_raw(
             next_token = page.get("nextPageToken").and_then(|v| v.as_str()).map(str::to_string);
             !page.get("isLast").and_then(|v| v.as_bool()).unwrap_or(next_token.is_none()) && next_token.is_some()
         } else {
-            let total = page.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+            let t = page.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+            total = Some(t.max(0) as usize);
             start_at += page_len as i64;
-            start_at < total
+            start_at < t
         };
         if out.len() >= limit {
-            return Ok((out, more));
+            return Ok(SearchPage { issues: out, more, total });
         }
         if !more || page_len == 0 {
-            return Ok((out, false));
+            let total = Some(total.unwrap_or(0).max(out.len()));
+            return Ok(SearchPage { issues: out, more: false, total });
         }
     }
+}
+
+/// Точное число задач по JQL. Server/DC отдаёт `total` в поиске; в Cloud у `search/jql`
+/// его нет — спрашиваем `search/approximate-count` (для небольших выборок он точный).
+async fn count_jql(params: &JiraConnectionParams, ctx: &AuthedClient, jql: &str) -> Option<usize> {
+    let (endpoint, body) = if is_cloud(params) {
+        (url(params, "search/approximate-count"), json!({ "jql": jql }))
+    } else {
+        (url(params, "search"), json!({ "jql": jql, "maxResults": 0, "fields": ["key"] }))
+    };
+    let resp = send_with_retry(&ctx.client, || apply_auth(ctx.client.post(&endpoint), params, &ctx.token).json(&body))
+        .await
+        .ok()?;
+    let v = ensure_json_success(resp).await.ok()?;
+    v.get("count").or_else(|| v.get("total")).and_then(|c| c.as_u64()).map(|c| c as usize)
+}
+
+/// Полный список (до MAX_LIST) и точное число совпадений.
+async fn full_list(
+    params: &JiraConnectionParams,
+    ctx: &AuthedClient,
+    jql: &str,
+    cloud: bool,
+    since: &str,
+) -> Result<(Vec<DigestIssue>, usize), String> {
+    let page = search_raw(params, ctx, jql, FIELDS, false, MAX_LIST).await?;
+    let issues: Vec<DigestIssue> = page.issues.iter().filter_map(|v| parse_issue(v, cloud, since)).collect();
+    let total = match page.total {
+        Some(t) if !page.more || t > issues.len() => t,
+        _ if page.more => count_jql(params, ctx, jql).await.unwrap_or(issues.len()),
+        _ => issues.len(),
+    };
+    let total = total.max(issues.len());
+    Ok((issues, total))
 }
 
 fn str_at<'a>(v: &'a Value, path: &[&str]) -> Option<&'a str> {
@@ -216,7 +273,6 @@ fn parse_issue(v: &Value, cloud: bool, since: &str) -> Option<DigestIssue> {
 }
 
 const FIELDS: &[&str] = &["summary", "status", "assignee", "updated", "created", "priority", "issuetype", "duedate", "project"];
-const MAX_OVERDUE: usize = 100;
 
 fn key_project(v: &Value) -> Option<String> {
     v.get("key")?.as_str()?.split('-').next().map(str::to_string)
@@ -224,6 +280,7 @@ fn key_project(v: &Value) -> Option<String> {
 
 /// Дайджест: `since` — начало периода (YYYY-MM-DD), `until` — конец (обычно сегодня),
 /// `stale_before` — «застывшие» задачи: не обновлялись раньше этой даты.
+/// `limit` — сколько максимум задач грузить для изменённых и для worklog (самые тяжёлые запросы).
 #[tauri::command]
 pub async fn get_jira_digest(
     params: JiraConnectionParams,
@@ -231,7 +288,9 @@ pub async fn get_jira_digest(
     since: String,
     until: String,
     stale_before: String,
+    limit: Option<usize>,
 ) -> Result<DigestResult, String> {
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(LIMIT_RANGE.0, LIMIT_RANGE.1);
     let cloud = is_cloud(&params);
     let ctx = Arc::new(init(&params).map_err(String::from)?);
     let params = Arc::new(params);
@@ -243,9 +302,9 @@ pub async fn get_jira_digest(
         scope_clause(&scope, true)?,
         jql_quote(&since)
     );
-    let (raw_updated, truncated_updated) =
-        search_raw(&params, &ctx, &updated_jql, FIELDS, true, MAX_UPDATED).await?;
-    let updated: Vec<DigestIssue> = raw_updated.iter().filter_map(|v| parse_issue(v, cloud, &since)).collect();
+    let updated_page = search_raw(&params, &ctx, &updated_jql, FIELDS, true, limit).await?;
+    let truncated_updated = updated_page.more;
+    let updated: Vec<DigestIssue> = updated_page.issues.iter().filter_map(|v| parse_issue(v, cloud, &since)).collect();
 
     // 2) Застывшие открытые задачи (без expand — история не нужна).
     let stale_jql = format!(
@@ -253,9 +312,9 @@ pub async fn get_jira_digest(
         scope_clause(&scope, false)?,
         jql_quote(&stale_before)
     );
-    let stale = match search_raw(&params, &ctx, &stale_jql, FIELDS, false, MAX_STALE).await {
-        Ok((raw, _)) => raw.iter().filter_map(|v| parse_issue(v, cloud, &since)).collect(),
-        Err(e) => { errors.push(format!("застывшие задачи: {e}")); Vec::new() }
+    let (stale, stale_total) = match full_list(&params, &ctx, &stale_jql, cloud, &since).await {
+        Ok(r) => r,
+        Err(e) => { errors.push(format!("застывшие задачи: {e}")); (Vec::new(), 0) }
     };
 
     // 3) Просроченные и без исполнителя (открытые задачи скоупа).
@@ -264,19 +323,19 @@ pub async fn get_jira_digest(
         "{open_scope} AND statusCategory != Done AND duedate < {} ORDER BY duedate ASC",
         jql_quote(&until)
     );
-    let overdue = match search_raw(&params, &ctx, &overdue_jql, FIELDS, false, MAX_OVERDUE).await {
-        Ok((raw, _)) => raw.iter().filter_map(|v| parse_issue(v, cloud, &since)).collect(),
-        Err(e) => { errors.push(format!("просроченные: {e}")); Vec::new() }
+    let (overdue, overdue_total) = match full_list(&params, &ctx, &overdue_jql, cloud, &since).await {
+        Ok(r) => r,
+        Err(e) => { errors.push(format!("просроченные: {e}")); (Vec::new(), 0) }
     };
     // Для команды «без исполнителя» по assignee теряет смысл — только для проектов/JQL.
-    let unassigned = if scope.user_ids.is_empty() || scope.jql.as_deref().is_some_and(|j| !j.trim().is_empty()) {
+    let (unassigned, unassigned_total) = if scope.user_ids.is_empty() || scope.jql.as_deref().is_some_and(|j| !j.trim().is_empty()) {
         let jql = format!("{open_scope} AND statusCategory != Done AND assignee is EMPTY ORDER BY created ASC");
-        match search_raw(&params, &ctx, &jql, FIELDS, false, MAX_OVERDUE).await {
-            Ok((raw, _)) => raw.iter().filter_map(|v| parse_issue(v, cloud, &since)).collect(),
-            Err(e) => { errors.push(format!("без исполнителя: {e}")); Vec::new() }
+        match full_list(&params, &ctx, &jql, cloud, &since).await {
+            Ok(r) => r,
+            Err(e) => { errors.push(format!("без исполнителя: {e}")); (Vec::new(), 0) }
         }
     } else {
-        Vec::new()
+        (Vec::new(), 0)
     };
 
     // 4) Worklog за период.
@@ -293,9 +352,9 @@ pub async fn get_jira_digest(
     );
     let mut truncated = truncated_updated;
     let mut worklogs = Vec::new();
-    match search_raw(&params, &ctx, &wl_jql, &["summary"], false, MAX_WORKLOG_ISSUES).await {
-        Ok((issues, trunc)) => {
-            truncated |= trunc;
+    match search_raw(&params, &ctx, &wl_jql, &["summary"], false, limit).await {
+        Ok(SearchPage { issues, more, .. }) => {
+            truncated |= more;
             let authors: Arc<HashSet<String>> = Arc::new(
                 scope.user_ids.iter().map(|u| if cloud { u.clone() } else { u.to_lowercase() }).collect(),
             );
@@ -324,7 +383,10 @@ pub async fn get_jira_digest(
     }
     worklogs.sort_by(|a, b| b.started.cmp(&a.started));
 
-    Ok(DigestResult { updated, stale, overdue, unassigned, worklogs, truncated, errors })
+    Ok(DigestResult {
+        updated, stale, overdue, unassigned, worklogs,
+        stale_total, overdue_total, unassigned_total, limit, truncated, errors,
+    })
 }
 
 #[cfg(test)]
@@ -361,9 +423,11 @@ mod tests {
             proxy: None, user_timezone: None, accept_invalid_certs: false,
         };
         let r = get_jira_digest(params, DigestScope { project_keys: vec!["SRM".into()], user_ids: vec![], jql: None },
-            "2026-10-17".into(), "2026-10-24".into(), "2026-10-10".into()).await.unwrap();
+            "2026-10-17".into(), "2026-10-24".into(), "2026-10-10".into(), None).await.unwrap();
         assert_eq!(r.updated.len(), 1);
         assert_eq!(r.stale[0].key, "SRM-9");
+        assert_eq!(r.stale_total, 1);
+        assert_eq!(r.limit, DEFAULT_LIMIT);
         assert_eq!(r.worklogs.len(), 1, "скоуп проекта — worklog всех авторов");
         assert!(r.errors.is_empty(), "{:?}", r.errors);
     }

@@ -631,21 +631,158 @@ pub async fn test_connection(params: JiraConnectionParams) -> Result<bool, Strin
     }
 }
 
+fn parse_project(v: &Value) -> Option<ProjectDto> {
+    Some(ProjectDto {
+        id: v.get("id")?.as_str()?.to_string(),
+        key: v.get("key")?.as_str()?.to_string(),
+        name: v.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string(),
+    })
+}
+
+/// Все проекты одним списком: `GET project` — есть и в Cloud, и в Server/DC.
+async fn projects_plain(ctx: &AuthedClient, params: &JiraConnectionParams) -> Result<Vec<ProjectDto>, JiraError> {
+    let endpoint = url(params, "project");
+    let resp = send_with_retry(&ctx.client, || apply_auth(ctx.client.get(&endpoint), params, &ctx.token)).await?;
+    let body: Value = resp.json().await.map_err(|e| JiraError::Http(e.to_string()))?;
+    Ok(body.as_array().into_iter().flatten().filter_map(parse_project).collect())
+}
+
+const MAX_PROJECTS: usize = 2000;
+
+/// Список проектов.
+///
+/// `project/search` (постранично) есть только в Jira Cloud. Jira Server/DC трактует
+/// «search» как ключ проекта и отвечает 404 «No project could be found with key 'search'»,
+/// поэтому для Server/DC — `GET project`; в Cloud при 404 тоже откатываемся на него.
 #[tauri::command]
 pub async fn get_projects(params: JiraConnectionParams) -> Result<Vec<ProjectDto>, String> {
     let ctx = init(&params).map_err(String::from)?;
+    if !matches!(params.instance_type, JiraInstanceType::Cloud) {
+        return projects_plain(&ctx, &params).await.map_err(String::from);
+    }
     let endpoint = url(&params, "project/search");
-    let resp = send_with_retry(&ctx.client, || {
-        apply_auth(ctx.client.get(&endpoint), &params, &ctx.token)
-            .query(&[("maxResults", "200")])
-    }).await.map_err(String::from)?;
-    let body: Value = resp.json().await.map_err(|e| e.to_string())?;
-    let values = body.get("values").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    Ok(values.into_iter().filter_map(|v| Some(ProjectDto {
-        id: v.get("id")?.as_str()?.to_string(),
-        key: v.get("key")?.as_str()?.to_string(),
-        name: v.get("name")?.as_str().unwrap_or_default().to_string(),
-    })).collect())
+    let mut out: Vec<ProjectDto> = Vec::new();
+    loop {
+        let start_at = out.len().to_string();
+        let resp = match send_with_retry(&ctx.client, || {
+            apply_auth(ctx.client.get(&endpoint), &params, &ctx.token)
+                .query(&[("startAt", start_at.as_str()), ("maxResults", "100")])
+        }).await {
+            Ok(r) => r,
+            Err(JiraError::Api { status: 404, .. }) if out.is_empty() => {
+                return projects_plain(&ctx, &params).await.map_err(String::from);
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let body: Value = resp.json().await.map_err(|e| e.to_string())?;
+        let values = body.get("values").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let page_len = values.len();
+        out.extend(values.iter().filter_map(parse_project));
+        let is_last = body.get("isLast").and_then(|v| v.as_bool()).unwrap_or(true);
+        if is_last || page_len == 0 || out.len() >= MAX_PROJECTS {
+            return Ok(out);
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterDto {
+    pub id: String,
+    pub name: String,
+    pub jql: String,
+    pub owner_name: Option<String>,
+    /// В избранном у текущего пользователя.
+    pub favourite: bool,
+    /// Владелец — текущий пользователь (иначе — фильтр, которым поделилась команда).
+    pub mine: bool,
+}
+
+async fn get_json(
+    ctx: &AuthedClient,
+    params: &JiraConnectionParams,
+    path: &str,
+    query: &[(&str, &str)],
+) -> Result<Value, JiraError> {
+    let endpoint = url(params, path);
+    let resp = send_with_retry(&ctx.client, || apply_auth(ctx.client.get(&endpoint), params, &ctx.token).query(query)).await?;
+    resp.json().await.map_err(|e| JiraError::Http(e.to_string()))
+}
+
+/// Идентификатор пользователя для сравнения владельцев: Cloud — accountId, Server — username.
+fn user_ident(u: &Value, cloud: bool) -> Option<String> {
+    if cloud {
+        u.get("accountId").and_then(|v| v.as_str()).map(str::to_string)
+    } else {
+        u.get("name").or_else(|| u.get("key")).and_then(|v| v.as_str()).map(str::to_lowercase)
+    }
+}
+
+const MAX_FILTERS: usize = 500;
+
+/// Сохранённые фильтры Jira: избранные, свои и те, которыми поделились (команда, проект, группа).
+///
+/// Cloud: `filter/favourite` + постраничный `filter/search` (все доступные пользователю).
+/// Server/DC: `filter/favourite` + `filter/my` (его нет в старых версиях — тогда только избранные).
+#[tauri::command]
+pub async fn get_jira_filters(params: JiraConnectionParams) -> Result<Vec<FilterDto>, String> {
+    let ctx = init(&params).map_err(String::from)?;
+    let cloud = matches!(params.instance_type, JiraInstanceType::Cloud);
+    let me = get_json(&ctx, &params, "myself", &[]).await.ok().and_then(|m| user_ident(&m, cloud));
+
+    let mut out: Vec<FilterDto> = Vec::new();
+    let add = |f: &Value, favourite: bool, out: &mut Vec<FilterDto>| {
+        let Some(id) = f.get("id").and_then(|v| v.as_str()) else { return };
+        let fav = favourite || f.get("favourite").and_then(|v| v.as_bool()).unwrap_or(false);
+        if let Some(existing) = out.iter_mut().find(|x| x.id == id) {
+            existing.favourite |= fav;
+            return;
+        }
+        let owner = f.get("owner");
+        out.push(FilterDto {
+            id: id.to_string(),
+            name: f.get("name").and_then(|v| v.as_str()).unwrap_or(id).to_string(),
+            jql: f.get("jql").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            owner_name: owner.and_then(|o| o.get("displayName")).and_then(|v| v.as_str()).map(str::to_string),
+            favourite: fav,
+            mine: match (&me, owner.and_then(|o| user_ident(o, cloud))) {
+                (Some(me), Some(o)) => *me == o,
+                _ => false,
+            },
+        });
+    };
+
+    let mut first_err: Option<JiraError> = None;
+    match get_json(&ctx, &params, "filter/favourite", &[("expand", "jql,owner")]).await {
+        Ok(v) => v.as_array().into_iter().flatten().for_each(|f| add(f, true, &mut out)),
+        Err(e) => first_err = Some(e),
+    }
+    if cloud {
+        let mut start_at = 0usize;
+        loop {
+            let start = start_at.to_string();
+            let page = match get_json(&ctx, &params, "filter/search", &[
+                ("expand", "jql,owner,favourite"), ("maxResults", "100"), ("startAt", start.as_str()),
+            ]).await {
+                Ok(p) => p,
+                Err(e) => { first_err.get_or_insert(e); break; }
+            };
+            let values = page.get("values").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            values.iter().for_each(|f| add(f, false, &mut out));
+            start_at += values.len();
+            let is_last = page.get("isLast").and_then(|v| v.as_bool()).unwrap_or(true);
+            if is_last || values.is_empty() || start_at >= MAX_FILTERS { break; }
+        }
+    } else if let Ok(v) = get_json(&ctx, &params, "filter/my", &[("includeFavourites", "true")]).await {
+        v.as_array().into_iter().flatten().for_each(|f| add(f, false, &mut out));
+    }
+
+    if out.is_empty() {
+        if let Some(e) = first_err { return Err(e.into()); }
+    }
+    // Избранные → свои → командные, внутри — по имени.
+    out.sort_by(|a, b| b.favourite.cmp(&a.favourite).then(b.mine.cmp(&a.mine)).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    Ok(out)
 }
 
 #[tauri::command]
@@ -1372,6 +1509,71 @@ mod tests {
     use super::*;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn mock_params(uri: String, instance_type: JiraInstanceType, secret: &str) -> JiraConnectionParams {
+        std::env::set_var(format!("JIRATIME_TEST_SECRET_{}", secret.to_uppercase().replace('-', "_")), "dummy");
+        JiraConnectionParams {
+            base_url: uri, email: "u".into(), secret_ref: secret.into(), instance_type,
+            extra_root_ca_pem_path: None, proxy: None, user_timezone: None, accept_invalid_certs: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn projects_server_uses_plain_project_list() {
+        // Server/DC: project/search нет — Jira считает «search» ключом проекта и отдаёт 404.
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/rest/api/2/project/search"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "errorMessages": ["No project could be found with key 'search'."] })))
+            .mount(&server).await;
+        Mock::given(method("GET")).and(path("/rest/api/2/project"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "id": "1", "key": "SRM", "name": "Service Request" }])))
+            .mount(&server).await;
+        let r = get_projects(mock_params(server.uri(), JiraInstanceType::Server, "proj-srv")).await.unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].key, "SRM");
+    }
+
+    #[tokio::test]
+    async fn projects_cloud_paginates_and_falls_back() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/rest/api/3/project/search")).and(wiremock::matchers::query_param("startAt", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "isLast": false, "values": [{ "id": "1", "key": "A", "name": "A" }] })))
+            .mount(&server).await;
+        Mock::given(method("GET")).and(path("/rest/api/3/project/search")).and(wiremock::matchers::query_param("startAt", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "isLast": true, "values": [{ "id": "2", "key": "B", "name": "B" }] })))
+            .mount(&server).await;
+        let r = get_projects(mock_params(server.uri(), JiraInstanceType::Cloud, "proj-cloud")).await.unwrap();
+        assert_eq!(r.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(), vec!["A", "B"]);
+
+        let old = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/rest/api/3/project/search"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("not found")).mount(&old).await;
+        Mock::given(method("GET")).and(path("/rest/api/3/project"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "id": "3", "key": "C", "name": "C" }])))
+            .mount(&old).await;
+        let r = get_projects(mock_params(old.uri(), JiraInstanceType::Cloud, "proj-cloud2")).await.unwrap();
+        assert_eq!(r[0].key, "C");
+    }
+
+    #[tokio::test]
+    async fn filters_server_favourite_and_my() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/rest/api/2/myself"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "name": "Ivan" }))).mount(&server).await;
+        Mock::given(method("GET")).and(path("/rest/api/2/filter/favourite"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "10", "name": "Бэкенд: в работе", "jql": "project = SRM", "owner": { "name": "maria", "displayName": "Мария" } }
+            ]))).mount(&server).await;
+        Mock::given(method("GET")).and(path("/rest/api/2/filter/my"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "11", "name": "Мои баги", "jql": "assignee = currentUser()", "owner": { "name": "ivan" } },
+                { "id": "10", "name": "Бэкенд: в работе", "jql": "project = SRM", "owner": { "name": "maria" } }
+            ]))).mount(&server).await;
+        let r = get_jira_filters(mock_params(server.uri(), JiraInstanceType::Server, "flt-srv")).await.unwrap();
+        assert_eq!(r.len(), 2, "дубли по id схлопываются");
+        assert!(r[0].favourite && !r[0].mine && r[0].id == "10");
+        assert!(r[1].mine && r[1].jql.contains("currentUser"));
+    }
 
     /// Smoke-test: ключевые DTO должны (де)сериализоваться в camelCase,
     /// чтобы фронтенд получал issueKey / timeSpentSeconds, а не snake_case.
