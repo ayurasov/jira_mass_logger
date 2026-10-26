@@ -333,6 +333,13 @@ function isoWeekNum(dateIso: string): string {
   font-variant-numeric: tabular-nums;
   overflow: hidden;
 }
+/* Цвет по уровню заполнения — ДО правил выходных/праздников: специфичность одинаковая,
+   и при обратном порядке выходные закрашивались «проблемным» цветом. */
+.heatmap-cell[data-level="0"]  { background: var(--heatmap-0); }
+.heatmap-cell[data-level="1"]  { background: var(--heatmap-1); }
+.heatmap-cell[data-level="2"]  { background: var(--heatmap-2); }
+.heatmap-cell[data-level="3"]  { background: var(--heatmap-3); }
+.heatmap-cell[data-level="4"]  { background: var(--heatmap-4); }
 .heatmap-cell--weekend { opacity: 0.65; }
 .heatmap-cell[data-level="-1"] { background: transparent; }
 /* Пустой выходной — нейтральный, не «проблема». Выходной с часами — приглушённый факт. */
@@ -348,11 +355,6 @@ function isoWeekNum(dateIso: string): string {
 .heatmap-cell--holiday[data-level="2"],
 .heatmap-cell--holiday[data-level="3"],
 .heatmap-cell--holiday[data-level="4"] { background: var(--heatmap-holiday-fill, #f0b429); color: #4a3400; }
-.heatmap-cell[data-level="0"]  { background: var(--heatmap-0); }
-.heatmap-cell[data-level="1"]  { background: var(--heatmap-1); }
-.heatmap-cell[data-level="2"]  { background: var(--heatmap-2); }
-.heatmap-cell[data-level="3"]  { background: var(--heatmap-3); }
-.heatmap-cell[data-level="4"]  { background: var(--heatmap-4); }
 .heatmap-cell:hover { opacity: 0.75; }
 .heatmap-cell--clickable { cursor: pointer; }
 .heatmap-cell--clickable:hover { outline: 1.5px solid var(--primary); outline-offset: 1px; opacity: 1; }
