@@ -183,60 +183,68 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
 
     <!-- Параметры -->
     <section class="cd-card cd-controls">
-      <div class="cd-field">
-        <span class="cd-label">День</span>
-        <div class="cd-date">
-          <button class="cd-icon" title="Предыдущий день" @click="shiftDay(-1)"><ActionIcon name="chevron-left" :size="16" /></button>
-          <DatePicker :model-value="store.date" class="cd-datepicker" @update:model-value="setDate" />
-          <button class="cd-icon" title="Следующий день" @click="shiftDay(1)"><ActionIcon name="chevron-right" :size="16" /></button>
+      <!-- Основное: день и цель; действия справа -->
+      <div class="cd-controls__main">
+        <div class="cd-field">
+          <span class="cd-label">День</span>
+          <div class="cd-date">
+            <button class="cd-icon" title="Предыдущий день" @click="shiftDay(-1)"><ActionIcon name="chevron-left" :size="16" /></button>
+            <DatePicker :model-value="store.date" class="cd-datepicker" @update:model-value="setDate" />
+            <button class="cd-icon" title="Следующий день" @click="shiftDay(1)"><ActionIcon name="chevron-right" :size="16" /></button>
+            <span class="cd-weekday" :class="{ 'is-off': !store.isWorkday }">{{ WD_FULL[parseIsoDate(store.date).getDay()] }}<template v-if="!store.isWorkday"> · выходной</template></span>
+          </div>
         </div>
-        <span class="cd-hint">{{ WD_FULL[parseIsoDate(store.date).getDay()] }}<template v-if="!store.isWorkday"> · нерабочий день</template></span>
-      </div>
 
-      <div class="cd-field">
-        <span class="cd-label">Всего за день, ч</span>
-        <div class="cd-target">
-          <input v-model.number="store.targetHours" type="number" min="0.25" max="24" step="0.25" class="cd-num" />
-          <button v-for="h in [4, 6, 8]" :key="h" class="cd-chip" :class="{ 'cd-chip--on': store.targetHours === h }" @click="store.targetHours = h">{{ h }}</button>
+        <div class="cd-field">
+          <span class="cd-label">Всего за день, ч</span>
+          <div class="cd-target">
+            <input v-model.number="store.targetHours" type="number" min="0.25" max="24" step="0.25" class="cd-num" />
+            <div class="cd-seg">
+              <button v-for="h in [4, 6, 8]" :key="h" class="cd-seg__btn" :class="{ 'is-on': store.targetHours === h }" @click="store.targetHours = h">{{ h }}</button>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div class="cd-field">
-        <span class="cd-label">Рабочее время</span>
-        <div class="cd-range">
-          <input v-model="store.prefs.dayStart" type="time" />
-          <span>—</span>
-          <input v-model="store.prefs.dayEnd" type="time" />
-        </div>
-      </div>
-
-      <div class="cd-field">
-        <label class="cd-check"><input v-model="store.prefs.lunchEnabled" type="checkbox" /> Обед</label>
-        <div class="cd-range" :class="{ 'is-off': !store.prefs.lunchEnabled }">
-          <input v-model="store.prefs.lunchStart" type="time" :disabled="!store.prefs.lunchEnabled" />
-          <span>—</span>
-          <input v-model="store.prefs.lunchEnd" type="time" :disabled="!store.prefs.lunchEnabled" />
+        <div class="cd-actions">
+          <button class="cd-btn" :disabled="store.loading" title="Забыть правки и собрать день заново" @click="store.reset()">
+            <ActionIcon name="sparkles" :size="15" /> Пересобрать
+          </button>
+          <button class="cd-btn" :disabled="store.refreshingHistory || store.loading" title="Загрузить worklog за окно истории из Jira" @click="store.refreshHistory()">
+            <ActionIcon name="refresh" :size="15" :class="{ 'cd-spin': store.refreshingHistory }" /> История из Jira
+          </button>
         </div>
       </div>
 
-      <div class="cd-field">
-        <span class="cd-label">История</span>
-        <select v-model.number="store.prefs.historyWeeks">
-          <option :value="2">2 недели</option>
-          <option :value="4">4 недели</option>
-          <option :value="6">6 недель</option>
-          <option :value="8">8 недель</option>
-        </select>
-        <label class="cd-check cd-check--sm"><input v-model="store.prefs.useMeetings" type="checkbox" /> встречи календаря</label>
-      </div>
+      <!-- Параметры сборки: одна спокойная строка -->
+      <div class="cd-controls__params">
+        <div class="cd-param">
+          <span class="cd-param__label">Рабочее время</span>
+          <div class="cd-range">
+            <input v-model="store.prefs.dayStart" type="time" />
+            <span class="cd-range__dash">—</span>
+            <input v-model="store.prefs.dayEnd" type="time" />
+          </div>
+        </div>
 
-      <div class="cd-actions">
-        <button class="cd-btn" :disabled="store.loading" title="Забыть правки и собрать день заново" @click="store.reset()">
-          <ActionIcon name="sparkles" :size="15" /> Пересобрать
-        </button>
-        <button class="cd-btn" :disabled="store.refreshingHistory || store.loading" title="Загрузить worklog за окно истории из Jira" @click="store.refreshHistory()">
-          <ActionIcon name="refresh" :size="15" :class="{ 'cd-spin': store.refreshingHistory }" /> История из Jira
-        </button>
+        <div class="cd-param">
+          <label class="cd-param__label cd-param__check"><input v-model="store.prefs.lunchEnabled" type="checkbox" /> Обед</label>
+          <div class="cd-range" :class="{ 'is-off': !store.prefs.lunchEnabled }">
+            <input v-model="store.prefs.lunchStart" type="time" :disabled="!store.prefs.lunchEnabled" />
+            <span class="cd-range__dash">—</span>
+            <input v-model="store.prefs.lunchEnd" type="time" :disabled="!store.prefs.lunchEnabled" />
+          </div>
+        </div>
+
+        <div class="cd-param">
+          <span class="cd-param__label">История</span>
+          <select v-model.number="store.prefs.historyWeeks" class="cd-select">
+            <option :value="2">2 недели</option>
+            <option :value="4">4 недели</option>
+            <option :value="6">6 недель</option>
+            <option :value="8">8 недель</option>
+          </select>
+          <label class="cd-param__label cd-param__check cd-param__extra"><input v-model="store.prefs.useMeetings" type="checkbox" /> встречи календаря</label>
+        </div>
       </div>
     </section>
 
@@ -418,23 +426,38 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
 .mono { font-variant-numeric: tabular-nums; }
 .cd-loading { opacity: 0.6; }
 
-.cd-controls { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; align-items: flex-end; }
+.cd-controls { display: flex; flex-direction: column; gap: 0; padding-top: 0.875rem; padding-bottom: 0.875rem; }
+.cd-controls__main { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem 2rem; padding-bottom: 0.875rem; border-bottom: 1px solid var(--border); }
+/* Разделители между группами: у каждой группы левая граница со сдвигом -1px, а контейнер
+   (сдвинут на ширину отступа и обрезает переполнение) прячет границу у первой группы строки —
+   и при переносе на узком окне в начале строки не остаётся «висячей» черты. */
+.cd-controls__params { display: flex; flex-wrap: wrap; align-items: center; row-gap: 0.5rem; margin: 0 0 0 -1rem; padding-top: 0.75rem; overflow: hidden; }
+.cd-param { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0 1rem; margin-left: -1px; border-left: 1px solid var(--border); }
+.cd-param__label { font-size: 0.8125rem; color: var(--muted); font-weight: 500; white-space: nowrap; }
+.cd-param__check { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+.cd-param__check input { margin: 0; accent-color: var(--primary); }
+.cd-range__dash { color: var(--muted); }
+.cd-param__extra { margin-left: 0.5rem; }
+.cd-select { padding: 0.3rem 0.5rem; font-size: 0.8125rem; }
+.cd-weekday { margin-left: 0.25rem; font-size: 0.8125rem; color: var(--muted); white-space: nowrap; }
+.cd-weekday.is-off { color: var(--warning); }
+.cd-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 0.5rem; overflow: hidden; }
+.cd-seg__btn { border: none; background: var(--card); color: var(--muted); padding: 0 0.7rem; height: 2.125rem; font-weight: 600; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.cd-seg__btn + .cd-seg__btn { border-left: 1px solid var(--border); }
+.cd-seg__btn:hover { background: var(--chip); color: var(--fg); }
+.cd-seg__btn.is-on { background: var(--primary-soft); color: var(--primary); }
 .cd-field { display: flex; flex-direction: column; gap: 0.35rem; }
 .cd-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
-.cd-hint { font-size: 0.75rem; color: var(--muted); }
 .cd-date, .cd-target, .cd-range { display: flex; align-items: center; gap: 0.375rem; }
 .cd-range.is-off { opacity: 0.5; }
 .cd-datepicker { width: 9.5rem; }
-.cd-num { width: 5rem; padding: 0.45rem 0.55rem; }
-.cd-range input { padding: 0.4rem 0.5rem; width: 7.25rem; }
-.cd-field select { padding: 0.45rem 0.55rem; }
-.cd-chip { border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 0.5rem; padding: 0.35rem 0.6rem; font-weight: 600; font-size: 0.8125rem; }
-.cd-chip--on { background: var(--primary); border-color: var(--primary); color: #fff; }
+.cd-num { width: 4.5rem; height: 2.125rem; box-sizing: border-box; padding: 0.35rem 0.55rem; }
+.cd-range input { padding: 0.3rem 0.45rem; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
 .cd-check { display: inline-flex; gap: 0.4rem; align-items: center; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
 .cd-check--sm { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .cd-actions { display: flex; gap: 0.5rem; margin-left: auto; }
 
-.cd-btn { display: inline-flex; align-items: center; gap: 0.4rem; border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 0.5rem; padding: 0.55rem 0.95rem; font-weight: 600; font-size: 0.875rem; }
+.cd-btn { display: inline-flex; align-items: center; gap: 0.4rem; height: 2.125rem; box-sizing: border-box; border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 0.5rem; padding: 0 0.95rem; font-weight: 600; font-size: 0.875rem; }
 .cd-btn:hover:not(:disabled) { background: var(--chip); }
 .cd-btn--primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .cd-btn--primary:hover:not(:disabled) { background: var(--primary-hover); }
