@@ -106,6 +106,8 @@ export interface GraphAuthCompleteResult {
 }
 
 export interface ProjectDto { id: string; key: string; name: string; }
+/** Сохранённый фильтр Jira. */
+export interface JiraFilterDto { id: string; name: string; jql: string; ownerName?: string | null; favourite: boolean; mine: boolean; }
 export interface IssueDto { id: string; key: string; summary?: string | null; }
 export interface WorklogDto {
   id: string;
@@ -269,6 +271,7 @@ async function guardedInvoke<T>(cmd: string, args?: Record<string, unknown>): Pr
 export const tauriApi = {
   // --- Jira: справочники и поиск ---
   getProjects(params: JiraConnectionParams) { return invoke<ProjectDto[]>('get_projects', { params }); },
+  getJiraFilters(params: JiraConnectionParams) { return invoke<JiraFilterDto[]>('get_jira_filters', { params }); },
   getIssuesByJql(params: JiraConnectionParams, jql: string) { return invoke<IssueDto[]>('get_issues_by_jql', { params, jql }); },
 
   // --- Exchange / Outlook: profile CRUD ---
@@ -403,8 +406,9 @@ export const tauriApi = {
     params: JiraConnectionParams,
     scope: { projectKeys?: string[]; userIds?: string[]; jql?: string },
     since: string, until: string, staleBefore: string,
+    limit?: number,
   ) {
-    return invoke<DigestData>('get_jira_digest', { params, scope, since, until, staleBefore });
+    return invoke<DigestData>('get_jira_digest', { params, scope, since, until, staleBefore, limit: limit ?? null });
   },
   // --- Планировщик: напоминание о незаполненном времени ---
   getSchedulerSettings() { return invoke<SchedulerSettings>('get_scheduler_settings'); },

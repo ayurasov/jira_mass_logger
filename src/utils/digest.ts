@@ -44,6 +44,12 @@ export interface DigestData {
   overdue: DigestIssue[];
   unassigned: DigestIssue[];
   worklogs: DigestWorklog[];
+  /** Точное число задач в Jira (загруженных может быть меньше при очень больших выборках). */
+  staleTotal?: number;
+  overdueTotal?: number;
+  unassignedTotal?: number;
+  /** Применённый лимит для изменённых задач и задач с worklog. */
+  limit?: number;
   truncated: boolean;
   errors: string[];
 }
@@ -194,6 +200,11 @@ export interface DigestSummary {
   stale: number;
 }
 
+/** Точное число по спискам: из Jira, а если бэкенд старый — по загруженному. */
+export const staleCount = (d: DigestData) => Math.max(d.staleTotal ?? 0, d.stale.length);
+export const overdueCount = (d: DigestData) => Math.max(d.overdueTotal ?? 0, d.overdue?.length ?? 0);
+export const unassignedCount = (d: DigestData) => Math.max(d.unassignedTotal ?? 0, d.unassigned?.length ?? 0);
+
 export function summarize(data: DigestData, since: string): DigestSummary {
   const transitions = data.updated.reduce((s, i) => s + i.changes.filter((c) => c.field.toLowerCase() === 'status').length, 0);
   const done = data.updated.filter((i) => i.statusCategory === 'done' && i.changes.some((c) => c.field.toLowerCase() === 'status')).length;
@@ -203,7 +214,7 @@ export function summarize(data: DigestData, since: string): DigestSummary {
     done,
     created: data.updated.filter((i) => i.created.slice(0, 10) >= since).length,
     worklogHours: Math.round(data.worklogs.reduce((s, w) => s + w.timeSpentSeconds, 0) / 36) / 100,
-    stale: data.stale.length,
+    stale: staleCount(data),
   };
 }
 
@@ -308,12 +319,12 @@ export function highlights(data: DigestData, people: PersonActivity[], scopeIsTe
   if (t.reopened.length) out.push({ tone: 'bad', text: `Вернулись в работу после закрытия: ${keysText(t.reopened)}`, keys: t.reopened });
   if (t.pingPong.length) out.push({ tone: 'warn', text: `Статус «скачет» (3+ смены): ${keysText(t.pingPong.map((p) => `${p.key}×${p.count}`))}`, keys: t.pingPong.map((p) => p.key) });
   const overdue = data.overdue ?? [];
-  if (overdue.length) out.push({ tone: 'bad', text: `Просрочено открытых задач: ${overdue.length} (${keysText(overdue.map((i) => i.key))})`, keys: overdue.map((i) => i.key) });
+  if (overdue.length) out.push({ tone: 'bad', text: `Просрочено открытых задач: ${overdueCount(data)} (${keysText(overdue.map((i) => i.key))})`, keys: overdue.map((i) => i.key) });
   const unassigned = data.unassigned ?? [];
-  if (unassigned.length) out.push({ tone: 'warn', text: `Открытых задач без исполнителя: ${unassigned.length}`, keys: unassigned.map((i) => i.key) });
+  if (unassigned.length) out.push({ tone: 'warn', text: `Открытых задач без исполнителя: ${unassignedCount(data)}`, keys: unassigned.map((i) => i.key) });
   const noWl = inProgressWithoutWorklog(data);
   if (noWl.length) out.push({ tone: 'warn', text: `В работе, но без списаний за период: ${keysText(noWl.map((i) => i.key))}`, keys: noWl.map((i) => i.key) });
-  if (data.stale.length) out.push({ tone: 'warn', text: `Без движения: ${data.stale.length} открытых задач`, keys: data.stale.map((i) => i.key) });
+  if (data.stale.length) out.push({ tone: 'warn', text: `Без движения: ${staleCount(data)} открытых задач`, keys: data.stale.map((i) => i.key) });
   const silent = people.filter((p) => p.silent);
   if (scopeIsTeam && silent.length) out.push({ tone: 'bad', text: `Без активности: ${silent.map((p) => p.name).join(', ')}`, keys: [] });
   const active = people.filter((p) => !p.silent).sort((a, b) => b.changes + b.worklogHours - (a.changes + a.worklogHours));
