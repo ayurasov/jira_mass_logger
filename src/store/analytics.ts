@@ -94,14 +94,58 @@ export interface BulkSavingMetricData {
   savedMinutes: number;
 }
 
-// Уровни заполнения heatmap
-function toLevel(hours: number, isWD: boolean): 0 | 1 | 2 | 3 | 4 {
+// Уровни заполнения heatmap — относительно нормы дня (при норме 6 ч день с 6 ч — «норма»).
+function toLevel(hours: number, isWD: boolean, norm: number): 0 | 1 | 2 | 3 | 4 {
   if (!isWD) return 0;
   if (hours <= 0) return 0;
-  if (hours < 4) return 1;
-  if (hours < 6) return 2;
-  if (hours < 8) return 3;
+  const fill = hours / (norm || 8);
+  if (fill < 0.5) return 1;
+  if (fill < 0.75) return 2;
+  if (fill < 0.99) return 3;
   return 4;
+}
+
+/** Окно «пропусков» на дашборде: скользящие 30 дней до сегодня. */
+export const MISSING_WINDOW_DAYS = 30;
+/** Не чаще этого перезапрашиваем Jira при открытии дашборда. */
+const SYNC_TTL_MS = 10 * 60 * 1000;
+
+export interface PeriodStat {
+  /** Факт, ч. */
+  fact: number;
+  /** Норма за прошедшие рабочие дни периода (включая сегодня), ч. */
+  planToDate: number;
+  /** Норма за весь период, ч. */
+  planTotal: number;
+  /** Рабочих дней прошло / всего. */
+  workdaysPassed: number;
+  workdaysTotal: number;
+}
+
+/** Сумма часов по дням. */
+function hoursByDay(rows: CachedWorklogRow[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of rows) {
+    const d = r.started.slice(0, 10);
+    m.set(d, (m.get(d) ?? 0) + (r.timeSpentSeconds ?? 0) / 3600);
+  }
+  return m;
+}
+
+function periodStat(byDay: Map<string, number>, from: Date, to: Date, norm: number): PeriodStat {
+  const today = toIsoDate(new Date());
+  let fact = 0; let planToDate = 0; let planTotal = 0; let passed = 0; let total = 0;
+  for (let d = new Date(from); d <= to; d = addDays(d, 1)) {
+    const iso = toIsoDate(d);
+    const wd = isWorkday(iso);
+    if (iso <= today) fact += byDay.get(iso) ?? 0;
+    if (!wd) continue;
+    total++;
+    planTotal += norm;
+    if (iso <= today) { passed++; planToDate += norm; }
+  }
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  return { fact: r2(fact), planToDate: r2(planToDate), planTotal: r2(planTotal), workdaysPassed: passed, workdaysTotal: total };
 }
 
 const DAY_LABELS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
@@ -231,17 +275,18 @@ export const useAnalyticsStore = defineStore('analytics', {
         if (d > todayIso) break;
         const h = hoursByDate.get(d) ?? 0;
         const wd = isWorkday(d);
-        cells.push({ date: d, hours: Math.round(h * 100) / 100, level: toLevel(h, wd) });
+        cells.push({ date: d, hours: Math.round(h * 100) / 100, level: toLevel(h, wd, useSettingsStore().workHoursPerDay ?? 8) });
       }
       return cells;
     },
 
-    // ── Виджет 4: дни с недозаполненным worklog в текущем месяце ───
+    // ── Виджет 4: недозаполненные рабочие дни за последние 30 дней ───
     missingDays(): MissingDay[] {
       const settings = useSettingsStore();
       const norm = settings.workHoursPerDay ?? 8;
       const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthStart = addDays(now, -(MISSING_WINDOW_DAYS - 1));
+      monthStart.setHours(0, 0, 0, 0);
       const today = toIsoDate(now);
 
       const hoursByDate = new Map<string, number>();
@@ -261,6 +306,39 @@ export const useAnalyticsStore = defineStore('analytics', {
         }
       }
       return result.sort((a, b) => a.date.localeCompare(b.date));
+    },
+
+    // ── KPI: сегодня, неделя, месяц, серия ───────────────────────────
+    todayStat(): { date: string; hours: number; norm: number; workday: boolean } {
+      const settings = useSettingsStore();
+      const date = toIsoDate(new Date());
+      const hours = hoursByDay(this._rows).get(date) ?? 0;
+      return { date, hours: Math.round(hours * 100) / 100, norm: settings.workHoursPerDay ?? 8, workday: isWorkday(date) };
+    },
+    weekStat(): PeriodStat {
+      const monday = startOfWeek(new Date());
+      return periodStat(hoursByDay(this._rows), monday, addDays(monday, 6), useSettingsStore().workHoursPerDay ?? 8);
+    },
+    monthStat(): PeriodStat {
+      const now = new Date();
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return periodStat(hoursByDay(this._rows), first, last, useSettingsStore().workHoursPerDay ?? 8);
+    },
+    /** Сколько рабочих дней подряд (до вчера включительно, сегодня — если уже заполнен) списано по норме. */
+    streakDays(): number {
+      const norm = useSettingsStore().workHoursPerDay ?? 8;
+      const byDay = hoursByDay(this._rows);
+      let n = 0;
+      const today = new Date();
+      if (isWorkday(toIsoDate(today)) && (byDay.get(toIsoDate(today)) ?? 0) >= norm - 0.01) n++;
+      for (let i = 1; i <= 95; i++) {
+        const iso = toIsoDate(addDays(today, -i));
+        if (!isWorkday(iso)) continue;
+        if ((byDay.get(iso) ?? 0) >= norm - 0.01) n++;
+        else break;
+      }
+      return n;
     },
 
     // ── Виджет 5: метрика экономии ───────────────────────────────────
@@ -296,8 +374,8 @@ export const useAnalyticsStore = defineStore('analytics', {
         this._rows = await tauriApi.listCachedWorklogs(from, to);
         this.bulkEntriesCreated = Number(localStorage.getItem('jiratime-bulk-entries-created') ?? '0');
         this.calendarEntriesCreated = Number(localStorage.getItem('jiratime-calendar-entries-created') ?? '0');
-        // Названия проектов для разбивки (best-effort: не блокируем дашборд при ошибке).
-        try {
+        // Названия проектов для разбивки (best-effort, один раз за сеанс: не блокируем дашборд при ошибке).
+        if (this._projectNames.size === 0) try {
           const profiles = (await import('./jiraProfiles')).useJiraProfilesStore();
           await profiles.ensureLoaded();
           const params = profiles.activeConnectionParams;
@@ -329,11 +407,11 @@ export const useAnalyticsStore = defineStore('analytics', {
      *               пропустить шаги 2-4 если уже синхронизировали в этом сеансе.
      */
     async syncFromJira(force = false) {
-      if (!this.lastFetched) {
-        await this.fetchAll();
-      }
+      // Кэш перечитываем всегда: записи из «Собрать день», мастера и календаря попадают
+      // в кэш сразу, и дашборд должен показать их без похода в Jira.
+      await this.fetchAll();
 
-      if (!force && this.lastSynced !== null) return;
+      if (!force && this.lastSynced !== null && Date.now() - this.lastSynced < SYNC_TTL_MS) return;
 
       this.syncing = true;
       this.syncError = null;

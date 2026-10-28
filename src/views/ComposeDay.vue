@@ -5,6 +5,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import ActionIcon from '../components/ActionIcon.vue';
+import OneClickFill from '../components/OneClickFill.vue';
 import DatePicker from '../components/DatePicker.vue';
 import { useComposeStore } from '../store/compose';
 import { useLicenseStore } from '../store/license';
@@ -248,13 +249,24 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
       </div>
     </section>
 
-    <!-- Незаполненные дни -->
-    <div v-if="store.unfilled.length" class="cd-unfilled">
-      <span class="cd-muted cd-small">Не заполнено за 2 недели:</span>
-      <button
-        v-for="d in store.unfilled" :key="d.date" class="cd-day-chip"
-        :class="{ 'is-current': d.date === store.date }" @click="setDate(d.date)"
-      >{{ dayLabel(d.date) }} <span>{{ fmtDur(d.minutes) }}</span></button>
+    <!-- Незаполненные дни + «одним нажатием» -->
+    <div v-if="store.unfilled.length || store.batch.results.length" class="cd-unfilled">
+      <div class="cd-unfilled__row">
+        <span v-if="store.unfilled.length" class="cd-muted cd-small">Не заполнено за 2 недели:</span>
+        <span v-else class="cd-muted cd-small">За 2 недели всё заполнено.</span>
+        <button
+          v-for="d in store.unfilled" :key="d.date" class="cd-day-chip"
+          :class="{ 'is-current': d.date === store.date }" @click="setDate(d.date)"
+        >{{ dayLabel(d.date) }} <span>{{ fmtDur(d.minutes) }}</span></button>
+      </div>
+      <OneClickFill
+        :dates="store.unfilled.map((d) => d.date)" :primary="false" compact
+        :label="`Заполнить все пропуски · ${store.unfilled.length} ${store.unfilled.length === 1 ? 'день' : store.unfilled.length < 5 ? 'дня' : 'дней'}`"
+        @open-day="setDate"
+      />
+    </div>
+    <div v-if="store.favoriteFallback && !store.loading" class="cd-alert cd-alert--info">
+      <ActionIcon name="info" :size="15" /> Истории списаний пока нет — предложена избранная задача {{ store.habits[0]?.issueKey }}. Проверьте задачи перед отправкой: пакетное заполнение такие дни пропускает.
     </div>
 
     <div v-if="store.error" class="cd-alert cd-alert--error"><ActionIcon name="warning" :size="15" /> {{ store.error }}</div>
@@ -547,7 +559,8 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
 .cd-summary__foot { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; font-size: 0.8125rem; }
 .cd-auto { margin-left: auto; }
 .cd-warn { color: var(--amber-fg); background: var(--amber-bg); border-radius: 999px; padding: 0.05rem 0.5rem; font-size: 0.75rem; display: inline-flex; gap: 0.3rem; align-items: center; }
-.cd-unfilled { display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; }
+.cd-unfilled { display: flex; flex-direction: column; gap: 0.5rem; }
+.cd-unfilled__row { display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; }
 .cd-day-chip { border: 1px dashed color-mix(in srgb, var(--warning) 60%, var(--border)); background: var(--card); color: var(--fg); border-radius: 999px; padding: 0.2rem 0.65rem; font-size: 0.8125rem; font-weight: 600; }
 .cd-day-chip span { color: var(--muted); font-weight: 500; margin-left: 0.25rem; }
 .cd-day-chip:hover { border-style: solid; border-color: var(--primary); }

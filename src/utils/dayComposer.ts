@@ -181,6 +181,21 @@ function freeGaps(busy: Interval[], opts: ComposeOptions): Interval[] {
 }
 
 /**
+ * Первое время начала ≥ `preferred`, где `minutes` минут не пересекаются с занятыми интервалами
+ * (в пределах суток). Если такого окна нет — сразу после последнего занятого интервала.
+ */
+export function firstFreeStart(busy: { start: number; end: number }[], preferred: number, minutes: number): number {
+  const sorted = [...busy].sort((a, b) => a.start - b.start);
+  let cur = preferred;
+  for (const b of sorted) {
+    if (b.end <= cur) continue;
+    if (b.start >= cur + minutes) break; // окно [cur, cur+minutes) свободно до этого интервала
+    cur = Math.max(cur, b.end);
+  }
+  return Math.min(cur, 24 * 60 - Math.min(minutes, 24 * 60));
+}
+
+/**
  * Размещает `minutes` минут начиная с желаемого времени: целиком в первом подходящем
  * окне, а если такого нет — частями по свободным окнам. Возвращает куски [start, minutes].
  */

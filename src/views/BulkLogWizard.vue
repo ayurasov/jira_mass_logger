@@ -115,6 +115,7 @@ function validateStartTime() {
 
 const canProceedFromStep1 = computed(() => wizard.issueKey.trim().length > 0);
 const canProceedFromStep2 = computed(() => !!wizard.periodFrom && !!wizard.periodTo && wizard.periodFrom <= wizard.periodTo);
+const skippedFull = computed(() => wizard.previewRows.filter((r) => r.skipped && r.note?.startsWith('день уже заполнен')).length);
 const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2[0-3]):([0-5]\d)$/.test(wizard.startTime));
 </script>
 
@@ -284,6 +285,13 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
                 @blur="validateStartTime" />
               <small v-if="startTimeError" class="field-error">{{ startTimeError }}</small>
             </label>
+            <label class="field-block fill-norm">
+              <span class="fill-norm__row">
+                <input v-model="wizard.fillToNorm" type="checkbox" />
+                Не превышать норму дня
+              </span>
+              <small class="muted-hint">Учитывает уже залогированное: часы урезаются до остатка нормы, заполненные дни пропускаются, время начала сдвигается после существующих записей.</small>
+            </label>
             <div class="field-block span-2 save-template-card">
               <span>Сохранить набор параметров как шаблон</span>
               <div class="inline-actions stretch">
@@ -314,6 +322,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
             <div class="summary-pill">Строк: {{ wizard.previewRows.filter((r) => !r.skipped).length }}</div>
             <div class="summary-pill">Сумма часов: {{ wizard.totalHours }}</div>
             <div class="summary-pill warning" v-if="wizard.conflictsCount > 0">Конфликтов: {{ wizard.conflictsCount }}</div>
+            <div class="summary-pill" v-if="skippedFull > 0">Пропущено заполненных дней: {{ skippedFull }}</div>
           </div>
           <div class="preview-table-wrap">
             <table class="preview-table">
@@ -329,7 +338,7 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in wizard.previewRows" :key="row.id" :class="{ skipped: row.skipped, conflict: row.conflict }">
+                <tr v-for="row in wizard.previewRows" :key="row.id" :class="{ skipped: row.skipped, conflict: row.conflict }" :title="row.note">
                   <td>{{ row.date }}</td>
                   <td>{{ row.weekday }}</td>
                   <td>
@@ -347,7 +356,8 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
                   </td>
                   <td>
                     <span class="badge warning" v-if="row.conflict" title="В этот день у вас уже есть запись по этой задаче">Уже есть ваш worklog</span>
-                    <span class="badge" v-else>—</span>
+                    <span class="badge" v-else-if="!row.note">—</span>
+                    <small v-if="row.note" class="row-note">{{ row.note }}</small>
                   </td>
                   <td>
                     <span class="badge success" v-if="row.status === 'success'">Успех</span>
@@ -520,4 +530,8 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   cursor: pointer;
 }
 .license-banner__btn:hover { background: var(--amber-bg); }
+.fill-norm { align-self: end; }
+.fill-norm__row { display: inline-flex; align-items: center; gap: 0.45rem; font-weight: 600; color: var(--fg); cursor: pointer; }
+.fill-norm__row input { margin: 0; accent-color: var(--primary); }
+.row-note { display: block; margin-top: 0.2rem; font-size: 0.6875rem; line-height: 1.3; color: var(--muted); }
 </style>
