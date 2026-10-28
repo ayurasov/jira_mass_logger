@@ -484,7 +484,8 @@ async function exportCsv() {
 .tm-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .tm-header h1 { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
 .tm-sub { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.875rem; }
-.tm-header__actions { display: flex; align-items: center; gap: 0.5rem; }
+.tm-header__actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.tm-header__actions .tm-btn, .tm-header__actions .tm-muted { white-space: nowrap; }
 .tm-muted { color: var(--muted); font-size: 0.8125rem; }
 
 .tm-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem 1.125rem; }
@@ -663,7 +664,7 @@ async function exportCsv() {
 .tm-sev--info { background: var(--muted); }
 
 /* Модалка */
-.tm-overlay { position: fixed; inset: 0; background: rgba(10, 14, 22, 0.5); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 1rem; }
+.tm-overlay { position: fixed; inset: 0; background: rgba(10, 14, 22, 0.5); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
 .tm-modal { background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 0.875rem; box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.25); width: min(46rem, 100%); max-height: 85vh; overflow: auto; padding: 1.25rem 1.375rem; }
 .tm-modal__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 0.875rem; }
 .tm-modal__head h2 { margin: 0 0 0.2rem; font-size: 1.125rem; }

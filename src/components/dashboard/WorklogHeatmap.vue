@@ -36,7 +36,7 @@
       </div>
     </div>
     <div class="heatmap-scroll-wrap">
-      <div class="heatmap-grid">
+      <div class="heatmap-grid" :style="{ '--weeks': weeks.length || 1 }">
         <!-- заголовки дней недели -->
         <div class="heatmap-weekdays">
           <span class="weekday-spacer"></span>
@@ -244,9 +244,15 @@ function isoWeekNum(dateIso: string): string {
   padding-bottom: 0.25rem;
 }
 .heatmap-grid {
+  /* Ширина клетки: на широком окне клетки растягиваются на всю карточку (до 5rem), на узком — не меньше 2.5rem с прокруткой. */
+  --cw: 2.5rem;
   display: flex;
   gap: 0.375rem;
   min-width: max-content;
+}
+@supports (width: 1cqw) {
+  .heatmap-scroll-wrap { container-type: inline-size; }
+  .heatmap-grid { --cw: clamp(2.5rem, calc((100cqw - 2.875rem - (var(--weeks) - 1) * 3px) / var(--weeks)), 5rem); }
 }
 .heatmap-weeks-wrap {
   display: flex;
@@ -258,7 +264,7 @@ function isoWeekNum(dateIso: string): string {
   gap: 3px;
 }
 .heatmap-month {
-  width: calc(var(--mw) * (2.5rem + 3px) - 3px);
+  width: calc(var(--mw) * (var(--cw) + 3px) - 3px);
   height: 18px;
   border: none;
   border-radius: 3px;
@@ -320,7 +326,7 @@ function isoWeekNum(dateIso: string): string {
 .heatmap-week-num--3 { background: var(--heatmap-3); }
 .heatmap-week-num--4 { background: var(--heatmap-4); }
 .heatmap-cell {
-  width: 2.5rem;
+  width: var(--cw);
   height: 22px;
   border-radius: 3px;
   background: var(--heatmap-0);

@@ -1,6 +1,6 @@
 <template>
   <div class="settings-screen">
-    <h2>Настройки</h2>
+    <h1 class="settings-title">Настройки</h1>
 
     <!-- ──────────── Общие настройки ──────────── -->
     <section class="settings-card">
@@ -461,7 +461,9 @@ onMounted(() => {
   flex-direction: column;
   gap: 1rem;
   padding: 1.5rem;
+  max-width: 72rem;
 }
+.settings-title { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
 
 .settings-card {
   background: var(--color-surface, #fff);

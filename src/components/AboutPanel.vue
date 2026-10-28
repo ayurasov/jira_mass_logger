@@ -204,7 +204,8 @@ async function activateCode() {
   position: fixed;
   left: 12px;
   bottom: 10px;
-  z-index: 9999;
+  /* Над содержимым, но под затемнением модальных окон (z-index 1000). */
+  z-index: 40;
   display: inline-flex;
   align-items: center;
   justify-content: center;

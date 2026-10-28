@@ -86,7 +86,7 @@ onUnmounted(() => {
     <!-- Заголовок -->
     <div class="logs-header">
       <div class="logs-title-row">
-        <h2 class="logs-title">Логи приложения</h2>
+        <h1 class="logs-title">Логи приложения</h1>
         <span class="logs-path">{{ logDirPath }}</span>
       </div>
 
@@ -144,7 +144,7 @@ onUnmounted(() => {
 }
 
 .logs-header {
-  padding: 12px 16px 8px;
+  padding: 1.5rem 1.5rem 0.75rem;
   border-bottom: 1px solid var(--color-border, var(--border));
   background: var(--color-surface, var(--chip));
   flex-shrink: 0;
@@ -154,11 +154,13 @@ onUnmounted(() => {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  margin-bottom: 8px;
+  min-width: 0;
+  margin-bottom: 0.75rem;
 }
 .logs-title {
-  font-size: 16px;
+  font-size: 1.5rem;
   font-weight: 700;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 .logs-path {

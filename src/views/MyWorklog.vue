@@ -42,8 +42,11 @@
     <div class="filters">
       <input v-model="store.filters.issueKey" class="filters__input" placeholder="Фильтр по задаче (ABC-123)" />
       <input v-model="store.filters.projectKey" class="filters__input" placeholder="Проект (ABC)" />
-      <DatePicker v-model="store.filters.fromDate" placeholder="Дата с" class="filters__input" />
-      <DatePicker v-model="store.filters.toDate" placeholder="Дата по" class="filters__input" />
+      <div class="filters__range">
+        <DatePicker v-model="store.filters.fromDate" placeholder="Дата с" class="filters__input" />
+        <span class="filters__dash">—</span>
+        <DatePicker v-model="store.filters.toDate" placeholder="Дата по" class="filters__input" />
+      </div>
       <input v-model="store.filters.searchText" class="filters__input filters__input--search" placeholder="Поиск в описании…" />
       <label class="filters__norm">
         Норма в день, ч:
@@ -58,14 +61,14 @@
     >
       <table class="worklog-table">
         <colgroup>
-          <col style="width: 7rem" />
-          <col style="width: 3rem" />
-          <col style="width: 26%" />
+          <col style="width: 6.5rem" />
+          <col style="width: 2.75rem" />
+          <col style="width: 40%" />
+          <col style="width: 4.75rem" />
+          <col style="width: 60%" />
+          <col style="width: 4.75rem" />
           <col style="width: 5rem" />
-          <col style="width: 34%" />
-          <col style="width: 6rem" />
-          <col style="width: 5rem" />
-          <col style="width: 6.75rem" />
+          <col style="width: 6.5rem" />
         </colgroup>
         <thead>
           <tr>

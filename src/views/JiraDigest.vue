@@ -516,11 +516,15 @@ const catClass = (i: DigestIssue) => `cat--${i.statusCategory || 'new'}`;
 .dg-empty p { color: var(--muted); max-width: 34rem; margin: 0 auto; }
 .dg-empty__icon { display: inline-flex; padding: 0.75rem; border-radius: 999px; background: var(--chip); color: var(--primary); }
 
-.dg-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.75rem, 1fr)); gap: 0.75rem; }
+.dg-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 0.75rem; }
 .dg-stat { display: flex; flex-direction: column; gap: 0.15rem; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.875rem 1rem; box-shadow: var(--shadow); }
+/* Подпись, число и пояснение выровнены по строкам во всём ряду плиток, даже если одна подпись перенеслась. */
+@supports (grid-template-rows: subgrid) {
+  .dg-stat { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0.15rem; }
+}
 .dg-stat--alert { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); }
 .dg-stat--alert .dg-stat__value { color: var(--warning); }
-.dg-stat__label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+.dg-stat__label { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; line-height: 1.25; }
 .dg-stat__value { font-size: 1.625rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .dg-stat__value small { font-size: 0.875rem; color: var(--muted); }
 .dg-stat__hint { font-size: 0.75rem; color: var(--muted); }

@@ -15,7 +15,7 @@
   gap: 0.75rem;
 }
 .worklog-header__title { display: flex; align-items: center; gap: 0.75rem; }
-.worklog-header__title h1 { font-size: 1.375rem; margin: 0; }
+.worklog-header__title h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; }
 .worklog-header__actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
 .badge {
@@ -56,6 +56,9 @@
   flex: 0 0 auto;
 }
 .filters__input--search { min-width: 14rem; flex: 1 1 14rem; }
+/* Период «с — по» переносится целиком, а не по одной дате. */
+.filters__range { display: flex; align-items: center; gap: 0.375rem; flex: 0 0 auto; }
+.filters__dash { color: var(--muted); font-size: 0.875rem; }
 .filters__norm { display: flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; margin-left: auto; }
 .filters__norm input { width: 3.5rem; padding: 0.25rem 0.375rem; }
 
@@ -79,7 +82,8 @@
   -webkit-overflow-scrolling: touch;
 }
 
-.worklog-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; table-layout: fixed; }
+/* Узкое окно: таблица не сжимает «Задачу» и «Описание» в столбик, а прокручивается по горизонтали. */
+.worklog-table { width: 100%; min-width: 47rem; border-collapse: collapse; font-size: 0.875rem; table-layout: fixed; }
 .worklog-table thead th {
   position: sticky;
   top: 0;
@@ -158,7 +162,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
+  z-index: 1000;
 }
 .modal { box-sizing: border-box; max-height: 90vh; overflow-y: auto; background: var(--color-surface, #fff); border-radius: 0.625rem; padding: 1.5rem; width: min(28rem, 90vw); box-shadow: 0 1rem 2rem rgba(0,0,0,0.2); }
 .modal h2 { margin-top: 0; font-size: 1.125rem; }

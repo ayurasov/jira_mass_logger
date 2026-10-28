@@ -1,6 +1,6 @@
 <template>
   <div class="profiles-page">
-    <h1 class="page-title"><ActionIcon name="link" :size="22" /> Подключения</h1>
+    <h1 class="page-title">Подключения</h1>
 
     <!-- JIRA PROFILES -->
     <section class="card">
@@ -685,8 +685,8 @@ async function startOAuth() {
 </script>
 
 <style scoped>
-.profiles-page { padding: 1.5rem; max-width: 1100px; }
-.page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 1.2rem; display: flex; align-items: center; gap: .5rem; }
+.profiles-page { padding: 1.5rem; max-width: 72rem; }
+.page-title { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 1rem; }
 .card { background: var(--surface, #fff); border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); padding: 1.2rem 1.4rem; }
 .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
 .card-title { font-size: 1.05rem; font-weight: 600; }

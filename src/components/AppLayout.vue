@@ -6,7 +6,7 @@
   Иконки — единый монохромный SVG-набор (NavIcon.vue / ActionIcon.vue) взамен разноцветных emoji.
 -->
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute } from 'vue-router';
 import AppLogo from './AppLogo.vue';
 import NavIcon, { type NavIconName } from './NavIcon.vue';
@@ -39,11 +39,25 @@ const route = useRoute();
 const bitrix = useBitrixStore();
 // «Битрикс24» — необязательный раздел: в меню, только если подключён и включён.
 const navItems = computed(() => NAV_ITEMS.filter((i) => i.name !== 'bitrix' || (bitrix.settings.enabled && bitrix.connected)));
-const collapsed = ref<boolean>(localStorage.getItem('jiratime-sidebar-collapsed') === 'true');
+const userCollapsed = ref<boolean>(localStorage.getItem('jiratime-sidebar-collapsed') === 'true');
+
+// В узком окне (меньше ~1100 px) меню само сворачивается в иконки — контенту нужна ширина.
+// Развернуть его можно и там, но этот выбор не запоминается: при расширении окна действует обычная настройка.
+const NARROW_QUERY = '(max-width: 1099px)';
+const narrowMq = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(NARROW_QUERY) : null;
+const narrow = ref<boolean>(narrowMq?.matches ?? false);
+const expandedWhileNarrow = ref(false);
+const onNarrowChange = (e: MediaQueryListEvent) => { narrow.value = e.matches; expandedWhileNarrow.value = false; };
+
+const collapsed = computed(() => (narrow.value ? !expandedWhileNarrow.value : userCollapsed.value));
 
 function toggleCollapsed() {
-  collapsed.value = !collapsed.value;
-  localStorage.setItem('jiratime-sidebar-collapsed', String(collapsed.value));
+  if (narrow.value) {
+    expandedWhileNarrow.value = !expandedWhileNarrow.value;
+    return;
+  }
+  userCollapsed.value = !userCollapsed.value;
+  localStorage.setItem('jiratime-sidebar-collapsed', String(userCollapsed.value));
 }
 
 const activeName = computed(() => route.name as string);
@@ -52,10 +66,13 @@ onMounted(() => {
   // Синхронизация, если значение было изменено в другой вкладке/окне (на будущее)
   window.addEventListener('storage', (e) => {
     if (e.key === 'jiratime-sidebar-collapsed') {
-      collapsed.value = e.newValue === 'true';
+      userCollapsed.value = e.newValue === 'true';
     }
   });
+  narrowMq?.addEventListener('change', onNarrowChange);
 });
+
+onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
 </script>
 
 <template>
@@ -82,6 +99,7 @@ onMounted(() => {
           class="nav-item"
           :class="{ active: activeName === item.name }"
           :title="collapsed ? item.label : undefined"
+          @click="narrow && expandedWhileNarrow && (expandedWhileNarrow = false)"
         >
           <span class="nav-icon"><NavIcon :name="item.icon" :size="19" /></span>
           <span class="nav-label">{{ item.label }}</span>
@@ -107,7 +125,7 @@ onMounted(() => {
 .app-sidebar {
   display: flex;
   flex-direction: column;
-  width: 17.5rem;
+  width: 18rem;
   flex-shrink: 0;
   background: var(--card);
   border-right: 1px solid var(--border);
@@ -183,15 +201,18 @@ onMounted(() => {
 .sidebar-nav {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 0.2rem;
-  padding: 0.15rem 0.55rem 0.75rem;
+  /* Снизу место под круглую кнопку «О программе» (AboutPanel, position: fixed). */
+  padding: 0.15rem 0.5rem 3.25rem;
   overflow-y: auto;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.6rem;
   padding: 0.5rem 0.6rem;
   border-radius: 0.6rem;
   color: var(--fg);
@@ -231,14 +252,14 @@ onMounted(() => {
   color: var(--muted);
   border: 1px solid var(--border);
   border-radius: 0.3rem;
-  padding: 0.08rem 0.3rem;
+  padding: 0.08rem 0.25rem;
   font-family: 'Consolas', monospace;
   flex-shrink: 0;
 }
 
 .app-sidebar.collapsed .nav-item {
   justify-content: center;
-  padding: 0.6rem;
+  padding: 0.5rem;
 }
 .app-sidebar.collapsed .nav-label,
 .app-sidebar.collapsed .nav-hotkey {

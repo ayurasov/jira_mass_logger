@@ -188,7 +188,7 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
   <div class="day-calendar">
     <!-- Header -->
     <div class="day-header">
-      <h2><ActionIcon name="clock" :size="20" /> День из календаря</h2>
+      <h1 class="day-title">День из календаря</h1>
       <div class="day-controls">
         <div class="day-nav">
           <button @click="navigateDay(-1)" class="nav-btn" title="Предыдущий день"><ActionIcon name="chevron-left" :size="14" /></button>
@@ -424,7 +424,8 @@ const uncoveredHours = computed(() => fmtDuration(store.uncoveredSeconds));
 .coverage-actions { display: inline-flex; gap: 0.5rem; align-items: center; }
 .btn-compose { border: 1px solid var(--primary); background: transparent; color: var(--primary-strong); border-radius: 6px; padding: 6px 12px; font-weight: 600; font-size: 13px; }
 .btn-compose:hover { background: var(--chip); }
-.day-calendar { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.day-calendar { padding: 1.5rem; display: flex; flex-direction: column; gap: 12px; }
+.day-title { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
 .day-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .day-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .day-nav { display: flex; gap: 4px; align-items: center; }

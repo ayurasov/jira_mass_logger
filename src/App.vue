@@ -94,6 +94,7 @@ useHotkeys();
   position: fixed;
   top: 8px;
   right: 12px;
-  z-index: 9999;
+  /* Над содержимым, но под затемнением модальных окон (z-index 1000). */
+  z-index: 40;
 }
 </style>
