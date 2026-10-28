@@ -327,9 +327,10 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
           <div class="preview-table-wrap">
             <table class="preview-table">
               <colgroup>
-                <col style="width: 7rem" /><col style="width: 4rem" /><col style="width: 6rem" />
-                <col style="width: 22rem" /><col style="width: 11rem" /><col style="width: 9rem" />
-                <col style="width: 7rem" /><col style="width: 6rem" />
+                <!-- Описание — гибкая колонка: таблица помещается в карточку без горизонтальной прокрутки. -->
+                <col style="width: 6.5rem" /><col style="width: 3.25rem" /><col style="width: 4.75rem" />
+                <col /><col style="width: 10.5rem" /><col style="width: 10rem" />
+                <col style="width: 6.5rem" /><col style="width: 5.75rem" />
               </colgroup>
               <thead>
                 <tr>

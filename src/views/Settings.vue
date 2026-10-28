@@ -588,4 +588,6 @@ onMounted(() => {
 .bitrix-status__dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; background: var(--success); }
 #bitrix .field input { max-width: 36rem; }
 #bitrix .inline-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+#bitrix .checkbox-row-inline { font-size: 0.875rem; margin: 0.25rem 0; }
+#bitrix .bitrix-status { margin-bottom: 0.25rem; }
 </style>
