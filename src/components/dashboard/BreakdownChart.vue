@@ -1,186 +1,109 @@
 <template>
-  <div class="dash-card">
+  <div class="dash-card bdc">
     <div class="dash-card-header">
       <span class="dash-card-title">Разбивка часов</span>
-      <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
-        <div class="dash-tab-group">
-          <button :class="['dash-tab', mode==='project' && 'active']" @click="setMode('project')">Проекты</button>
-          <button :class="['dash-tab', mode==='issue' && 'active']" @click="setMode('issue')">Задачи</button>
-        </div>
-        <div class="dash-tab-group">
-          <button :class="['dash-tab', chartType==='donut' && 'active']" @click="chartType='donut'">Кольцо</button>
-          <button :class="['dash-tab', chartType==='bar' && 'active']" @click="chartType='bar'">Полосы</button>
-        </div>
-        <!-- Компактный диапазон дат в одну строку (без переноса и без раздутых полей) -->
-        <div class="dash-date-range">
-          <DatePicker v-model="from" />
-          <span class="dash-date-range__sep">—</span>
-          <DatePicker v-model="to" />
-        </div>
+      <div class="dash-tab-group">
+        <button :class="['dash-tab', mode === 'project' && 'active']" @click="store.setBreakdownMode('project')">Проекты</button>
+        <button :class="['dash-tab', mode === 'issue' && 'active']" @click="store.setBreakdownMode('issue')">Задачи</button>
       </div>
     </div>
-    <div ref="chartEl" class="dash-chart-area"></div>
+    <div class="bdc__period">
+      <div class="dash-tab-group">
+        <button v-for="p in PRESETS" :key="p.id" :class="['dash-tab', preset === p.id && 'active']" @click="applyPreset(p.id)">{{ p.label }}</button>
+      </div>
+      <div class="dash-date-range">
+        <DatePicker v-model="from" @update:model-value="preset = 'custom'" />
+        <span class="dash-date-range__sep">—</span>
+        <DatePicker v-model="to" @update:model-value="preset = 'custom'" />
+      </div>
+    </div>
+
+    <div v-if="!rows.length" class="bdc__empty">За период списаний нет.</div>
+    <ul v-else class="bdc__list">
+      <li v-for="r in rows" :key="r.key" class="bdc__row" :title="`${r.label}: ${fmtH(r.hours)} ч (${r.share}%)`">
+        <div class="bdc__name">
+          <b>{{ r.key === OTHER ? 'Другие' : mode === 'project' ? r.key : r.key }}</b>
+          <span v-if="r.key !== OTHER && r.title" class="bdc__title">{{ r.title }}</span>
+          <span v-if="r.key === OTHER" class="bdc__title">{{ r.count }} {{ mode === 'project' ? 'проектов' : 'задач' }}</span>
+        </div>
+        <div class="bdc__track"><span class="bdc__fill" :class="{ 'is-other': r.key === OTHER }" :style="{ width: (r.hours / maxHours) * 100 + '%' }"></span></div>
+        <span class="bdc__val">{{ fmtH(r.hours) }} ч</span>
+        <span class="bdc__share">{{ r.share }}%</span>
+      </li>
+    </ul>
+    <div v-if="rows.length" class="bdc__foot">Всего {{ fmtH(total) }} ч за период</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { localIsoDate } from '../../utils/time';
-import { ref, watch, computed, toRef } from 'vue';
+import { computed, ref, watch } from 'vue';
 import DatePicker from '../DatePicker.vue';
-import { PieChart, BarChart } from 'echarts/charts';
-import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components';
-import * as echarts from 'echarts/core';
-import type { EChartsOption } from 'echarts';
-import { CanvasRenderer } from 'echarts/renderers';
-import { useEChart } from '../../composables/useEChart';
 import { useAnalyticsStore } from '../../store/analytics';
-import { useSettingsStore } from '../../store/settings';
-
-echarts.use([PieChart, BarChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer]);
+import { addDaysIso, localIsoDate } from '../../utils/time';
 
 const store = useAnalyticsStore();
-const settings = useSettingsStore();
-const chartEl = ref<HTMLElement | null>(null);
-const { scheduleInit } = useEChart(chartEl, toRef(settings, 'theme'));
+const OTHER = '__other__';
+const TOP = 7;
 
-const mode = ref<'project' | 'issue'>('project');
-const chartType = ref<'donut' | 'bar'>('donut');
+const PRESETS = [
+  { id: 'week', label: 'Неделя', days: 7 },
+  { id: 'month', label: 'Месяц', days: 0 },
+  { id: '30', label: '30 дней', days: 30 },
+  { id: '90', label: '3 мес.', days: 90 },
+] as const;
 
-const now = new Date();
-const defaultFrom = new Date(now); defaultFrom.setDate(now.getDate() - 30);
-const from = ref(localIsoDate(defaultFrom));
-const to   = ref(localIsoDate(now));
-
-function setMode(m: 'project' | 'issue') {
-  mode.value = m;
-  store.setBreakdownMode(m);
+const today = localIsoDate();
+const preset = ref<string>('30');
+const from = ref(addDaysIso(today, -29));
+const to = ref(today);
+function applyPreset(id: string) {
+  preset.value = id;
+  const p = PRESETS.find((x) => x.id === id)!;
+  to.value = today;
+  from.value = p.id === 'month' ? `${today.slice(0, 8)}01` : addDaysIso(today, -(p.days - 1));
 }
-
-const PALETTE = [
-  '#2a62ff', '#1fc3a0', '#ffbc4d', '#ff6b6b', '#a855f7',
-  '#f97316', '#06b6d4', '#84cc16', '#ec4899', '#8b5cf6',
-];
-
-const slices = computed(() => store.breakdownSlices);
-
-function buildOption(): EChartsOption {
-  const isDark = settings.theme === 'dark';
-  const textColor = isDark ? '#c9cdd4' : '#333';
-  const gridColor = isDark ? '#2e3240' : '#e8e8e8';
-  const data = slices.value.slice(0, 15);
-
-  if (chartType.value === 'donut') {
-    return {
-      animation: true,
-      animationDuration: 500,
-      animationEasing: 'cubicOut',
-      backgroundColor: 'transparent',
-      color: PALETTE,
-      tooltip: {
-        trigger: 'item',
-        backgroundColor: isDark ? '#1e2535' : '#fff',
-        borderColor: isDark ? '#2e3a50' : '#d8deea',
-        textStyle: { color: textColor },
-        formatter: (p: any) => `${p.name}: <b>${p.value} ч</b> (${p.percent}%)`,
-      },
-      legend: {
-        type: 'scroll',
-        orient: 'vertical',
-        right: 0,
-        top: 'center',
-        textStyle: { color: textColor, fontSize: 11 },
-        formatter: (name: string) => name.length > 32 ? name.slice(0, 32) + '…' : name,
-      },
-      series: [{
-        type: 'pie',
-        radius: ['42%', '68%'],
-        center: ['38%', '50%'],
-        data: data.map((s, i) => ({
-          value: Math.round(s.hours * 100) / 100,
-          name: s.label,
-          itemStyle: { color: PALETTE[i % PALETTE.length] },
-        })),
-        label: { show: false },
-        emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.2)' } },
-      }],
-    };
-  }
-
-  // Простой горизонтальный bar.
-  // Предыдущая реализация использовала stack + N серий, где каждая
-  // серия содержала массив из N нулей и одного значения — ECharts
-  // рендерил это некорректно. Теперь одна серия с N значениями и N категориями Y.
-  return {
-    animation: true,
-    animationDuration: 400,
-    backgroundColor: 'transparent',
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'shadow' },
-      backgroundColor: isDark ? '#1e2535' : '#fff',
-      borderColor: isDark ? '#2e3a50' : '#d8deea',
-      textStyle: { color: textColor },
-      formatter: (params: any) => {
-        const p = params[0];
-        return `${p.name}: <b>${p.value} ч</b>`;
-      },
-    },
-    grid: { left: 150, right: 50, top: 8, bottom: 24 },
-    xAxis: {
-      type: 'value',
-      axisLabel: { color: textColor, formatter: '{value} ч' },
-      splitLine: { lineStyle: { color: gridColor } },
-    },
-    yAxis: {
-      type: 'category',
-      data: data.map(s => s.label.length > 26 ? s.label.slice(0, 26) + '…' : s.label),
-      axisLabel: { color: textColor, fontSize: 11 },
-      inverse: true,
-    },
-    series: [{
-      type: 'bar',
-      data: data.map((s, i) => ({
-        value: Math.round(s.hours * 100) / 100,
-        itemStyle: { color: PALETTE[i % PALETTE.length], borderRadius: [0, 4, 4, 0] },
-      })),
-      label: {
-        show: true,
-        position: 'right',
-        color: textColor,
-        fontSize: 11,
-        formatter: (p: any) => `${p.value} ч`,
-      },
-    }],
-  };
-}
-
 watch([from, to], () => store.setBreakdownPeriod(from.value, to.value), { immediate: true });
-watch([slices, chartType, () => settings.theme], () => scheduleInit(buildOption()), { immediate: true, deep: true });
+
+const mode = computed(() => store.breakdownMode);
+const total = computed(() => store.breakdownSlices.reduce((s, x) => s + x.hours, 0));
+// Топ-7 + «Другие» — длинный хвост в одну строку, чтобы список оставался читаемым.
+const rows = computed(() => {
+  const all = store.breakdownSlices;
+  const top = all.slice(0, TOP);
+  const rest = all.slice(TOP);
+  const share = (h: number) => (total.value ? Math.round((h / total.value) * 100) : 0);
+  const out = top.map((s) => ({
+    key: s.key, label: s.label, hours: s.hours, share: share(s.hours), count: 1,
+    // Подпись: для проекта — название, для задачи — её summary (label = «KEY — summary»).
+    title: mode.value === 'project' ? (s.label !== s.key ? s.label : '') : s.label.replace(/^[^\s]+ — /, '').replace(s.key, ''),
+  }));
+  if (rest.length) {
+    const h = Math.round(rest.reduce((s, x) => s + x.hours, 0) * 100) / 100;
+    out.push({ key: OTHER, label: 'Другие', hours: h, share: share(h), count: rest.length, title: '' });
+  }
+  return out;
+});
+const maxHours = computed(() => Math.max(0.01, ...rows.value.map((r) => r.hours)));
+const fmtH = (h: number) => (Math.round(h * 10) / 10).toLocaleString('ru-RU');
 </script>
 
 <style scoped>
-/* Компактный однострочный диапазон дат — тот же приём, что и в .filters .dp
-   (src/styles/myWorklog.css): фиксируем ширину триггера и убираем перенос,
-   чтобы «от» и «до» всегда были в одну строку рядом друг с другом. */
-.dash-date-range {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-.dash-date-range :deep(.dp) {
-  flex: 0 0 auto;
-  width: 7.25rem;
-  min-width: 7.25rem;
-}
-.dash-date-range :deep(.dp-trigger) {
-  padding: 0.3rem 0.5rem;
-  font-size: 0.82rem;
-}
-.dash-date-range__sep {
-  font-size: 0.8rem;
-  opacity: 0.6;
-  flex: 0 0 auto;
-}
+.bdc__period { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+/* Компактный однострочный диапазон дат: «от» и «до» рядом, без растягивания. */
+.dash-date-range { display: flex; align-items: center; gap: 0.35rem; flex: 0 0 auto; white-space: nowrap; }
+.dash-date-range :deep(.dp) { flex: 0 0 auto; width: 7.25rem; min-width: 7.25rem; }
+.dash-date-range :deep(.dp-trigger) { padding: 0.3rem 0.5rem; font-size: 0.82rem; }
+.dash-date-range__sep { font-size: 0.8rem; opacity: 0.6; flex: 0 0 auto; }
+.bdc__empty { color: var(--muted); font-size: 0.875rem; padding: 1.5rem 0; text-align: center; }
+.bdc__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.bdc__row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 3.75rem 2.5rem; gap: 0.625rem; align-items: center; font-size: 0.8125rem; }
+.bdc__name { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.bdc__name b { font-weight: 600; }
+.bdc__title { font-size: 0.6875rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bdc__track { height: 0.75rem; border-radius: 4px; background: color-mix(in srgb, var(--chip) 70%, transparent); overflow: hidden; }
+.bdc__fill { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--primary); transition: width 220ms ease; }
+.bdc__fill.is-other { background: color-mix(in srgb, var(--muted) 55%, transparent); }
+.bdc__val { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bdc__share { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bdc__foot { font-size: 0.75rem; color: var(--muted); }
 </style>

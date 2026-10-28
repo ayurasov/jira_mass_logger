@@ -51,6 +51,11 @@ const router = createRouter({
           component: () => import('../views/JiraDigest.vue'),
         },
         {
+          path: 'bitrix',
+          name: 'bitrix',
+          component: () => import('../views/BitrixTasks.vue'),
+        },
+        {
           path: 'team',
           name: 'team',
           component: () => import('../views/TeamWorklogs.vue'),

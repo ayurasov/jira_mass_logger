@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 import { useAnalyticsStore } from '../store/analytics';
+import { useComposeStore } from '../store/compose';
+import TodayCard from '../components/dashboard/TodayCard.vue';
+import KpiTiles from '../components/dashboard/KpiTiles.vue';
 import WeekHoursChart from '../components/dashboard/WeekHoursChart.vue';
 import BreakdownChart from '../components/dashboard/BreakdownChart.vue';
 import WorklogHeatmap from '../components/dashboard/WorklogHeatmap.vue';
@@ -10,13 +13,12 @@ import TopTasksList from '../components/dashboard/TopTasksList.vue';
 import ActionIcon from '../components/ActionIcon.vue';
 
 const store = useAnalyticsStore();
+const compose = useComposeStore();
 
 const lastRefresh = computed(() => {
   if (!store.lastFetched) return 'никогда';
   return new Date(store.lastFetched).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 });
-
-const weekMode = ref<'current' | 'previous'>('current');
 
 async function refresh() {
   // Принудительная синхронизация с Jira + обновление кэша
@@ -24,10 +26,13 @@ async function refresh() {
 }
 
 onMounted(async () => {
-  // При открытии дашборда: сначала показываем кэш (fetchAll),
-  // затем тихо подтягиваем свежие данные из Jira за 3 месяца (syncFromJira).
-  // syncFromJira вызывает fetchAll внутри себя, поэтому двойного запроса нет.
+  // Кэш показывается сразу, свежие данные из Jira подтягиваются не чаще раза в 10 минут.
   await store.syncFromJira();
+});
+
+// Заполнили «одним нажатием» или отменили — цифры дашборда обновляются из кэша сразу.
+watch(() => [compose.batch.running, compose.undoing], ([running, undoing], prev) => {
+  if (!running && !undoing && (prev?.[0] || prev?.[1])) store.fetchAll();
 });
 </script>
 
@@ -35,7 +40,7 @@ onMounted(async () => {
   <div class="analytics-page">
     <!-- ─── Header ─── -->
     <div class="analytics-header">
-      <h1>Аналитика</h1>
+      <h1>Дашборд</h1>
       <span class="muted-text">Обновлено: {{ lastRefresh }}</span>
       <span v-if="store.syncing" class="muted-text sync-hint">
         <ActionIcon name="refresh" :size="12" class="spin" /> Синхронизация с Jira…
@@ -56,28 +61,25 @@ onMounted(async () => {
       </div>
     </template>
 
-    <!-- ─── Bento-сетка ─── -->
     <template v-else>
       <div class="analytics-grid">
-        <!-- 1. Диаграмма часов по дням, сравнение план/факт -->
-        <WeekHoursChart
-          class="span-2"
-          :mode="weekMode"
-          @update:mode="weekMode = $event"
-        />
+        <!-- 1. Сегодня + пропуски: главное действие дня -->
+        <TodayCard class="span-2" />
+        <MissingDaysList class="span-2" />
 
-        <!-- 2. Разбивка часов по задачам/проектам -->
+        <!-- 2. Итоги периода -->
+        <KpiTiles />
+
+        <!-- 3. Неделя по дням и разбивка по проектам/задачам -->
+        <WeekHoursChart class="span-2" />
         <BreakdownChart class="span-2" />
 
-        <!-- 3. Calendar heatmap — последние 3 месяца -->
+        <!-- 4. Заполненность за 3 месяца -->
         <WorklogHeatmap class="span-full" />
 
-        <!-- Ряд из трёх виджетов на всю ширину -->
-        <div class="widgets-row">
-          <MissingDaysList />
-          <TopTasksList />
-          <BulkSavingMetric />
-        </div>
+        <!-- 5. Топ задач и экономия времени -->
+        <TopTasksList class="span-2" />
+        <BulkSavingMetric class="span-2" />
       </div>
     </template>
 

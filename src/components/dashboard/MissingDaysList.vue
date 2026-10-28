@@ -1,34 +1,35 @@
 <template>
   <div class="dash-card">
     <div class="dash-card-header">
-      <span class="dash-card-title">Недозаполненные дни &mdash; {{ currentMonthLabel }}</span>
+      <span class="dash-card-title">Пропуски за 30 дней</span>
       <span class="dash-badge" :data-variant="days.length === 0 ? 'success' : 'warning'">
-        <template v-if="days.length === 0"><ActionIcon name="check-circle" :size="12" /> Всё заполнено</template><template v-else>{{ days.length }} дн. с дефицитом</template>
+        <template v-if="days.length === 0"><ActionIcon name="check-circle" :size="12" /> Всё заполнено</template>
+        <template v-else>{{ days.length }} дн. · не хватает {{ fmtH(totalDeficit) }} ч</template>
       </span>
     </div>
 
     <div v-if="days.length === 0" class="missing-empty">
-      <span class="missing-empty__inner"><ActionIcon name="sparkles" :size="14" /> У вас нет пропущенных дней в этом месяце!</span>
+      <span class="missing-empty__inner"><ActionIcon name="sparkles" :size="14" /> За последние 30 дней все рабочие дни заполнены.</span>
     </div>
 
-    <ul v-else class="missing-list">
-      <li
-        v-for="d in days"
-        :key="d.date"
-        class="missing-item missing-item--clickable"
-        @click="goToWorklog(d.date)"
-        title="Открыть день в Моём worklog"
-      >
-        <span class="missing-date">{{ formatDate(d.date) }}</span>
-        <span class="missing-hours" :data-ok="d.hours > 0">
-          {{ d.hours > 0 ? d.hours + ' ч' : 'Нет записей' }}
-        </span>
-        <span class="missing-deficit">-{{ d.deficit }} ч</span>
-        <button class="dash-quick-btn" @click.stop="goToWizard(d.date)" title="Быстрый переход в булк-мастер">
-          ↗️ Создать
-        </button>
-      </li>
-    </ul>
+    <template v-else>
+      <ul class="missing-list">
+        <li
+          v-for="d in days" :key="d.date" class="missing-item missing-item--clickable"
+          title="Открыть день в «Собрать день»" @click="goToCompose(d.date)"
+        >
+          <span class="missing-date">{{ formatDate(d.date) }}</span>
+          <span class="missing-hours">{{ d.hours > 0 ? fmtH(d.hours) + ' ч' : 'нет записей' }}</span>
+          <span class="missing-deficit">−{{ fmtH(d.deficit) }} ч</span>
+          <button class="dash-quick-btn" title="Открыть день в «Собрать день»" @click.stop="goToCompose(d.date)">Собрать</button>
+        </li>
+      </ul>
+      <OneClickFill
+        :dates="days.map((d) => d.date)" compact
+        :label="`Заполнить все · ${days.length} дн. одним нажатием`"
+        @open-day="goToCompose"
+      />
+    </template>
   </div>
 </template>
 
@@ -37,31 +38,23 @@ import { parseIsoDate } from '../../utils/time';
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import ActionIcon from '../ActionIcon.vue';
+import OneClickFill from '../OneClickFill.vue';
 import { useAnalyticsStore } from '../../store/analytics';
 
 const store = useAnalyticsStore();
 const router = useRouter();
 
-const days = computed(() => store.missingDays);
-
-const currentMonthLabel = computed(() => {
-  const now = new Date();
-  return now.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
-});
+// Новые сверху — свежие пропуски важнее.
+const days = computed(() => [...store.missingDays].reverse());
+const totalDeficit = computed(() => days.value.reduce((s, d) => s + d.deficit, 0));
+const fmtH = (h: number) => (Math.round(h * 10) / 10).toLocaleString('ru-RU');
 
 function formatDate(d: string) {
   return parseIsoDate(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', weekday: 'short' });
 }
 
-function goToWizard(date: string) {
-  // переходим в булк-мастер с предзаполненной датой
-  // route name: 'bulk' (см. src/router/index.ts)
-  router.push({ name: 'bulk', query: { date } });
-}
-
-function goToWorklog(date: string) {
-  // открываем Мой worklog на выбранном дне
-  router.push({ name: 'worklog', query: { from: date, to: date } });
+function goToCompose(date: string) {
+  router.push({ name: 'compose', query: { date } });
 }
 </script>
 
@@ -79,7 +72,7 @@ function goToWorklog(date: string) {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  max-height: 18rem;
+  max-height: 15rem;
   overflow-y: auto;
 }
 .missing-item {

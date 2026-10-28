@@ -11,6 +11,7 @@ import { useRoute } from 'vue-router';
 import AppLogo from './AppLogo.vue';
 import NavIcon, { type NavIconName } from './NavIcon.vue';
 import ActionIcon from './ActionIcon.vue';
+import { useBitrixStore } from '../store/bitrix';
 
 interface NavItem {
   name: string;
@@ -27,6 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { name: 'compose', label: 'Собрать день', icon: 'compose', hotkey: 'Ctrl+D' },
   { name: 'team', label: 'Команда', icon: 'team', hotkey: 'Ctrl+T' },
   { name: 'digest', label: 'Дайджест', icon: 'digest', hotkey: 'Ctrl+J' },
+  { name: 'bitrix', label: 'Битрикс24', icon: 'bitrix', hotkey: 'Ctrl+B' },
   { name: 'templates', label: 'Шаблоны', icon: 'templates' },
   { name: 'profiles', label: 'Профили', icon: 'profiles' },
   { name: 'logs', label: 'Логи', icon: 'logs', hotkey: 'F1' },
@@ -34,6 +36,9 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 const route = useRoute();
+const bitrix = useBitrixStore();
+// «Битрикс24» — необязательный раздел: в меню, только если подключён и включён.
+const navItems = computed(() => NAV_ITEMS.filter((i) => i.name !== 'bitrix' || (bitrix.settings.enabled && bitrix.connected)));
 const collapsed = ref<boolean>(localStorage.getItem('jiratime-sidebar-collapsed') === 'true');
 
 function toggleCollapsed() {
@@ -71,7 +76,7 @@ onMounted(() => {
 
       <nav class="sidebar-nav" aria-label="Навигация по экранам">
         <router-link
-          v-for="item in NAV_ITEMS"
+          v-for="item in navItems"
           :key="item.name"
           :to="{ name: item.name }"
           class="nav-item"

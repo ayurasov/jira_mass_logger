@@ -10,10 +10,11 @@ import { useJiraProfilesStore } from './jiraProfiles';
 import { useSettingsStore } from './settings';
 import { useDayFromCalendarStore } from './dayFromCalendar';
 import { useAnalyticsStore } from './analytics';
+import { useFavoriteTasksStore } from './favoriteTasks';
 import { addDaysIso, formatJiraStarted, jiraStartedFromLocal, localIsoDate, zonedDayBounds } from '../utils/time';
 import { datesInRange, isWorkingDay } from '../utils/worklogChecks';
 import {
-  buildPlan, commentSuggestions, findHabits, hhmmToMinutes, minutesToHHMM, startMinutesOf, unfilledDays,
+  buildPlan, commentSuggestions, findHabits, findOverlaps, hhmmToMinutes, minutesToHHMM, startMinutesOf, unfilledDays,
   type ComposeOptions, type ComposerMeeting, type HabitTask, type ProposalItem,
 } from '../utils/dayComposer';
 
@@ -46,6 +47,34 @@ function loadPrefs(): ComposePrefs {
 
 let seq = 0;
 let manualSeq = 0;
+/** История окна уже подтягивалась из Jira в этом сеансе — повторно не ходим. */
+const historyRefreshed = new Set<string>();
+const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
+
+/** Всё, что нужно для сборки одного дня. */
+interface DayContext {
+  existing: CachedWorklogRow[];
+  history: CachedWorklogRow[];
+  habits: HabitTask[];
+  meetings: ComposerMeeting[];
+  meetingsNote: string;
+  /** Привычных задач по истории нет — подставлена избранная задача. */
+  favoriteFallback: boolean;
+}
+
+/** Результат заполнения одного дня в пакетном режиме. */
+export interface FillDayResult {
+  date: string;
+  ok: boolean;
+  /** Сколько минут залогировано. */
+  minutes: number;
+  entries: number;
+  /** Почему день пропущен или что пошло не так. */
+  message: string;
+}
+
+/** Созданная запись — для «Отменить». */
+interface CreatedWorklog { issueKey: string; worklogId: string | null; rowKey: string }
 
 export const useComposeStore = defineStore('compose', {
   state: () => ({
@@ -70,6 +99,18 @@ export const useComposeStore = defineStore('compose', {
     error: null as string | null,
     submitMessage: null as { ok: boolean; text: string } | null,
     rowErrors: {} as Record<string, string>,
+    /** Пакетное заполнение («одним нажатием»): прогресс и итог. */
+    batch: {
+      running: false,
+      total: 0,
+      done: 0,
+      current: '' as string,
+      results: [] as FillDayResult[],
+    },
+    /** Записи последнего пакетного заполнения — их можно отменить одним нажатием. */
+    lastBatchCreated: [] as CreatedWorklog[],
+    undoing: false,
+    favoriteFallback: false,
   }),
 
   getters: {
@@ -131,27 +172,14 @@ export const useComposeStore = defineStore('compose', {
       this.dismissedKeys = [];
       this.dismissedMeetings = [];
       try {
-        const jp = useJiraProfilesStore();
-        await jp.ensureLoaded();
-        // Свежие данные дня из Jira (best-effort): чтобы «уже заполнено» было точным.
-        if (refreshDay && jp.activeConnectionParams) {
-          await useDayFromCalendarStore().refreshRangeFromJira(date, date).catch(() => {});
-        }
-        const { from, to } = this.historyRange();
-        const [existing, history] = await Promise.all([
-          tauriApi.listCachedWorklogs(date, date),
-          tauriApi.listCachedWorklogs(from, to),
-        ]);
+        const ctx = await this.dayContext(date, refreshDay);
         if (token !== seq) return;
-        this.existing = existing.sort((a, b) => a.started.localeCompare(b.started));
-        this.history = history;
-
-        const holidays = new Set(settings.holidays.map((h) => h.date));
-        const workdays = datesInRange(from, to).filter((d) => isWorkingDay(d, { workdays: settings.workdays, holidays }));
-        this.habits = findHabits(history, workdays, date);
-
-        this.meetings = this.prefs.useMeetings ? await this.loadMeetings(date) : [];
-        if (token !== seq) return;
+        this.existing = ctx.existing;
+        this.history = ctx.history;
+        this.habits = ctx.habits;
+        this.meetings = ctx.meetings;
+        this.meetingsNote = ctx.meetingsNote;
+        this.favoriteFallback = ctx.favoriteFallback;
         this.rebuild();
         this.refreshUnfilled().catch(() => {});
       } catch (e) {
@@ -161,12 +189,62 @@ export const useComposeStore = defineStore('compose', {
       }
     },
 
+    /**
+     * Данные для сборки дня, без изменения состояния экрана (используется и пакетным
+     * заполнением): уже залогированное, история окна, привычные задачи, встречи.
+     */
+    async dayContext(date: string, refreshDay: boolean): Promise<DayContext> {
+      const settings = useSettingsStore();
+      const jp = useJiraProfilesStore();
+      await jp.ensureLoaded();
+      // Свежие данные дня из Jira (best-effort): чтобы «уже заполнено» было точным.
+      if (refreshDay && jp.activeConnectionParams) {
+        await useDayFromCalendarStore().refreshRangeFromJira(date, date).catch(() => {});
+      }
+      const historyWeeks = this.prefs.historyWeeks;
+      const from = addDaysIso(date, -7 * historyWeeks);
+      const to = addDaysIso(date, -1);
+      let [existing, history] = await Promise.all([
+        tauriApi.listCachedWorklogs(date, date),
+        tauriApi.listCachedWorklogs(from, to),
+      ]);
+      // Истории в кэше нет (новая установка, долго не открывали дашборд) — один раз за сеанс
+      // подтягиваем окно из Jira, иначе привычных задач не будет и день не соберётся до нормы.
+      const windowKey = `${from}..${to}`;
+      if (history.length < 3 && jp.activeConnectionParams && !historyRefreshed.has(windowKey)) {
+        historyRefreshed.add(windowKey);
+        await useDayFromCalendarStore().refreshRangeFromJira(from, to).catch(() => {});
+        history = await tauriApi.listCachedWorklogs(from, to);
+      }
+      existing = existing.sort((a, b) => a.started.localeCompare(b.started));
+
+      const holidays = new Set(settings.holidays.map((h) => h.date));
+      const workdays = datesInRange(from, to).filter((d) => isWorkingDay(d, { workdays: settings.workdays, holidays }));
+      let habits = findHabits(history, workdays, date);
+      // Истории нет и в Jira — берём избранную задачу (её видно и можно поменять на экране).
+      let favoriteFallback = false;
+      if (!habits.length) {
+        const fav = useFavoriteTasksStore().items[0];
+        if (fav) {
+          favoriteFallback = true;
+          habits = [{
+            issueKey: fav.issueKey, issueSummary: fav.issueSummary ?? null, frequency: 0, sameWeekdayFrequency: 0,
+            typicalMinutes: 60, typicalStart: hhmmToMinutes(this.prefs.dayStart), typicalComment: fav.issueSummary ?? '',
+            daysSeen: 0, score: 0,
+          }];
+        }
+      }
+      let meetings: ComposerMeeting[] = [];
+      let meetingsNote = '';
+      if (this.prefs.useMeetings) ({ meetings, note: meetingsNote } = await this.loadMeetings(date, habits));
+      return { existing, history, habits, meetings, meetingsNote, favoriteFallback };
+    },
+
     /** Встречи дня с подобранной задачей (без активного Exchange — пусто, без ошибки). */
-    async loadMeetings(date: string): Promise<ComposerMeeting[]> {
-      this.meetingsNote = '';
+    async loadMeetings(date: string, habits: HabitTask[]): Promise<{ meetings: ComposerMeeting[]; note: string }> {
       try {
         const profile = (await tauriApi.listExchangeProfiles()).find((p) => p.isActive);
-        if (!profile) { this.meetingsNote = 'Календарь не подключён — предлагаются только привычные задачи.'; return []; }
+        if (!profile) return { meetings: [], note: 'Календарь не подключён — предлагаются только привычные задачи.' };
         const tz = useSettingsStore().timezone;
         const bounds = zonedDayBounds(date, tz);
         const events = await tauriApi.getCalendarEvents(tauriApi.profileToConnectionParams(profile), bounds.from, bounds.to, false);
@@ -174,8 +252,8 @@ export const useComposeStore = defineStore('compose', {
         // иначе самая привычная задача — чтобы день собирался без ручного выбора.
         const meetingHistory = await tauriApi.getMeetingIssueHistory().catch(() => []);
         const fallback = [...meetingHistory].sort((a, b) => b.useCount - a.useCount)[0];
-        const fallbackKey = fallback?.issueKey ?? this.habits[0]?.issueKey ?? null;
-        const fallbackSummary = fallback?.issueSummary ?? this.habits[0]?.issueSummary ?? null;
+        const fallbackKey = fallback?.issueKey ?? habits[0]?.issueKey ?? null;
+        const fallbackSummary = fallback?.issueSummary ?? habits[0]?.issueSummary ?? null;
         const out: ComposerMeeting[] = [];
         let guessed = 0;
         for (const ev of events) {
@@ -189,11 +267,10 @@ export const useComposeStore = defineStore('compose', {
             guessed: !s.issueKey,
           });
         }
-        if (guessed) this.meetingsNote = `${guessed} встреч(и) без правила — подставлена задача ${fallbackKey}; проверьте отмеченные строки.`;
-        return out;
+        const note = guessed ? `${guessed} встреч(и) без правила — подставлена задача ${fallbackKey}; проверьте отмеченные строки.` : '';
+        return { meetings: out, note };
       } catch (e) {
-        this.meetingsNote = `Календарь недоступен: ${e instanceof Error ? e.message : e}`;
-        return [];
+        return { meetings: [], note: `Календарь недоступен: ${e instanceof Error ? e.message : e}` };
       }
     },
 
@@ -325,45 +402,57 @@ export const useComposeStore = defineStore('compose', {
       }
     },
 
-    async submit(): Promise<BulkResultItem[]> {
+    /**
+     * Отправка строк дня в Jira + запись успешных в локальный кэш.
+     * Возвращает результаты по строкам и созданные записи (для «Отменить»).
+     */
+    async sendRows(date: string, rows: ProposalItem[]): Promise<{ results: BulkResultItem[]; created: CreatedWorklog[] }> {
       const jp = useJiraProfilesStore();
       await jp.ensureLoaded();
       const params = jp.activeConnectionParams;
       if (!params) throw new Error('Нет активного профиля Jira');
       const tz = useSettingsStore().timezone;
+      const entries = rows.map((p) => ({
+        issueKey: p.issueKey.trim().toUpperCase(),
+        startedAt: jiraStartedFromLocal(date, minutesToHHMM(p.start), tz),
+        timeSpentSeconds: Math.round(p.minutes * 60),
+        comment: p.comment || null,
+      }));
+      const results = await tauriApi.bulkAddWorklogs(params, entries);
+      const created: CreatedWorklog[] = [];
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const p = rows[i];
+        const e = entries[i];
+        if (!p || !r.success) continue;
+        const rowKey = r.worklogId ? `wl:${r.worklogId}` : `local:${e.issueKey}:${e.startedAt}:${p.id}`;
+        created.push({ issueKey: e.issueKey, worklogId: r.worklogId ?? null, rowKey });
+        await tauriApi.upsertCachedWorklog({
+          rowKey, worklogId: r.worklogId ?? null, issueKey: e.issueKey, issueSummary: p.issueSummary,
+          projectKey: e.issueKey.split('-')[0] ?? null, started: e.startedAt,
+          timeSpentSeconds: e.timeSpentSeconds, comment: e.comment, updated: null,
+          syncedAt: new Date().toISOString(),
+        }).catch(() => {});
+      }
+      if (created.length) useAnalyticsStore().trackBulkEntries(created.length);
+      return { results, created };
+    },
+
+    async submit(): Promise<BulkResultItem[]> {
       const rows = this.proposal.filter((p) => p.issueKey.trim() && p.minutes > 0);
       if (!rows.length) return [];
       this.submitting = true;
       this.submitMessage = null;
       this.rowErrors = {};
       try {
-        const entries = rows.map((p) => ({
-          issueKey: p.issueKey.trim().toUpperCase(),
-          startedAt: jiraStartedFromLocal(this.date, minutesToHHMM(p.start), tz),
-          timeSpentSeconds: Math.round(p.minutes * 60),
-          comment: p.comment || null,
-        }));
-        const results = await tauriApi.bulkAddWorklogs(params, entries);
+        const { results } = await this.sendRows(this.date, rows);
         const okIds = new Set<string>();
         for (let i = 0; i < results.length; i++) {
-          const r = results[i];
           const p = rows[i];
-          const e = entries[i];
           if (!p) continue;
-          if (r.success) {
-            okIds.add(p.id);
-            await tauriApi.upsertCachedWorklog({
-              rowKey: r.worklogId ? `wl:${r.worklogId}` : `local:${e.issueKey}:${e.startedAt}:${p.id}`,
-              worklogId: r.worklogId ?? null, issueKey: e.issueKey, issueSummary: p.issueSummary,
-              projectKey: e.issueKey.split('-')[0] ?? null, started: e.startedAt,
-              timeSpentSeconds: e.timeSpentSeconds, comment: e.comment, updated: null,
-              syncedAt: new Date().toISOString(),
-            }).catch(() => {});
-          } else {
-            this.rowErrors[p.id] = r.error ?? 'Ошибка Jira';
-          }
+          if (results[i].success) okIds.add(p.id);
+          else this.rowErrors[p.id] = results[i].error ?? 'Ошибка Jira';
         }
-        if (okIds.size) useAnalyticsStore().trackBulkEntries(okIds.size);
         this.existing = (await tauriApi.listCachedWorklogs(this.date, this.date)).sort((a, b) => a.started.localeCompare(b.started));
         // Отправленное стало «уже залогированным»; неотправленные строки остаются правками.
         const failedRows = rows.filter((p) => !okIds.has(p.id));
@@ -377,6 +466,110 @@ export const useComposeStore = defineStore('compose', {
         return results;
       } finally {
         this.submitting = false;
+      }
+    },
+
+    /**
+     * План дня «как есть», без правок: то, что отправит «одним нажатием».
+     * Возвращает строки и причину, по которой день отправлять нельзя (если есть).
+     */
+    async autoPlan(date: string, refreshDay: boolean): Promise<{ rows: ProposalItem[]; filledMinutes: number; problem: string | null; note: string }> {
+      const settings = useSettingsStore();
+      const target = Math.round((settings.workdayHours || 8) * 60 / 15) * 15;
+      const ctx = await this.dayContext(date, refreshDay);
+      const filledMinutes = Math.round(ctx.existing.reduce((s, w) => s + w.timeSpentSeconds, 0) / 60);
+      const opts: ComposeOptions = { ...this.composeOptions, date, targetHours: target / 60 };
+      const rows = buildPlan({
+        existing: ctx.existing, meetings: ctx.meetings, habits: ctx.habits, opts,
+        userItems: [], dismissedKeys: new Set(), dismissedMeetings: new Set(),
+      }).filter((p) => p.minutes > 0);
+      const proposed = rows.reduce((s, p) => s + p.minutes, 0);
+      const holidays = new Set(settings.holidays.map((h) => h.date));
+      let problem: string | null = null;
+      if (!isWorkingDay(date, { workdays: settings.workdays, holidays })) problem = 'нерабочий день';
+      else if (filledMinutes >= target - 5) problem = 'уже заполнен';
+      else if (ctx.favoriteFallback) problem = 'нет истории привычных задач — откройте день и выберите задачи';
+      else if (!rows.length) problem = 'не из чего собрать: нет привычных задач и встреч';
+      else if (Math.abs(filledMinutes + proposed - target) > 5) problem = `собирается ${Math.round((filledMinutes + proposed) / 6) / 10} ч из ${target / 60} — проверьте день вручную`;
+      else if (rows.some((p) => !ISSUE_KEY_RE.test(p.issueKey.trim().toUpperCase()))) problem = 'есть строки без задачи';
+      else if (findOverlaps(rows, ctx.existing).size) problem = 'записи пересекаются по времени — проверьте день вручную';
+      const guessed = rows.filter((p) => p.guessed).length;
+      const note = guessed ? `${guessed} встреч(и) с задачей по умолчанию` : '';
+      return { rows, filledMinutes, problem, note };
+    },
+
+    /**
+     * «Одним нажатием»: собирает и отправляет каждый день из списка (по возрастанию дат).
+     * Дни, которые нельзя заполнить автоматически, пропускаются с причиной.
+     */
+    async fillDays(dates: string[]): Promise<FillDayResult[]> {
+      if (this.batch.running) return [];
+      const sorted = [...new Set(dates)].sort();
+      if (!sorted.length) return [];
+      this.batch = { running: true, total: sorted.length, done: 0, current: '', results: [] };
+      this.lastBatchCreated = [];
+      try {
+        // Свежее состояние всех дней одним запросом — «уже заполнено» должно быть точным.
+        await useDayFromCalendarStore().refreshRangeFromJira(sorted[0], sorted[sorted.length - 1]).catch(() => {});
+        for (const date of sorted) {
+          this.batch.current = date;
+          let res: FillDayResult;
+          try {
+            const plan = await this.autoPlan(date, false);
+            if (plan.problem) {
+              res = { date, ok: false, minutes: 0, entries: 0, message: plan.problem };
+            } else {
+              const { results, created } = await this.sendRows(date, plan.rows);
+              this.lastBatchCreated.push(...created);
+              const failed = results.filter((r) => !r.success);
+              const minutes = plan.rows.filter((_, i) => results[i]?.success).reduce((s, p) => s + p.minutes, 0);
+              res = failed.length
+                ? { date, ok: false, minutes, entries: created.length, message: `ошибка Jira: ${failed[0].error ?? 'не удалось создать запись'}` }
+                : { date, ok: true, minutes, entries: created.length, message: plan.note };
+            }
+          } catch (e) {
+            res = { date, ok: false, minutes: 0, entries: 0, message: e instanceof Error ? e.message : String(e) };
+          }
+          this.batch.results.push(res);
+          this.batch.done++;
+        }
+        await this.refreshUnfilled().catch(() => {});
+        // Если открыт один из заполненных дней — показываем его актуальным.
+        if (sorted.includes(this.date)) await this.load(this.date, false);
+        return this.batch.results;
+      } finally {
+        this.batch.running = false;
+        this.batch.current = '';
+      }
+    },
+
+    /** Отменяет последнее пакетное заполнение: удаляет созданные записи в Jira и кэше. */
+    async undoLastBatch(): Promise<{ removed: number; failed: number }> {
+      const jp = useJiraProfilesStore();
+      await jp.ensureLoaded();
+      const params = jp.activeConnectionParams;
+      if (!params || !this.lastBatchCreated.length) return { removed: 0, failed: 0 };
+      this.undoing = true;
+      let removed = 0;
+      let failed = 0;
+      try {
+        const left: CreatedWorklog[] = [];
+        for (const c of this.lastBatchCreated) {
+          try {
+            if (c.worklogId) await tauriApi.deleteWorklog(params, c.issueKey, c.worklogId, null);
+            await tauriApi.deleteCachedWorklog(c.rowKey).catch(() => {});
+            removed++;
+          } catch {
+            failed++;
+            left.push(c);
+          }
+        }
+        this.lastBatchCreated = left;
+        await this.refreshUnfilled().catch(() => {});
+        await this.load(this.date, false);
+        return { removed, failed };
+      } finally {
+        this.undoing = false;
       }
     },
   },

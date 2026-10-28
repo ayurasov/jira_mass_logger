@@ -8,6 +8,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
  * Ctrl+N  — быстрое открытие мастера массового трекинга (route: bulk)
  * Ctrl+L  — переход на страницу «Мой worklog» (route: worklog)
  * Ctrl+,  — переход в настройки (route: settings)
+ * Ctrl+B  — «Битрикс24» (route: bitrix)
  * Ctrl+M  — свернуть в системный трей
  * F1      — экран логов (route: logs)
  * Enter   — сабмит inline-редактирование (обрабатывается каждым компонентом самостоятельно)
@@ -66,6 +67,13 @@ export function useHotkeys() {
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyT') {
       e.preventDefault();
       await router.push({ name: 'team' });
+      return;
+    }
+
+    // Ctrl+B — «Битрикс24» (если раздел включён: иначе маршрут покажет, как подключить)
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyB') {
+      e.preventDefault();
+      await router.push({ name: 'bitrix' });
       return;
     }
 

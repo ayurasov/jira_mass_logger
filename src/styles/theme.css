@@ -323,7 +323,9 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--primary); outli
 .preview-table { width: 100%; min-width: 64rem; border-collapse: collapse; }
 .preview-table th,
 .preview-table td { border-bottom: 1px solid var(--border); padding: 0.875rem; vertical-align: top; font-size: 0.95rem; }
-.bulk-wizard-page .preview-table { min-width: 76rem; table-layout: fixed; }
+.bulk-wizard-page .preview-table { min-width: 56rem; table-layout: fixed; }
+.bulk-wizard-page .preview-table th,
+.bulk-wizard-page .preview-table td { padding: 0.6rem 0.55rem; }
 .bulk-wizard-page .preview-table th,
 .bulk-wizard-page .preview-table td { vertical-align: middle; }
 .preview-table th { position: sticky; top: 0; background: var(--chip); text-align: left; z-index: 1; }
