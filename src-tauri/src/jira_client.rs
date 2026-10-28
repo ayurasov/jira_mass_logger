@@ -223,7 +223,7 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
 ///   * `host:port` — один прокси для всех протоколов;
 ///   * `http=h1:p1;https=h2:p2;ftp=...` — по протоколам (берём https, затем http).
 #[cfg(target_os = "windows")]
-fn read_windows_system_proxy() -> Option<String> {
+pub(crate) fn read_windows_system_proxy() -> Option<String> {
     const KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
     if crate::win_registry::hkcu_dword(KEY, "ProxyEnable").unwrap_or(0) != 1 {
@@ -266,11 +266,11 @@ fn normalize_proxy_server(raw: &str) -> Option<String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn read_windows_system_proxy() -> Option<String> {
+pub(crate) fn read_windows_system_proxy() -> Option<String> {
     None
 }
 
-fn get_secret(secret_ref: &str) -> Result<String, JiraError> {
+pub(crate) fn get_secret(secret_ref: &str) -> Result<String, JiraError> {
     // Test-only escape-hatch: в sandbox-среде без keyring интеграционные тесты могут
     // подставить секрет через переменную окружения. Компилируется ТОЛЬКО в test-сборке
     // (#[cfg(test)]) — в production-бинарнике этот код вообще отсутствует, поэтому нельзя

@@ -106,6 +106,19 @@ export interface GraphAuthCompleteResult {
 }
 
 export interface ProjectDto { id: string; key: string; name: string; }
+// ── Битрикс24 (необязательная интеграция) ──
+export interface BitrixUser { id: string; name: string; portal: string; }
+export interface BitrixTask {
+  id: string; title: string; status: string; deadline?: string | null; changed?: string | null; created?: string | null;
+  priority?: string | null; responsibleId?: string | null; responsibleName?: string | null; creatorId?: string | null;
+  creatorName?: string | null; groupName?: string | null; auditors: string[]; accomplices: string[]; description?: string | null;
+}
+export interface BitrixTaskPage { tasks: BitrixTask[]; total: number; next?: number | null; }
+export interface BitrixComment { id: string; authorId?: string | null; authorName?: string | null; text: string; created?: string | null; isResult: boolean; }
+export interface BitrixTaskDetail { task: BitrixTask; comments: BitrixComment[]; warnings: string[]; }
+export interface BitrixCommentResult { commentId: string; resultAdded: boolean; resultError?: string | null; }
+export type BitrixRole = 'all' | 'responsible' | 'auditor' | 'accomplice' | 'originator';
+export type BitrixStatusFilter = 'active' | 'done' | 'all';
 /** Сохранённый фильтр Jira. */
 export interface JiraFilterDto { id: string; name: string; jql: string; ownerName?: string | null; favourite: boolean; mine: boolean; }
 export interface IssueDto { id: string; key: string; summary?: string | null; }
@@ -272,6 +285,17 @@ export const tauriApi = {
   // --- Jira: справочники и поиск ---
   getProjects(params: JiraConnectionParams) { return invoke<ProjectDto[]>('get_projects', { params }); },
   getJiraFilters(params: JiraConnectionParams) { return invoke<JiraFilterDto[]>('get_jira_filters', { params }); },
+  // --- Битрикс24 ---
+  saveSecret(secretRef: string, value: string) { return invoke<void>('save_secret', { secretRef, value }); },
+  deleteSecret(secretRef: string) { return invoke<void>('delete_secret', { secretRef }); },
+  bitrixTest(secretRef: string) { return invoke<BitrixUser>('bitrix_test', { secretRef }); },
+  bitrixListTasks(secretRef: string, role: BitrixRole, status: BitrixStatusFilter, search: string | null, start: number) {
+    return invoke<BitrixTaskPage>('bitrix_list_tasks', { secretRef, role, status, search, start });
+  },
+  bitrixGetTask(secretRef: string, taskId: string) { return invoke<BitrixTaskDetail>('bitrix_get_task', { secretRef, taskId }); },
+  bitrixAddComment(secretRef: string, taskId: string, text: string, asResult: boolean) {
+    return invoke<BitrixCommentResult>('bitrix_add_comment', { secretRef, taskId, text, asResult });
+  },
   getIssuesByJql(params: JiraConnectionParams, jql: string) { return invoke<IssueDto[]>('get_issues_by_jql', { params, jql }); },
 
   // --- Exchange / Outlook: profile CRUD ---

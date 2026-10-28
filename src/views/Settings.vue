@@ -158,6 +158,47 @@
       </div>
     </section>
 
+    <!-- ──────────── Битрикс24 (необязательно) ──────────── -->
+    <section id="bitrix" class="settings-card">
+      <div class="card-header">
+        <h3>Битрикс24 <span class="optional-tag">необязательно</span></h3>
+      </div>
+      <p class="hint">
+        Раздел «Битрикс24» показывает ваши задачи и задачи, за которыми вы наблюдаете, позволяет искать их,
+        писать комментарии и добавлять результаты. Подключение — через входящий вебхук: в Битрикс24 откройте
+        «Разработчикам» → «Другое» → «Входящий вебхук», отметьте права <b>Задачи (task)</b> и <b>Пользователи (user)</b>
+        и скопируйте адрес вида <code>https://портал.bitrix24.ru/rest/1/код/</code>.
+      </p>
+      <template v-if="bitrix.connected">
+        <div class="bitrix-status">
+          <span class="bitrix-status__dot"></span>
+          Подключено: <b>{{ bitrix.settings.user?.name || 'пользователь ' + bitrix.settings.user?.id }}</b>
+          · {{ bitrix.settings.user?.portal.replace(/^https?:\/\//, '') }}
+        </div>
+        <label class="checkbox-row-inline">
+          <input type="checkbox" :checked="bitrix.settings.enabled" @change="bitrix.setEnabled(($event.target as HTMLInputElement).checked)" />
+          Показывать раздел «Битрикс24» в меню
+        </label>
+        <div class="inline-actions">
+          <button class="btn btn--secondary btn--sm" :disabled="bitrixBusy" @click="recheckBitrix">Проверить подключение</button>
+          <button class="btn btn--ghost btn--sm" :disabled="bitrixBusy" @click="disconnectBitrix">Отключить и удалить вебхук</button>
+        </div>
+      </template>
+      <template v-else>
+        <label class="field">
+          Адрес входящего вебхука
+          <input v-model="bitrixWebhook" type="password" autocomplete="off" placeholder="https://портал.bitrix24.ru/rest/1/xxxxxxxxxxxx/" @keydown.enter="connectBitrix" />
+        </label>
+        <div class="inline-actions">
+          <button class="btn btn--primary btn--sm" :disabled="!bitrixWebhook.trim() || bitrix.connecting" @click="connectBitrix">
+            {{ bitrix.connecting ? 'Проверка…' : 'Подключить' }}
+          </button>
+        </div>
+        <p class="hint">Адрес вебхука хранится только в системном хранилище паролей (Windows Credential Manager / связка ключей macOS).</p>
+      </template>
+      <p v-if="bitrixMessage" :class="['status-text', bitrixOk ? 'status-text--ok' : 'status-text--error']">{{ bitrixMessage }}</p>
+    </section>
+
     <!-- ──────────── Danger zone: сброс настроек ──────────── -->
     <section class="settings-card danger-zone">
       <div class="card-header">
@@ -194,6 +235,7 @@ import DatePicker from '../components/DatePicker.vue';
 import { useSettingsStore } from '../store/settings';
 import { RU_HOLIDAYS_DEFAULT } from '../lib/ruHolidays';
 import { tauriApi, type SchedulerSettings } from '../lib/tauriApi';
+import { useBitrixStore } from '../store/bitrix';
 
 const settingsStore = useSettingsStore();
 
@@ -275,12 +317,59 @@ function addCustomHoliday() {
 /**
  * Полный сброс локальных данных
  */
+// ──────────── Битрикс24 ────────────
+const bitrix = useBitrixStore();
+const bitrixWebhook = ref('');
+const bitrixMessage = ref('');
+const bitrixOk = ref(false);
+const bitrixBusy = ref(false);
+
+async function connectBitrix() {
+  if (!bitrixWebhook.value.trim()) return;
+  bitrixMessage.value = '';
+  try {
+    const user = await bitrix.connect(bitrixWebhook.value);
+    bitrixWebhook.value = '';
+    bitrixOk.value = true;
+    bitrixMessage.value = `Готово: подключено как ${user.name || 'пользователь ' + user.id}. Раздел «Битрикс24» появился в меню.`;
+  } catch (e) {
+    bitrixOk.value = false;
+    bitrixMessage.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function recheckBitrix() {
+  bitrixBusy.value = true;
+  try {
+    const user = await bitrix.recheck();
+    bitrixOk.value = true;
+    bitrixMessage.value = `Подключение работает: ${user.name || 'пользователь ' + user.id}.`;
+  } catch (e) {
+    bitrixOk.value = false;
+    bitrixMessage.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    bitrixBusy.value = false;
+  }
+}
+
+async function disconnectBitrix() {
+  bitrixBusy.value = true;
+  try {
+    await bitrix.disconnect();
+    bitrixOk.value = true;
+    bitrixMessage.value = 'Битрикс24 отключён, вебхук удалён.';
+  } finally {
+    bitrixBusy.value = false;
+  }
+}
+
 async function resetAppData() {
   if (!confirm('Удалить все профили и настройки и пройти онбординг заново? Отменить нельзя.')) return;
   resetting.value = true;
   resetMessage.value = '';
   try {
     await invoke('reset_app_data');
+    await invoke('delete_secret', { secretRef: 'bitrix-webhook' }).catch(() => {});
     // Чистим ВСЕ ключи приложения: иначе, например, watermark инкрементальной
     // синхронизации пережил бы сброс, и после повторной настройки того же профиля
     // «Мой worklog» не догрузил бы старые записи из Jira.
@@ -494,4 +583,9 @@ onMounted(() => {
   border: 1px solid var(--color-border, var(--border));
   border-radius: 0.75rem;
 }
+.optional-tag { font-size: 0.6875rem; font-weight: 600; color: var(--muted); background: var(--chip); border-radius: 999px; padding: 0.1rem 0.5rem; margin-left: 0.35rem; vertical-align: middle; }
+.bitrix-status { display: flex; align-items: center; gap: 0.4rem; font-size: 0.875rem; }
+.bitrix-status__dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; background: var(--success); }
+#bitrix .field input { max-width: 36rem; }
+#bitrix .inline-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
 </style>

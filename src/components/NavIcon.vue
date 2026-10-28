@@ -13,6 +13,7 @@ export type NavIconName =
   | 'team'
   | 'compose'
   | 'digest'
+  | 'bitrix'
   | 'templates'
   | 'profiles'
   | 'logs'
@@ -72,6 +73,15 @@ const props = withDefaults(defineProps<{ name: NavIconName; size?: number }>(), 
     <!-- Дайджест: пульс активности -->
     <g v-else-if="name === 'digest'">
       <path d="M3 12h4l2.5-6 4 12 2.5-6H21" />
+    </g>
+
+    <!-- Битрикс24: список задач с отметками -->
+    <g v-else-if="name === 'bitrix'">
+      <rect x="4" y="3.5" width="16" height="17" rx="3" />
+      <path d="m7.5 9 1.5 1.5L12 7.5" />
+      <path d="M14 9h3" />
+      <path d="m7.5 15 1.5 1.5L12 13.5" />
+      <path d="M14 15h3" />
     </g>
 
     <!-- Команда: двое людей -->
