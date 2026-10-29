@@ -143,6 +143,8 @@ pub fn open_log_dir_in_explorer(
     logger: tauri::State<'_, Arc<AppLogger>>,
 ) -> Result<(), String> {
     let path = logger.log_dir();
-    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    // macOS открывает папку в Finder командой `open` (xdg-open там нет), Linux — xdg-open.
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    std::process::Command::new(opener).arg(path).spawn().map_err(|e| e.to_string())?;
     Ok(())
 }

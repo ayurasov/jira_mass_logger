@@ -1,6 +1,6 @@
 <template>
   <div class="templates-page">
-    <h1 class="page-title"><ActionIcon name="folder" :size="22" /> Шаблоны описаний</h1>
+    <h1 class="page-title">Шаблоны описаний</h1>
     <p class="page-hint">
       Создайте шаблоны для описаний worklog. Доступные переменные:
       <code>{date}</code>, <code>{week}</code>, <code>{week_number}</code>,
@@ -251,8 +251,8 @@ function insertVar(token: string) {
 </script>
 
 <style scoped>
-.templates-page { padding: 1.5rem; max-width: 860px; }
-.page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: .4rem; display: flex; align-items: center; gap: .5rem; }
+.templates-page { padding: 1.5rem; max-width: 72rem; }
+.page-title { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 .25rem; }
 .page-hint { font-size: .88rem; color: var(--muted); margin-bottom: 1.2rem; }
 .page-hint code { background: var(--chip); border-radius: 3px; padding: .05rem .3rem; font-size: .82rem; }
 .toolbar { display: flex; gap: .8rem; margin-bottom: 1.2rem; align-items: center; }

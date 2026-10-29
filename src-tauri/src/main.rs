@@ -22,6 +22,7 @@ mod settings_cmd;
 mod team_worklogs;
 mod jira_digest;
 mod bitrix_client;
+mod updates;
 mod win_registry;
 
 use std::sync::{Arc, Mutex};
@@ -56,6 +57,10 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         // Открытие системного браузера/файлов (используется в Profiles.vue для Graph OAuth)
         .plugin(tauri_plugin_opener::init())
+        // Автообновление: ключ и адрес — в plugins.updater (подставляет релизный workflow)
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Перезапуск после установки обновления на macOS
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             db::init_db(app.handle())?;
 
@@ -238,9 +243,11 @@ fn main() {
             bitrix_client::bitrix_list_tasks,
             bitrix_client::bitrix_get_task,
             bitrix_client::bitrix_add_comment,
+            updates::update_channel_info,
             // Settings
             settings_cmd::get_system_theme,
             settings_cmd::save_work_schedule,
+            settings_cmd::read_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running JiraTime");

@@ -202,6 +202,14 @@ jobs:
         env:
           CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
 
+      - name: Updater config (if signing key is set)
+        shell: bash
+        env:
+          HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          UPDATES_REPO: ${{ vars.UPDATES_REPO }}
+        run: node .github/scripts/updater-config.mjs
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -216,7 +224,9 @@ jobs:
           releaseBody: ${{ needs.prepare-release.outputs.changelog || 'See CHANGELOG.md for details.' }}
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.target }}
+          # latest.json собирает отдельная джоба update-feed: параллельные сборки затирали бы платформы друг друга
+          includeUpdaterJson: false
+          args: --target ${{ matrix.target }} ${{ env.TAURI_UPDATER_ARGS }}
 
       - name: Upload artifacts on failure
         if: failure()
@@ -277,6 +287,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
+      - name: Updater config (if signing key is set)
+        shell: bash
+        env:
+          HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          UPDATES_REPO: ${{ vars.UPDATES_REPO }}
+        run: node .github/scripts/updater-config.mjs
+
       - name: Build Tauri app (unsigned)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -296,7 +314,9 @@ jobs:
           releaseBody: ${{ needs.prepare-release.outputs.changelog || 'See CHANGELOG.md for details.' }}
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.target }}
+          # latest.json собирает отдельная джоба update-feed: параллельные сборки затирали бы платформы друг друга
+          includeUpdaterJson: false
+          args: --target ${{ matrix.target }} ${{ env.TAURI_UPDATER_ARGS }}
 
       - name: Upload logs on failure
         if: failure()
@@ -305,3 +325,76 @@ jobs:
           name: build-logs-macos-${{ matrix.arch }}
           path: src-tauri/target/${{ matrix.target }}/release/bundle/
           retention-days: 5
+
+  # ─────────────────────────────────────────────
+  # Канал автообновления: latest.json из подписей обновлений (*.sig) этого релиза.
+  # Работает, только если настроена подпись (см. .github/scripts/updater-config.mjs).
+  # Если основной репозиторий приватный, приложение не может скачать из него обновление —
+  # тогда задайте переменную UPDATES_REPO (публичный репозиторий с хотя бы одним коммитом)
+  # и секрет UPDATES_REPO_TOKEN (токен с правом Contents: write на него): файлы обновления
+  # и latest.json будут продублированы туда.
+  # ─────────────────────────────────────────────
+  update-feed:
+    name: Update feed (latest.json)
+    needs: [prepare-release, build-windows, build-macos]
+    if: ${{ !cancelled() && vars.TAURI_UPDATER_PUBKEY != '' && (needs.build-windows.result == 'success' || needs.build-macos.result == 'success') }}
+    runs-on: ubuntu-latest
+    env:
+      TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && format('release/v{0}', needs.prepare-release.outputs.version) || github.ref_name }}
+      RELEASE_NAME: ${{ github.event_name == 'workflow_dispatch' && format('JiraTime v{0}', needs.prepare-release.outputs.version) || format('JiraTime {0}', github.ref_name) }}
+      VERSION: ${{ needs.prepare-release.outputs.version }}
+      NOTES: ${{ needs.prepare-release.outputs.changelog }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.sha || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build latest.json from release signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION:-${GITHUB_REF_NAME#v}}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p feed
+          gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --dir feed --pattern '*.sig'
+          printf '%s\n' "${NOTES:-JiraTime $VERSION}" > feed/notes.md
+          node .github/scripts/update-feed.mjs feed --version "$VERSION" \
+            --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG_NAME" \
+            --notes-file feed/notes.md --out feed/latest.json
+          gh release upload "$TAG_NAME" feed/latest.json --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Mirror update to public repository
+        if: ${{ vars.UPDATES_REPO != '' }}
+        shell: bash
+        env:
+          UPDATES_REPO: ${{ vars.UPDATES_REPO }}
+          MIRROR_TOKEN: ${{ secrets.UPDATES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "::error::Задана переменная UPDATES_REPO, но нет секрета UPDATES_REPO_TOKEN."
+            exit 1
+          fi
+          mkdir -p mirror
+          for sig in feed/*.sig; do
+            name="$(basename "$sig" .sig)"
+            gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --dir mirror --pattern "$name"
+            cp "$sig" mirror/
+          done
+          gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --dir mirror --pattern '*.dmg' || true
+          node .github/scripts/update-feed.mjs feed --version "$VERSION" \
+            --base-url "https://github.com/$UPDATES_REPO/releases/download/$TAG_NAME" \
+            --notes-file feed/notes.md --out mirror/latest.json
+          if GH_TOKEN="$MIRROR_TOKEN" gh release view "$TAG_NAME" --repo "$UPDATES_REPO" >/dev/null 2>&1; then
+            GH_TOKEN="$MIRROR_TOKEN" gh release upload "$TAG_NAME" mirror/* --repo "$UPDATES_REPO" --clobber
+          else
+            GH_TOKEN="$MIRROR_TOKEN" gh release create "$TAG_NAME" mirror/* --repo "$UPDATES_REPO" \
+              --title "$RELEASE_NAME" --notes-file feed/notes.md
+          fi

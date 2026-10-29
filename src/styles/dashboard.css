@@ -49,7 +49,8 @@
 }
 .analytics-header h1 {
   margin: 0;
-  font-size: 1.6rem;
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
   flex: 1 1 auto;
 }
 .analytics-header .muted-text {

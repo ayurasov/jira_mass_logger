@@ -365,7 +365,7 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
         <table v-else class="cd-table">
           <colgroup>
             <col style="width: 7.25rem" /><col style="width: 4.75rem" />
-            <col style="width: 8.75rem" /><col /><col style="width: 2.25rem" />
+            <col style="width: 10rem" /><col /><col style="width: 2.25rem" />
           </colgroup>
           <thead>
             <tr><th>Начало</th><th>Часы</th><th>Задача</th><th>Описание и основание</th><th></th></tr>
@@ -428,7 +428,7 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
 </template>
 
 <style scoped>
-.cd { padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; max-width: 110rem; }
+.cd { padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; max-width: 110rem; container-type: inline-size; }
 .cd-header h1 { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
 .cd-sub { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.875rem; }
 .cd-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem 1.125rem; }
@@ -550,9 +550,13 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
 .cd-habit__freq { height: 3px; border-radius: 999px; background: var(--chip); overflow: hidden; }
 .cd-habit__freq span { display: block; height: 100%; background: var(--success); }
 
-@media (max-width: 72rem) {
+/* Перестройка по ширине самой области (а не окна): она зависит и от свёрнутого меню.
+   Когда места мало, «Предложение» занимает всю ширину, а привычные задачи уходят под него плитками. */
+@container (max-width: 64rem) {
   .cd-grid { grid-template-columns: 1fr; }
   .cd-actions { margin-left: 0; }
+  .cd-habits { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); align-items: start; }
+  .cd-habits > h2, .cd-habits > p, .cd-habits > div { grid-column: 1 / -1; }
 }
 /* v2: интерактивная шкала, незаполненные дни, CTA */
 .cd-cta { margin-left: 0.5rem; }

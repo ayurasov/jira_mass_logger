@@ -15,6 +15,7 @@ import {
   inProgressWithoutWorklog, overdueCount, plural, staleCount, summarize, unassignedCount, type DigestIssue,
 } from '../utils/digest';
 import type { JiraFilterDto } from '../lib/tauriApi';
+import { hotkeyLabel, isMac } from '../utils/platform';
 
 const store = useDigestStore();
 const team = useTeamStore();
@@ -200,7 +201,7 @@ const catClass = (i: DigestIssue) => `cat--${i.statusCategory || 'new'}`;
       </div>
       <div v-else-if="store.prefs.scopeType === 'jql'" class="dg-projects">
         <div class="dg-jql-row">
-          <textarea v-model="store.prefs.jql" class="dg-jql" rows="2" placeholder='Например: project = ABC AND "Epic Link" = ABC-1' @keydown.ctrl.enter="store.load()"></textarea>
+          <textarea v-model="store.prefs.jql" class="dg-jql" rows="2" placeholder='Например: project = ABC AND "Epic Link" = ABC-1' @keydown.ctrl.enter="store.load()" @keydown.meta.enter="isMac && store.load()"></textarea>
           <div class="dg-jql-save">
             <input v-model="jqlName" class="dg-input" placeholder="Название запроса" :disabled="!store.prefs.jql.trim()" @keydown.enter="saveJql" />
             <button class="dg-btn dg-btn--sm" :disabled="!store.prefs.jql.trim()" title="Сохранить текущий JQL в «Мои запросы»" @click="saveJql">
@@ -215,7 +216,7 @@ const catClass = (i: DigestIssue) => `cat--${i.statusCategory || 'new'}`;
             <button class="dg-seg__btn" :class="{ 'is-on': jqlTab === 'recent' }" @click="jqlTab = 'recent'">Недавние <span class="dg-count">{{ store.prefs.recentJql.length }}</span></button>
             <button class="dg-seg__btn" :class="{ 'is-on': jqlTab === 'examples' }" @click="jqlTab = 'examples'">Примеры</button>
           </div>
-          <span class="dg-muted dg-small">Ctrl+Enter — показать</span>
+          <span class="dg-muted dg-small">{{ hotkeyLabel('Ctrl+Enter') }} — показать</span>
         </div>
 
         <div v-if="jqlTab === 'saved'" class="dg-chips">
@@ -516,11 +517,15 @@ const catClass = (i: DigestIssue) => `cat--${i.statusCategory || 'new'}`;
 .dg-empty p { color: var(--muted); max-width: 34rem; margin: 0 auto; }
 .dg-empty__icon { display: inline-flex; padding: 0.75rem; border-radius: 999px; background: var(--chip); color: var(--primary); }
 
-.dg-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.75rem, 1fr)); gap: 0.75rem; }
+.dg-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 0.75rem; }
 .dg-stat { display: flex; flex-direction: column; gap: 0.15rem; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.875rem 1rem; box-shadow: var(--shadow); }
+/* Подпись, число и пояснение выровнены по строкам во всём ряду плиток, даже если одна подпись перенеслась. */
+@supports (grid-template-rows: subgrid) {
+  .dg-stat { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0.15rem; }
+}
 .dg-stat--alert { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); }
 .dg-stat--alert .dg-stat__value { color: var(--warning); }
-.dg-stat__label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+.dg-stat__label { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; line-height: 1.25; }
 .dg-stat__value { font-size: 1.625rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .dg-stat__value small { font-size: 0.875rem; color: var(--muted); }
 .dg-stat__hint { font-size: 0.75rem; color: var(--muted); }

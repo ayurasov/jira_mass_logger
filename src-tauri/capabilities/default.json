@@ -14,6 +14,8 @@
     "shell:default",
     "dialog:default",
     "opener:default",
-    "window-state:default"
+    "window-state:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

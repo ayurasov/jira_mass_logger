@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import ActionIcon, { type ActionIconName } from '../ActionIcon.vue';
+import { hotkeyLabel } from '../../utils/platform';
 
 const emit = defineEmits<{ done: [] }>();
 
 const tourSteps: { icon: ActionIconName; title: string; text: string }[] = [
   {
     icon: 'bolt',
-    title: 'Ctrl+N — Быстрый трекинг',
-    text: 'В любой момент нажмите Ctrl+N, чтобы открыть мастер массового логирования. Выберите задачи, укажите дни и часы — готово.',
+    title: `${hotkeyLabel('Ctrl+N')} — Быстрый трекинг`,
+    text: `В любой момент нажмите ${hotkeyLabel('Ctrl+N')}, чтобы открыть мастер массового логирования. Выберите задачи, укажите дни и часы — готово.`,
   },
   {
     icon: 'dashboard',
@@ -17,8 +18,8 @@ const tourSteps: { icon: ActionIconName; title: string; text: string }[] = [
   },
   {
     icon: 'clock',
-    title: 'Ctrl+L — Мой журнал',
-    text: 'Ctrl+L открывает таблицу worklog. Двойной клик по ячейке — inline-редактирование. Enter сохраняет, Esc отменяет.',
+    title: `${hotkeyLabel('Ctrl+L')} — Мой журнал`,
+    text: `${hotkeyLabel('Ctrl+L')} открывает таблицу worklog. Двойной клик по ячейке — inline-редактирование. Enter сохраняет, Esc отменяет.`,
   },
   {
     icon: 'bell',

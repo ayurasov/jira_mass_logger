@@ -3,7 +3,7 @@ import { localIsoDate } from '../utils/time';
 import { computed, onMounted, ref } from 'vue';
 import { save } from '@tauri-apps/plugin-dialog';
 import DatePicker from '../components/DatePicker.vue';
-import { useBulkWizardStore } from '../store/bulkWizard';
+import { useBulkWizardStore, type PreviewRow } from '../store/bulkWizard';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
 import { useAnalyticsStore } from '../store/analytics';
 import ActionIcon from '../components/ActionIcon.vue';
@@ -89,15 +89,16 @@ function fmtStartedAt24h(iso: string): string {
   }).format(new Date(iso));
 }
 
-function toDatetimeLocalValue(iso: string): string {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone: settings.timezone,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hour12: false,
-    }).formatToParts(new Date(iso)).map((p) => [p.type, p.value]),
-  );
-  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+/** Время начала строки предпросмотра — ЧЧ:ММ в 24-часовом формате при любой локали ОС; дата — дата строки. */
+function onRowStartInput(row: PreviewRow, el: HTMLInputElement) {
+  const digits = el.value.replace(/\D/g, '').slice(0, 4);
+  el.value = digits.length > 2 ? `${digits.slice(0, 2)}:${digits.slice(2)}` : digits;
+  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(el.value)) wizard.setPreviewRowStartedAtLocal(row.id, `${row.date}T${el.value}`);
+}
+
+function fmtRowDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
 }
 
 const startTimeError = ref('');
@@ -327,21 +328,22 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
           <div class="preview-table-wrap">
             <table class="preview-table">
               <colgroup>
-                <!-- Описание — гибкая колонка: таблица помещается в карточку без горизонтальной прокрутки. -->
-                <col style="width: 6.5rem" /><col style="width: 3.25rem" /><col style="width: 4.75rem" />
-                <col /><col style="width: 10.5rem" /><col style="width: 10rem" />
-                <col style="width: 6.5rem" /><col style="width: 5.75rem" />
+                <!-- Описание — гибкая колонка: при окне 1200×800 таблица помещается в карточку без горизонтальной прокрутки. -->
+                <col style="width: 6.25rem" /><col style="width: 4.5rem" />
+                <col /><col style="width: 5rem" /><col style="width: 11.5rem" /><col style="width: 5.75rem" />
               </colgroup>
               <thead>
                 <tr>
-                  <th>Дата</th><th>День</th><th>Часы</th><th>Описание</th>
-                  <th>Старт (24ч)</th><th>Конфликт</th><th>Статус</th><th></th>
+                  <th>Дата</th><th>Часы</th><th>Описание</th>
+                  <th>Начало</th><th>Статус</th><th></th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="row in wizard.previewRows" :key="row.id" :class="{ skipped: row.skipped, conflict: row.conflict }" :title="row.note">
-                  <td>{{ row.date }}</td>
-                  <td>{{ row.weekday }}</td>
+                  <td>
+                    <div class="row-date">{{ fmtRowDate(row.date) }}</div>
+                    <small class="row-weekday">{{ row.weekday }}</small>
+                  </td>
                   <td>
                     <input class="table-input" type="number" min="0.5" step="0.5" :value="row.hours"
                       @input="wizard.updatePreviewRow(row.id, { hours: Number(($event.target as HTMLInputElement).value) })" />
@@ -351,20 +353,19 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
                       @input="wizard.updatePreviewRow(row.id, { description: ($event.target as HTMLTextAreaElement).value })" />
                   </td>
                   <td>
-                    <input class="table-input" type="datetime-local" :value="toDatetimeLocalValue(row.startedAt)"
-                      @input="wizard.setPreviewRowStartedAtLocal(row.id, ($event.target as HTMLInputElement).value)" />
-                    <small class="started-hint">{{ fmtStartedAt24h(row.startedAt) }}</small>
+                    <input class="table-input table-input--time" type="text" inputmode="numeric" maxlength="5" placeholder="ЧЧ:ММ"
+                      title="Время начала, 24 часа" :value="fmtStartedAt24h(row.startedAt)"
+                      @input="onRowStartInput(row, $event.target as HTMLInputElement)"
+                      @blur="($event.target as HTMLInputElement).value = fmtStartedAt24h(row.startedAt)" />
                   </td>
                   <td>
-                    <span class="badge warning" v-if="row.conflict" title="В этот день у вас уже есть запись по этой задаче">Уже есть ваш worklog</span>
-                    <span class="badge" v-else-if="!row.note">—</span>
-                    <small v-if="row.note" class="row-note">{{ row.note }}</small>
-                  </td>
-                  <td>
-                    <span class="badge success" v-if="row.status === 'success'">Успех</span>
+                    <!-- Итог отправки важнее конфликта; до отправки — конфликт и пояснение к строке. -->
+                    <span class="badge success" v-if="row.status === 'success'">Отправлено</span>
                     <span class="badge retry" v-else-if="row.status === 'retry'">Повтор</span>
                     <span class="badge danger" v-else-if="row.status === 'error'">Ошибка</span>
-                    <span class="badge" v-else>Ожидает</span>
+                    <span class="badge warning" v-else-if="row.conflict" title="В этот день у вас уже есть запись по этой задаче">Уже есть ваш worklog</span>
+                    <span class="row-ready" v-else-if="!row.note && !row.skipped">к отправке</span>
+                    <small v-if="row.note" class="row-note">{{ row.note }}</small>
                   </td>
                   <td>
                     <button v-if="!row.skipped" class="ghost-btn danger" @click="wizard.removePreviewRow(row.id)">Убрать</button>
@@ -415,7 +416,14 @@ const canProceedFromStep3 = computed(() => wizard.hoursPerDay > 0 && /^([01]\d|2
   border-radius: 12px;
 }
 .empty-state-error { color: var(--color-error, var(--danger)); font-size: 0.85rem; }
-.started-hint { display: block; color: var(--text-muted, var(--muted)); font-size: 0.75rem; margin-top: 2px; }
+.row-date { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.row-weekday { color: var(--muted); font-size: 0.75rem; }
+.row-ready { color: var(--muted); font-size: 0.8125rem; }
+/* Компактные поля внутри таблицы предпросмотра */
+.preview-table .table-input,
+.preview-table .table-textarea { padding: 0.4rem 0.55rem; min-height: 2.25rem; border-radius: 0.5rem; font-size: 0.875rem; }
+.preview-table .table-textarea { min-height: 3.25rem; }
+.table-input--time { font-variant-numeric: tabular-nums; text-align: center; }
 .field-error { color: var(--color-error, var(--danger)); font-size: 0.75rem; }
 .muted-hint { color: var(--color-text-muted, var(--muted)); font-size: 0.82rem; }
 
