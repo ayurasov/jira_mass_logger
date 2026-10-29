@@ -15,7 +15,7 @@ import { useFavoriteTasksStore } from './favoriteTasks';
 import { addDaysIso, formatJiraStarted, jiraStartedFromLocal, localIsoDate, zonedDayBounds } from '../utils/time';
 import { datesInRange, isWorkingDay } from '../utils/worklogChecks';
 import {
-  buildPlan, commentSuggestions, findHabits, findOverlaps, hhmmToMinutes, minutesToHHMM, startMinutesOf, unfilledDays,
+  buildPlan, commentSuggestions, findHabits, findOverlaps, hhmmToMinutes, minutesToHHMM, placeNewRow, startMinutesOf, unfilledDays,
   type ComposeOptions, type ComposerMeeting, type HabitTask, type ProposalItem,
 } from '../utils/dayComposer';
 
@@ -31,11 +31,15 @@ interface ComposePrefs {
   useMeetings: boolean;
   /** После успешной отправки сразу открывать следующий незаполненный день. */
   autoAdvance: boolean;
+  /** Выбор по привычным задачам: true — предлагать при сборке дня, false — не предлагать. */
+  habitChoices: Record<string, boolean>;
+  /** Предлагать привычные задачи, по которым выбора ещё не было (новые). */
+  proposeNewHabits: boolean;
 }
 
 const DEFAULT_PREFS: ComposePrefs = {
   dayStart: '09:00', dayEnd: '18:00', lunchEnabled: true, lunchStart: '13:00', lunchEnd: '14:00',
-  historyWeeks: 4, useMeetings: true, autoAdvance: true,
+  historyWeeks: 4, useMeetings: true, autoAdvance: true, habitChoices: {}, proposeNewHabits: true,
 };
 
 function loadPrefs(): ComposePrefs {
@@ -141,6 +145,10 @@ export const useComposeStore = defineStore('compose', {
     targetMinutes(state): number {
       return Math.round((Number(state.targetHours) || 0) * 60);
     },
+    /** Предлагается ли привычная задача при сборке дня (её можно добавить вручную в любом случае). */
+    isHabitProposed(state): (issueKey: string) => boolean {
+      return (issueKey) => state.prefs.habitChoices[issueKey] ?? state.prefs.proposeNewHabits;
+    },
     isWorkday(state): boolean {
       const settings = useSettingsStore();
       return isWorkingDay(state.date, {
@@ -240,7 +248,7 @@ export const useComposeStore = defineStore('compose', {
       }
       let meetings: ComposerMeeting[] = [];
       let meetingsNote = '';
-      if (this.prefs.useMeetings) ({ meetings, note: meetingsNote } = await this.loadMeetings(date, habits));
+      if (this.prefs.useMeetings) ({ meetings, note: meetingsNote } = await this.loadMeetings(date, habits.filter((h) => this.isHabitProposed(h.issueKey))));
       return { existing, history, habits, meetings, meetingsNote, favoriteFallback };
     },
 
@@ -287,7 +295,7 @@ export const useComposeStore = defineStore('compose', {
         habits: this.habits,
         opts: this.composeOptions,
         userItems: this.userItems,
-        dismissedKeys: new Set(this.dismissedKeys),
+        dismissedKeys: new Set([...this.dismissedKeys, ...this.notProposedKeys(this.habits)]),
         dismissedMeetings: new Set(this.dismissedMeetings),
         pinnedId,
       });
@@ -295,6 +303,31 @@ export const useComposeStore = defineStore('compose', {
       const alive = new Set(this.proposal.map((p) => p.id));
       this.userItems = this.userItems.filter((u) => alive.has(u.id))
         .map((u) => ({ ...u, minutes: this.proposal.find((p) => p.id === u.id)!.minutes }));
+    },
+
+    /** Ключи привычных задач, которые пользователь не хочет видеть в предложении. */
+    notProposedKeys(habits: HabitTask[]): string[] {
+      return habits.filter((h) => !this.isHabitProposed(h.issueKey)).map((h) => h.issueKey);
+    },
+
+    /** Предлагать привычную задачу при сборке дня или нет (выбор запоминается). */
+    setHabitProposed(issueKey: string, proposed: boolean) {
+      this.prefs.habitChoices = { ...this.prefs.habitChoices, [issueKey]: proposed };
+      this.rebuild();
+    },
+
+    /**
+     * Предлагать ли новые привычные задачи сразу. При выключении текущие задачи без выбора
+     * остаются предлагаемыми — меняется только поведение для задач, которые появятся позже.
+     */
+    setProposeNewHabits(on: boolean) {
+      if (!on) {
+        const choices = { ...this.prefs.habitChoices };
+        for (const h of this.habits) if (choices[h.issueKey] === undefined) choices[h.issueKey] = true;
+        this.prefs.habitChoices = choices;
+      }
+      this.prefs.proposeNewHabits = on;
+      this.rebuild();
     },
 
     /** «Пересобрать»: забыть правки и убранные задачи, собрать день заново. Утверждённые строки остаются. */
@@ -384,17 +417,31 @@ export const useComposeStore = defineStore('compose', {
       this.rebuild();
     },
 
+    /**
+     * Новая строка — из привычных (в её привычное время) или пустая (в конце рабочего дня).
+     * Встаёт в свободное окно рабочего дня: мешают только залогированное, правки, встречи
+     * и обед, автоматические строки перестраиваются вокруг неё. Длительность — привычная,
+     * но не больше, чем осталось до цели после залогированного, правок и встреч.
+     */
     addRow(habit?: HabitTask) {
-      const lastEnd = [...this.existing.map((w) => startMinutesOf(w.started) + Math.round(w.timeSpentSeconds / 60)),
-        ...this.proposal.map((p) => p.start + p.minutes)].reduce((m, v) => Math.max(m, v), hhmmToMinutes(this.prefs.dayStart));
+      const opts = this.composeOptions;
+      const fixed = [
+        ...this.existing.map((w) => ({ start: startMinutesOf(w.started), end: startMinutesOf(w.started) + Math.round(w.timeSpentSeconds / 60) })),
+        ...this.userItems.map((u) => ({ start: u.start, end: u.start + u.minutes })),
+        ...this.proposal.filter((p) => p.source === 'meeting').map((p) => ({ start: p.start, end: p.start + p.minutes })),
+      ];
+      const room = Math.floor((this.targetMinutes - fixed.reduce((s, b) => s + b.end - b.start, 0)) / opts.stepMinutes) * opts.stepMinutes;
+      const wanted = habit?.typicalMinutes ?? 60;
+      const busy = [...fixed, ...(opts.lunch ? [{ start: opts.lunch[0], end: opts.lunch[1] }] : [])];
+      const { start, minutes } = placeNewRow(busy, habit ? habit.typicalStart : opts.dayEnd - wanted, room >= opts.stepMinutes ? Math.min(wanted, room) : wanted, opts);
       const id = `m${++manualSeq}`;
       const key = habit?.issueKey ?? '';
       this.userItems.push({
         id,
         issueKey: key,
         issueSummary: habit?.issueSummary ?? null,
-        start: Math.min(lastEnd, 24 * 60 - 60),
-        minutes: habit?.typicalMinutes ?? 60,
+        start: Math.max(0, Math.min(start, 24 * 60 - minutes)),
+        minutes,
         comment: key ? (this.suggestionsFor(key)[0] ?? habit?.typicalComment ?? '') : '',
         source: 'manual',
         reason: habit ? 'добавлено из привычных' : 'добавлено вручную',
@@ -507,7 +554,7 @@ export const useComposeStore = defineStore('compose', {
       const opts: ComposeOptions = { ...this.composeOptions, date, targetHours: target / 60 };
       const rows = buildPlan({
         existing: ctx.existing, meetings: ctx.meetings, habits: ctx.habits, opts,
-        userItems: [], dismissedKeys: new Set(), dismissedMeetings: new Set(),
+        userItems: [], dismissedKeys: new Set(this.notProposedKeys(ctx.habits)), dismissedMeetings: new Set(),
       }).filter((p) => p.minutes > 0);
       const proposed = rows.reduce((s, p) => s + p.minutes, 0);
       const holidays = new Set(settings.holidays.map((h) => h.date));

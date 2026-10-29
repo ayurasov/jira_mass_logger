@@ -174,6 +174,11 @@ async function submit() {
 }
 
 const usedKeys = computed(() => new Set([...store.existing.map((w) => w.issueKey), ...store.proposal.map((p) => p.issueKey)]));
+// Привычные задачи: первые 12 и всё, что уже попало в предложение (чтобы любую можно было снять).
+const showAllHabits = ref(false);
+const shownHabits = computed(() => (showAllHabits.value
+  ? store.habits
+  : store.habits.filter((h, i) => i < 12 || store.proposal.some((p) => !p.locked && p.issueKey === h.issueKey))));
 const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${formatRuDate(iso).slice(0, 5)}`;
 </script>
 
@@ -415,7 +420,7 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
                   :title="p.approved ? 'Снять отметку — автоматика снова сможет менять строку' : 'Утвердить: строка больше не меняется, до цели добираются остальные'"
                   @click="store.setApproved(p.id, !p.approved)"
                 ><ActionIcon name="check" :size="15" /></button>
-                <button class="cd-icon cd-icon--danger" title="Убрать (до цели доберут неутверждённые строки)" @click="store.removeItem(p.id)"><ActionIcon name="close" :size="14" /></button>
+                <button class="cd-icon cd-icon--danger" title="Убрать из этого дня (до цели доберут неутверждённые строки). Чтобы задача не предлагалась совсем — снимите «в предложении» в привычных задачах" @click="store.removeItem(p.id)"><ActionIcon name="close" :size="14" /></button>
               </td>
             </tr>
           </tbody>
@@ -428,20 +433,35 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
       <!-- Привычные задачи -->
       <aside class="cd-card cd-habits">
         <h2>Привычные задачи</h2>
-        <p class="cd-muted cd-small">За {{ store.prefs.historyWeeks }} нед. до {{ formatRuDate(addDaysIso(store.date, -1)) }} · клик — добавить</p>
+        <p class="cd-muted cd-small">
+          За {{ store.prefs.historyWeeks }} нед. до {{ formatRuDate(addDaysIso(store.date, -1)) }} · клик — добавить в день.
+          Галочка «в предложении» — задача подбирается автоматически; без неё — только вручную.
+        </p>
+        <label v-if="store.habits.length" class="cd-check cd-check--sm cd-habits__new" title="Если выключить, задачи, которые впервые появятся в истории, не будут попадать в предложение, пока вы их не отметите">
+          <input type="checkbox" :checked="store.prefs.proposeNewHabits" @change="store.setProposeNewHabits(($event.target as HTMLInputElement).checked)" />
+          новые задачи из истории сразу предлагать
+        </label>
         <div v-if="!store.habits.length" class="cd-muted cd-small">Пока нет данных.</div>
-        <button
-          v-for="h in store.habits.slice(0, 12)" :key="h.issueKey" class="cd-habit"
-          :class="{ 'is-used': usedKeys.has(h.issueKey) }" :title="h.typicalComment || h.issueSummary || ''"
-          @click="store.addRow(h)"
+        <div
+          v-for="h in shownHabits" :key="h.issueKey" class="cd-habit"
+          :class="{ 'is-used': usedKeys.has(h.issueKey), 'is-off': !store.isHabitProposed(h.issueKey) }"
         >
-          <span class="cd-habit__top">
-            <b>{{ h.issueKey }}</b>
-            <span class="mono cd-muted">~{{ fmtDur(h.typicalMinutes) }} · {{ minutesToHHMM(h.typicalStart) }}</span>
-          </span>
-          <span v-if="h.issueSummary" class="cd-ellipsis cd-small">{{ h.issueSummary }}</span>
-          <span class="cd-habit__freq"><span :style="{ width: Math.round(h.frequency * 100) + '%' }"></span></span>
-          <span class="cd-small cd-muted">{{ describeHabit(h) }}</span>
+          <button class="cd-habit__add" :title="`Добавить в день: ${h.typicalComment || h.issueSummary || h.issueKey}`" @click="store.addRow(h)">
+            <span class="cd-habit__top">
+              <b>{{ h.issueKey }}</b>
+              <span class="mono cd-muted">~{{ fmtDur(h.typicalMinutes) }} · {{ minutesToHHMM(h.typicalStart) }}</span>
+            </span>
+            <span v-if="h.issueSummary" class="cd-ellipsis cd-small">{{ h.issueSummary }}</span>
+            <span class="cd-habit__freq"><span :style="{ width: Math.round(h.frequency * 100) + '%' }"></span></span>
+            <span class="cd-small cd-muted">{{ describeHabit(h) }}</span>
+          </button>
+          <label class="cd-habit__toggle" :title="store.isHabitProposed(h.issueKey) ? 'Снять — задача не будет подбираться автоматически (вручную добавить можно)' : 'Отметить — задача снова будет подбираться автоматически'">
+            <input type="checkbox" :checked="store.isHabitProposed(h.issueKey)" @change="store.setHabitProposed(h.issueKey, ($event.target as HTMLInputElement).checked)" />
+            {{ store.isHabitProposed(h.issueKey) ? 'в предложении' : 'не предлагается' }}
+          </label>
+        </div>
+        <button v-if="store.habits.length > shownHabits.length || showAllHabits" class="cd-btn cd-btn--sm cd-habits__more" @click="showAllHabits = !showAllHabits">
+          {{ showAllHabits ? 'Свернуть' : `Показать все (${store.habits.length})` }}
         </button>
       </aside>
     </div>
@@ -564,9 +584,17 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
 /* Привычные задачи */
 .cd-habits { display: flex; flex-direction: column; gap: 0.5rem; }
 .cd-habits p { margin: 0 0 0.25rem; }
-.cd-habit { display: flex; flex-direction: column; gap: 0.2rem; text-align: left; border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 0.5rem; padding: 0.5rem 0.625rem; transition: border-color 120ms ease, transform 80ms ease; }
-.cd-habit:hover { border-color: var(--primary); transform: translateY(-1px); }
-.cd-habit.is-used { opacity: 0.55; }
+.cd-habit { display: flex; flex-direction: column; border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 0.5rem; overflow: hidden; transition: border-color 120ms ease, transform 80ms ease; }
+.cd-habit:hover { border-color: var(--primary); }
+.cd-habit__add { display: flex; flex-direction: column; gap: 0.2rem; text-align: left; border: none; background: transparent; color: inherit; padding: 0.5rem 0.625rem 0.4rem; cursor: pointer; }
+.cd-habit.is-used .cd-habit__add { opacity: 0.55; }
+.cd-habit__toggle { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.625rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); cursor: pointer; }
+.cd-habit__toggle input { margin: 0; accent-color: var(--primary); }
+.cd-habit.is-off { border-style: dashed; background: var(--surface-sunken); }
+.cd-habit.is-off .cd-habit__add { opacity: 0.6; }
+.cd-habit.is-off .cd-habit__toggle { color: var(--warning); }
+.cd-habits__new { margin-bottom: 0.25rem; }
+.cd-habits__more { align-self: flex-start; }
 .cd-habit__top { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.8125rem; }
 .cd-habit__freq { height: 3px; border-radius: 999px; background: var(--chip); overflow: hidden; }
 .cd-habit__freq span { display: block; height: 100%; background: var(--success); }
@@ -577,7 +605,8 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
   .cd-grid { grid-template-columns: 1fr; }
   .cd-actions { margin-left: 0; }
   .cd-habits { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); align-items: start; }
-  .cd-habits > h2, .cd-habits > p, .cd-habits > div { grid-column: 1 / -1; }
+  .cd-habits > :not(.cd-habit) { grid-column: 1 / -1; }
+  .cd-habits__more { justify-self: start; }
 }
 /* v2: интерактивная шкала, незаполненные дни, CTA */
 .cd-cta { margin-left: 0.5rem; }

@@ -14,6 +14,7 @@ import ActionIcon from './ActionIcon.vue';
 import UpdateBanner from './UpdateBanner.vue';
 import { useBitrixStore } from '../store/bitrix';
 import { hotkeyLabel } from '../utils/platform';
+import { ROUTE_CHAPTERS } from '../utils/userGuide';
 
 interface NavItem {
   name: string;
@@ -35,12 +36,19 @@ const NAV_ITEMS: NavItem[] = [
   { name: 'profiles', label: 'Профили', icon: 'profiles' },
   { name: 'logs', label: 'Логи', icon: 'logs', hotkey: 'F1' },
   { name: 'settings', label: 'Настройки', icon: 'settings', hotkey: 'Ctrl+,' },
+  { name: 'guide', label: 'Руководство', icon: 'guide' },
 ];
 
 const route = useRoute();
 const bitrix = useBitrixStore();
 // «Битрикс24» — необязательный раздел: в меню, только если подключён и включён.
 const navItems = computed(() => NAV_ITEMS.filter((i) => i.name !== 'bitrix' || (bitrix.settings.enabled && bitrix.connected)));
+// «Руководство» открывается на главе того экрана, с которого перешли.
+function linkFor(item: NavItem) {
+  if (item.name !== 'guide') return { name: item.name };
+  const ch = ROUTE_CHAPTERS[String(route.name ?? '')];
+  return ch ? { name: 'guide', query: { ch } } : { name: 'guide' };
+}
 const userCollapsed = ref<boolean>(localStorage.getItem('jiratime-sidebar-collapsed') === 'true');
 
 // В узком окне (меньше ~1100 px) меню само сворачивается в иконки — контенту нужна ширина.
@@ -97,7 +105,7 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
         <router-link
           v-for="item in navItems"
           :key="item.name"
-          :to="{ name: item.name }"
+          :to="linkFor(item)"
           class="nav-item"
           :class="{ active: activeName === item.name }"
           :title="collapsed ? item.label : undefined"

@@ -201,6 +201,31 @@ export function firstFreeStart(busy: { start: number; end: number }[], preferred
 }
 
 /**
+ * Место для новой строки (добавленной из привычных или вручную) в рабочем дне.
+ * `busy` — то, что двигать нельзя (залогированное, правки, встречи, обед); автоматические
+ * строки потом сами перестроятся вокруг. Строка встаёт целиком в желаемое время или в
+ * ближайшее окно (сначала позже, затем раньше); если целиком не помещается нигде — в самое
+ * длинное свободное окно, укороченной до его длины. Только если в рабочем дне нет ни одного
+ * окна — сразу после занятого.
+ */
+export function placeNewRow(
+  busy: { start: number; end: number }[], preferred: number, minutes: number, opts: ComposeOptions,
+): { start: number; minutes: number } {
+  const gaps = freeGaps(busy, opts);
+  const ordered = [...gaps.filter((g) => g.end > preferred), ...gaps.filter((g) => g.end <= preferred).reverse()];
+  for (const g of ordered) {
+    const s = Math.max(g.start, Math.min(preferred, g.end - minutes));
+    if (s + minutes <= g.end) return { start: s, minutes };
+  }
+  if (gaps.length) {
+    const len = (g: Interval) => g.end - g.start;
+    const g = [...gaps].sort((a, b) => len(b) - len(a) || Math.abs(a.start - preferred) - Math.abs(b.start - preferred))[0];
+    return { start: g.start, minutes: Math.floor(len(g) / opts.stepMinutes) * opts.stepMinutes };
+  }
+  return { start: firstFreeStart(busy, Math.max(opts.dayStart, Math.min(preferred, opts.dayEnd)), minutes), minutes };
+}
+
+/**
  * Размещает `minutes` минут начиная с желаемого времени: целиком в первом подходящем
  * окне, а если такого нет — частями по свободным окнам. Возвращает куски [start, minutes].
  */
