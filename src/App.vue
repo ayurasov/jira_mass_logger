@@ -9,6 +9,7 @@ import { localIsoDate } from './utils/time';
 import { useSettingsStore } from './store/settings';
 import { useLicenseStore } from './store/license';
 import { useJiraProfilesStore } from './store/jiraProfiles';
+import { useUpdatesStore } from './store/updates';
 import SyncStatusIndicator from './components/SyncStatusIndicator.vue';
 import AboutPanel from './components/AboutPanel.vue';
 import LicenseRequiredModal from './components/LicenseRequiredModal.vue';
@@ -44,6 +45,8 @@ onMounted(() => {
   settings.loadTheme();
   license.load();
   jiraProfiles.ensureLoaded();
+  // Обновления проверяем не сразу: старт приложения и загрузка данных важнее.
+  window.setTimeout(() => { useUpdatesStore().autoCheck().catch(() => {}); }, 8000);
 });
 
 // Тема дублируется на <html>: фон body, полосы прокрутки и элементы вне .app

@@ -1,9 +1,10 @@
 import { onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { isModKey } from '../utils/platform';
 
 /**
- * Глобальные горячие клавиши в Windows-стиле.
+ * Глобальные горячие клавиши. На macOS вместо Ctrl работает и ⌘ (подписи — hotkeyLabel).
  *
  * Ctrl+N  — быстрое открытие мастера массового трекинга (route: bulk)
  * Ctrl+L  — переход на страницу «Мой worklog» (route: worklog)
@@ -35,14 +36,14 @@ export function useHotkeys() {
   // Ctrl+N даёт e.key === 'т', и горячие клавиши не срабатывали.
   async function handler(e: KeyboardEvent) {
     // --- Ctrl+N: Мастер массового трекинга ---
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyN') {
+    if (isModKey(e) && !e.shiftKey && !e.altKey && e.code === 'KeyN') {
       e.preventDefault();
       await router.push({ name: 'bulk' });
       return;
     }
 
     // --- Ctrl+L: Таблица worklog ---
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyL') {
+    if (isModKey(e) && !e.shiftKey && !e.altKey && e.code === 'KeyL') {
       e.preventDefault();
       await router.push({ name: 'worklog' });
       return;
@@ -50,34 +51,34 @@ export function useHotkeys() {
 
     // --- Ctrl+, : Настройки ---
     // Ctrl+K — «Календарь → Jira» (подсказка показана в боковом меню)
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyK') {
+    if (isModKey(e) && !e.shiftKey && !e.altKey && e.code === 'KeyK') {
       e.preventDefault();
       await router.push({ name: 'calendar' });
       return;
     }
 
     // Ctrl+D — «Собрать день», Ctrl+J — «Дайджест»
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.code === 'KeyD' || e.code === 'KeyJ')) {
+    if (isModKey(e) && !e.shiftKey && !e.altKey && (e.code === 'KeyD' || e.code === 'KeyJ')) {
       e.preventDefault();
       await router.push({ name: e.code === 'KeyD' ? 'compose' : 'digest' });
       return;
     }
 
     // Ctrl+T — «Команда»
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyT') {
+    if (isModKey(e) && !e.shiftKey && !e.altKey && e.code === 'KeyT') {
       e.preventDefault();
       await router.push({ name: 'team' });
       return;
     }
 
     // Ctrl+B — «Битрикс24» (если раздел включён: иначе маршрут покажет, как подключить)
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyB') {
+    if (isModKey(e) && !e.shiftKey && !e.altKey && e.code === 'KeyB') {
       e.preventDefault();
       await router.push({ name: 'bitrix' });
       return;
     }
 
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'Comma') {
+    if (isModKey(e) && !e.shiftKey && !e.altKey && e.code === 'Comma') {
       e.preventDefault();
       await router.push({ name: 'settings' });
       return;
@@ -91,7 +92,7 @@ export function useHotkeys() {
     }
 
     // --- Ctrl+M: Свернуть в трей ---
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyM') {
+    if (isModKey(e) && !e.shiftKey && !e.altKey && e.code === 'KeyM') {
       e.preventDefault();
       try {
         const win = getCurrentWindow();

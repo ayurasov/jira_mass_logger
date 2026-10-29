@@ -5,13 +5,15 @@
 <template>
   <div class="hk-bar" aria-label="Горячие клавиши">
     <span v-for="hk in HOTKEYS" :key="hk.key" class="hk-item">
-      <kbd>{{ hk.key }}</kbd>
+      <kbd>{{ hotkeyLabel(hk.key) }}</kbd>
       <span>{{ hk.label }}</span>
     </span>
   </div>
 </template>
 
 <script setup lang="ts">
+import { hotkeyLabel } from '../utils/platform';
+
 const HOTKEYS = [
   { key: 'Ctrl+N', label: 'Новый worklog' },
   { key: 'Ctrl+L', label: 'Мой worklog' },

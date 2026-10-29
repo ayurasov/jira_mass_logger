@@ -365,6 +365,11 @@ select.field-input { cursor: pointer; appearance: auto; }
 
 .link { color: var(--color-primary, var(--primary, #2a62ff)); text-underline-offset: 2px; }
 .link:hover { color: var(--color-primary-hover, var(--primary-strong, #1f4fd3)); }
+.link-btn { border: none; background: none; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; }
+/* Перенос настроек на первом шаге */
+.step-transfer, .step-from-file { margin: 0; font-size: var(--text-sm, 0.875rem); color: var(--color-text-muted, var(--muted, #5d6475)); }
+.step-from-file { display: flex; align-items: center; gap: 0.4rem; color: var(--success, #1a7f37); }
+.step-error-inline { margin: 0; font-size: var(--text-sm, 0.875rem); color: var(--danger, #c62828); }
 
 /* Табы (Exchange) */
 .type-tabs {

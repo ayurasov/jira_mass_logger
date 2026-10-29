@@ -15,14 +15,56 @@
           :disabled="autostartBusy"
           @change="onToggleAutostart(($event.target as HTMLInputElement).checked)"
         />
-        Запускать при старте Windows
+        Запускать при входе в {{ osName() }}
       </label>
-      <p class="hint">
+      <p v-if="isMac" class="hint">JiraTime появится в «Системные настройки → Основные → Объекты входа».</p>
+      <p v-else-if="isWindows" class="hint">
         Использует <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code> — не требует прав администратора.
       </p>
       <p v-if="autostartMessage" :class="['status-text', autostartSuccess ? 'status-text--ok' : 'status-text--error']">
         {{ autostartMessage }}
       </p>
+    </section>
+
+    <!-- ──────────── Обновления ──────────── -->
+    <section id="updates" class="settings-card">
+      <div class="card-header">
+        <h3>Обновления</h3>
+        <span v-if="appVersion" class="version-tag">версия {{ appVersion }}</span>
+      </div>
+      <p v-if="updates.configured === false" class="hint">
+        В этой сборке автообновление не настроено — новые версии устанавливаются вручную из файла установщика.
+      </p>
+      <template v-else>
+        <label class="checkbox-row-inline">
+          <input type="checkbox" :checked="updates.prefs.autoCheck" @change="updates.setAutoCheck(($event.target as HTMLInputElement).checked)" />
+          Проверять обновления при запуске
+        </label>
+        <div class="inline-actions">
+          <button class="btn btn--secondary btn--sm" :disabled="updates.checking || updates.busy" @click="updates.check()">
+            {{ updates.checking ? 'Проверка…' : 'Проверить сейчас' }}
+          </button>
+          <span v-if="updates.prefs.lastCheckAt" class="hint update-last">
+            Последняя проверка: {{ fmtDateTime(updates.prefs.lastCheckAt) }}<template v-if="updates.status"> — {{ updates.status }}</template>
+          </span>
+        </div>
+        <div v-if="updates.available" class="update-card">
+          <div class="update-card__head">
+            <strong>Доступна версия {{ updates.available.version }}</strong>
+            <span v-if="updates.available.date" class="hint">от {{ fmtIsoDate(updates.available.date) }}</span>
+          </div>
+          <pre v-if="updates.available.notes" class="update-notes">{{ updates.available.notes }}</pre>
+          <div v-if="updates.busy" class="update-progress">
+            <div class="update-progress__bar"><span :style="{ width: (updates.progressPercent ?? 100) + '%' }" /></div>
+            <span class="hint">{{ updates.progressText }}</span>
+          </div>
+          <div v-else class="inline-actions">
+            <button class="btn btn--primary btn--sm" @click="updates.install()">Скачать и установить</button>
+            <span class="hint">{{ isWindows ? 'Установщик закроет JiraTime и сразу откроет новую версию.' : 'После установки JiraTime перезапустится.' }}</span>
+          </div>
+        </div>
+        <p v-if="updates.error" class="status-text status-text--error">{{ updates.error }}</p>
+      </template>
     </section>
 
     <!-- ──────────── Рабочий график ──────────── -->
@@ -58,7 +100,7 @@
       </div>
       <label class="checkbox-row-inline">
         <input v-model="reminder.reminderEnabled" type="checkbox" @change="saveReminder" />
-        Показывать уведомление Windows, если за день списано меньше нормы
+        Показывать системное уведомление, если за день списано меньше нормы
       </label>
       <div class="sched-grid" :class="{ 'is-disabled': !reminder.reminderEnabled }">
         <label class="field">
@@ -194,10 +236,28 @@
             {{ bitrix.connecting ? 'Проверка…' : 'Подключить' }}
           </button>
         </div>
-        <p class="hint">Адрес вебхука хранится только в системном хранилище паролей (Windows Credential Manager / связка ключей macOS).</p>
+        <p class="hint">Адрес вебхука хранится только в {{ secretStoreName() }}.</p>
       </template>
       <p v-if="bitrixMessage" :class="['status-text', bitrixOk ? 'status-text--ok' : 'status-text--error']">{{ bitrixMessage }}</p>
     </section>
+
+    <!-- ──────────── Перенос настроек ──────────── -->
+    <section id="transfer" class="settings-card">
+      <div class="card-header">
+        <h3>Перенос настроек</h3>
+      </div>
+      <p class="hint">
+        Сохраните настройки в файл и откройте его в JiraTime на другом компьютере: рабочий график и праздники,
+        шаблоны, правила встреч, избранные задачи, команды, сохранённые JQL и подключения.
+        Пароли, токены и вебхуки в файл не попадают — их нужно будет ввести заново.
+      </p>
+      <div class="inline-actions">
+        <button class="btn btn--secondary btn--sm" :disabled="transfer.busy" @click="exportSettings">Сохранить в файл…</button>
+        <button class="btn btn--secondary btn--sm" :disabled="transfer.busy" @click="pickImport">Загрузить из файла…</button>
+      </div>
+      <p v-if="transferMessage" :class="['status-text', transferOk ? 'status-text--ok' : 'status-text--error']">{{ transferMessage }}</p>
+    </section>
+    <SettingsImportDialog v-if="importFile" :file="importFile" @close="importFile = null" @done="reloadAfterImport" />
 
     <!-- ──────────── Danger zone: сброс настроек ──────────── -->
     <section class="settings-card danger-zone">
@@ -205,8 +265,8 @@
         <h3>Сброс настроек</h3>
       </div>
       <p class="muted">
-        Удалит все профили Jira и Exchange, сохранённые токены/пароли в системном
-        keychain и общие настройки, а затем запустит онбординг заново. Используйте,
+        Удалит все профили Jira и Exchange, сохранённые токены и пароли из системного
+        хранилища и общие настройки, а затем запустит онбординг заново. Используйте,
         если экран «Профили» или мастер логирования ведут себя некорректно после ошибки или
         неудачного обновления.
       </p>
@@ -219,16 +279,23 @@
     </section>
 
     <div class="policy-hint">
-      <strong>Примечание для корпоративных Windows / Intune окружений:</strong>
-      если встроенный WebView2 или OAuth redirect блокируется политиками, приложение покажет явную ошибку.
-      В таком случае проверьте, что политика не запрещает embedded browser sign-in, или используйте EWS с NTLM.
-      Пароли и токены хранятся в системном keyring (Windows Credential Manager) по ключу secret&nbsp;ref.
+      <template v-if="isWindows">
+        <strong>Примечание для корпоративных Windows / Intune окружений:</strong>
+        если встроенный WebView2 или OAuth redirect блокируется политиками, приложение покажет явную ошибку.
+        В таком случае проверьте, что политика не запрещает embedded browser sign-in, или используйте EWS с NTLM.
+      </template>
+      <template v-else>
+        <strong>Примечание для корпоративных окружений:</strong>
+        если вход через Microsoft (OAuth) блокируется политиками, приложение покажет явную ошибку —
+        в таком случае используйте подключение к Exchange через EWS.
+      </template>
+      Пароли и токены хранятся в {{ secretStoreName() }}, а не в базе приложения.
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { isEnabled, enable, disable } from '@tauri-apps/plugin-autostart';
 import DatePicker from '../components/DatePicker.vue';
@@ -236,6 +303,13 @@ import { useSettingsStore } from '../store/settings';
 import { RU_HOLIDAYS_DEFAULT } from '../lib/ruHolidays';
 import { tauriApi, type SchedulerSettings } from '../lib/tauriApi';
 import { useBitrixStore } from '../store/bitrix';
+import { useUpdatesStore } from '../store/updates';
+import { useSettingsTransferStore } from '../store/settingsTransfer';
+import SettingsImportDialog from '../components/SettingsImportDialog.vue';
+import type { SettingsFile } from '../utils/settingsTransfer';
+import { getVersion } from '@tauri-apps/api/app';
+import { useRoute } from 'vue-router';
+import { isMac, isWindows, osName, secretStoreName } from '../utils/platform';
 
 const settingsStore = useSettingsStore();
 
@@ -270,7 +344,7 @@ async function onToggleAutostart(checked: boolean) {
     autostartEnabled.value = checked;
     autostartSuccess.value = true;
     autostartMessage.value = checked
-      ? 'Автозапуск включён: JiraTime будет запускаться при входе в Windows.'
+      ? `Автозапуск включён: JiraTime будет запускаться при входе в ${osName()}.`
       : 'Автозапуск отключён.';
   } catch (err) {
     autostartSuccess.value = false;
@@ -440,9 +514,65 @@ async function saveReminder() {
   }
 }
 
+// ──────────── Перенос настроек ────────────
+const transfer = useSettingsTransferStore();
+const transferMessage = ref('');
+const transferOk = ref(true);
+const importFile = ref<SettingsFile | null>(null);
+
+async function exportSettings() {
+  transferMessage.value = '';
+  try {
+    const path = await transfer.exportToFile();
+    if (path) { transferOk.value = true; transferMessage.value = `Настройки сохранены: ${path}`; }
+  } catch (e) {
+    transferOk.value = false;
+    transferMessage.value = `Не удалось сохранить: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
+async function pickImport() {
+  transferMessage.value = '';
+  try {
+    importFile.value = await transfer.pickFile();
+  } catch (e) {
+    transferOk.value = false;
+    transferMessage.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// Сторы читают настройки при запуске — после импорта перезагружаем интерфейс.
+function reloadAfterImport() {
+  window.location.reload();
+}
+
+// ──────────── Обновления ────────────
+const updates = useUpdatesStore();
+const appVersion = ref('');
+
+function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function fmtIsoDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+}
+
+// Переход по ссылке вида #/settings#updates: прокручиваем к нужному разделу
+// (прокрутка у приложения — внутри .app-main, а не у окна).
+const route = useRoute();
+function scrollToHash() {
+  const id = route.hash?.slice(1);
+  if (id) nextTick(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }));
+}
+watch(() => route.hash, scrollToHash);
+
 onMounted(() => {
   loadAutostartState();
   loadReminder();
+  updates.init();
+  getVersion().then((v) => { appVersion.value = v; }).catch(() => {});
+  scrollToHash();
 });
 </script>
 
@@ -592,4 +722,16 @@ onMounted(() => {
 #bitrix .inline-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
 #bitrix .checkbox-row-inline { font-size: 0.875rem; margin: 0.25rem 0; }
 #bitrix .bitrix-status { margin-bottom: 0.25rem; }
+/* Обновления */
+.version-tag { font-size: 0.8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+#updates .inline-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 0.75rem; margin-top: 0.6rem; }
+#updates .inline-actions .hint { margin: 0; }
+.update-card { margin-top: 0.85rem; border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border)); background: color-mix(in srgb, var(--primary) 5%, var(--card)); border-radius: 0.625rem; padding: 0.75rem 0.9rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.update-card__head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.update-card__head .hint { margin: 0; }
+.update-notes { margin: 0; max-height: 10rem; overflow: auto; white-space: pre-wrap; font: inherit; font-size: 0.8125rem; line-height: 1.45; color: var(--fg); }
+.update-progress { display: flex; flex-direction: column; gap: 0.35rem; }
+.update-progress .hint { margin: 0; }
+.update-progress__bar { height: 6px; border-radius: 999px; background: var(--chip); overflow: hidden; max-width: 28rem; }
+.update-progress__bar span { display: block; height: 100%; background: var(--primary); transition: width 200ms ease; }
 </style>

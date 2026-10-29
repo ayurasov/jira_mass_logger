@@ -4,3 +4,6 @@ src-tauri/target/
 src-tauri/gen/
 *.log
 .DS_Store
+
+# Генерируется релизным workflow (.github/scripts/updater-config.mjs)
+src-tauri/tauri.updater.conf.json

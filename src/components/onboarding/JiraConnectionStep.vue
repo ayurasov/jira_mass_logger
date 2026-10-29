@@ -2,16 +2,40 @@
 import { ref, reactive, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import ActionIcon from '../ActionIcon.vue';
+import SettingsImportDialog from '../SettingsImportDialog.vue';
+import { useSettingsTransferStore } from '../../store/settingsTransfer';
+import type { SettingsFile } from '../../utils/settingsTransfer';
 
 const emit = defineEmits<{ done: []; skip: [] }>();
 
+// Переезд с другого компьютера: подключение из файла настроек заполняет форму —
+// остаётся ввести токен или пароль.
+const transfer = useSettingsTransferStore();
+const fromFile = transfer.pending.jira[0] ?? null;
+
 const form = reactive({
-  url: '',
-  email: '',
+  url: fromFile?.baseUrl ?? '',
+  email: fromFile?.email ?? '',
   token: '',
-  authType: 'Bearer' as 'Bearer' | 'Basic',
-  acceptInvalidCerts: false,
+  authType: (fromFile?.authType === 'server_basic' ? 'Basic' : 'Bearer') as 'Bearer' | 'Basic',
+  acceptInvalidCerts: fromFile?.acceptInvalidCerts ?? false,
 });
+
+const importFile = ref<SettingsFile | null>(null);
+const importError = ref('');
+// После импорта перезагружаем интерфейс: сторы читают настройки при запуске.
+function reloadApp() {
+  window.location.reload();
+}
+
+async function pickSettingsFile() {
+  importError.value = '';
+  try {
+    importFile.value = await transfer.pickFile();
+  } catch (e) {
+    importError.value = e instanceof Error ? e.message : String(e);
+  }
+}
 
 const testing = ref(false);
 const error  = ref('');
@@ -69,7 +93,7 @@ async function testAndSave() {
     await invoke('save_jira_profile', {
       profile: {
         id: null,
-        name: 'Default',
+        name: fromFile?.name || 'Default',
         instanceType: iType,
         authType: iType === 'cloud' ? 'token' : (iType === 'server_basic' ? 'server_basic' : 'pat'),
         baseUrl: params.baseUrl,
@@ -82,6 +106,7 @@ async function testAndSave() {
       },
     });
 
+    transfer.resolveJira(params.baseUrl, form.email);
     success.value = true;
     setTimeout(() => emit('done'), 800);
   } catch (e: unknown) {
@@ -114,6 +139,16 @@ async function testAndSave() {
         >Получить токен →</a>
       </template>
     </p>
+
+    <p v-if="fromFile" class="step-from-file">
+      <ActionIcon name="check-circle" :size="14" /> Подключение «{{ fromFile.name }}» взято из файла настроек — введите токен или пароль.
+    </p>
+    <p v-else class="step-transfer">
+      Переезжаете с другого компьютера?
+      <button type="button" class="link link-btn" @click="pickSettingsFile">Загрузить настройки из файла</button>
+    </p>
+    <p v-if="importError" class="step-error-inline">{{ importError }}</p>
+    <SettingsImportDialog v-if="importFile" :file="importFile" @close="importFile = null" @done="reloadApp" />
 
     <form class="step-form" @submit.prevent="testAndSave" novalidate>
 

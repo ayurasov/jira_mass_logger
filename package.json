@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@tanstack/vue-table": "^8.20.5",
@@ -16,8 +18,10 @@
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.0.0",
     "@tauri-apps/plugin-opener": "^2.0.0",
+    "@tauri-apps/plugin-process": "~2.3.1",
     "@tauri-apps/plugin-shell": "^2.0.0",
     "@tauri-apps/plugin-sql": "^2.0.0",
+    "@tauri-apps/plugin-updater": "~2.12.0",
     "date-fns": "^3.6.0",
     "pinia": "^2.1.7",
     "vue": "^3.4.21",
@@ -26,8 +30,10 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
     "@vitejs/plugin-vue": "^5.0.4",
+    "happy-dom": "~15.11.7",
     "typescript": "^5.4.5",
     "vite": "^5.2.0",
+    "vitest": "~2.1.9",
     "vue-tsc": "^2.0.0"
   }
 }

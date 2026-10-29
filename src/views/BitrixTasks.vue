@@ -7,6 +7,7 @@ import ActionIcon from '../components/ActionIcon.vue';
 import { BITRIX_ROLES, BITRIX_STATUS, plainBitrixText, useBitrixStore } from '../store/bitrix';
 import { tauriApi } from '../lib/tauriApi';
 import { localIsoDate } from '../utils/time';
+import { hotkeyLabel, isMac } from '../utils/platform';
 
 const store = useBitrixStore();
 const draft = ref('');
@@ -155,7 +156,7 @@ async function insertTodayWorklog() {
 
             <!-- Новый комментарий -->
             <div class="bx-compose">
-              <textarea v-model="draft" rows="3" placeholder="Комментарий к задаче… (Ctrl+Enter — отправить)" @keydown.ctrl.enter="send"></textarea>
+              <textarea v-model="draft" rows="3" :placeholder="`Комментарий к задаче… (${hotkeyLabel('Ctrl+Enter')} — отправить)`" @keydown.ctrl.enter="send" @keydown.meta.enter="isMac && send()"></textarea>
               <div class="bx-compose__bar">
                 <label class="bx-check" title="Комментарий станет результатом задачи — его увидит постановщик в блоке «Результат»">
                   <input v-model="asResult" type="checkbox" /> Отметить как результат

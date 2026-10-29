@@ -6,28 +6,46 @@ on:
   pull_request:
 
 jobs:
-  test-windows:
-    name: Rust tests (windows-latest)
-    runs-on: windows-latest
+  # Интерфейс: типы, тесты логики (vitest) и production-сборка.
+  frontend:
+    name: Frontend (typecheck, tests, build)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx vue-tsc --noEmit -p tsconfig.json
+
+      - name: Unit tests (vitest)
+        run: npm test
+
+      - name: Build
+        run: npx vite build
+
+  # Rust: компиляция и тесты на целевых платформах сборки.
+  rust:
+    name: Rust tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      # Tauri v2 на Windows требует WebView2 Runtime и VC++ Redist.
-      # На GitHub-hosted windows-latest они обычно есть, но явная установка
-      # страхует от edge-case при cargo check с tauri фичами.
-      - name: Install WebView2 (Tauri requirement)
-        shell: pwsh
-        run: |
-          $installer = "$env:TEMP\MicrosoftEdgeWebView2RuntimeInstaller.exe"
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $installer
-          Start-Process -FilePath $installer -Args "/silent /install" -Wait
-        continue-on-error: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -36,19 +54,17 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-ci-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-ci-
 
-      # cargo check достаточно для проверки компилируемости без полной сборки Tauri.
-      # --no-default-features исключает custom-protocol (Tauri bundler), который
-      # требует tauri-build артефакты и не нужен в CI.
-      - name: cargo check (lib + bins)
-        working-directory: src-tauri
-        run: cargo check --locked --no-default-features
+      # generate_context!() встраивает фронтенд из ../dist — для тестов хватает заглушки.
+      - name: Placeholder frontend dist
+        shell: bash
+        run: mkdir -p dist && [ -f dist/index.html ] || echo '<!doctype html><title>JiraTime</title>' > dist/index.html
 
-      # Запускаем только unit-тесты (без интеграционных, требующих UI/WebView2).
-      # lib-тесты не поднимают Tauri runtime.
-      - name: cargo test (unit only)
+      # У крейта нет lib-цели (только bin), поэтому тесты запускаем через --bins:
+      # прежний `cargo test --lib` падал с «no library targets found».
+      - name: cargo test
         working-directory: src-tauri
-        run: cargo test --locked --no-default-features --lib -- --nocapture
+        run: cargo test --locked --no-default-features --bins

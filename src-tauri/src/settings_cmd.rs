@@ -23,6 +23,19 @@ pub fn get_system_theme() -> String {
 
 /// Сохраняет рабочий график в таблицу settings (SQLite).
 /// Вызывается из Vue settings store при onboarding/изменении настроек.
+/// Чтение файла, выбранного пользователем в диалоге открытия (импорт настроек).
+/// Файл настроек маленький — больше 5 МБ не читаем, чтобы случайно выбранный
+/// большой файл не повесил приложение.
+#[tauri::command]
+pub fn read_text_file(path: String) -> Result<String, String> {
+    const MAX_BYTES: u64 = 5 * 1024 * 1024;
+    let meta = std::fs::metadata(&path).map_err(|e| format!("Не удалось открыть файл: {e}"))?;
+    if meta.len() > MAX_BYTES {
+        return Err("Файл слишком большой для файла настроек (больше 5 МБ).".into());
+    }
+    std::fs::read_to_string(&path).map_err(|e| format!("Не удалось прочитать файл: {e}"))
+}
+
 #[tauri::command]
 pub fn save_work_schedule(
     db: tauri::State<'_, crate::bulk_wizard::WizardDb>,

@@ -15,6 +15,7 @@ import {
   inProgressWithoutWorklog, overdueCount, plural, staleCount, summarize, unassignedCount, type DigestIssue,
 } from '../utils/digest';
 import type { JiraFilterDto } from '../lib/tauriApi';
+import { hotkeyLabel, isMac } from '../utils/platform';
 
 const store = useDigestStore();
 const team = useTeamStore();
@@ -200,7 +201,7 @@ const catClass = (i: DigestIssue) => `cat--${i.statusCategory || 'new'}`;
       </div>
       <div v-else-if="store.prefs.scopeType === 'jql'" class="dg-projects">
         <div class="dg-jql-row">
-          <textarea v-model="store.prefs.jql" class="dg-jql" rows="2" placeholder='Например: project = ABC AND "Epic Link" = ABC-1' @keydown.ctrl.enter="store.load()"></textarea>
+          <textarea v-model="store.prefs.jql" class="dg-jql" rows="2" placeholder='Например: project = ABC AND "Epic Link" = ABC-1' @keydown.ctrl.enter="store.load()" @keydown.meta.enter="isMac && store.load()"></textarea>
           <div class="dg-jql-save">
             <input v-model="jqlName" class="dg-input" placeholder="Название запроса" :disabled="!store.prefs.jql.trim()" @keydown.enter="saveJql" />
             <button class="dg-btn dg-btn--sm" :disabled="!store.prefs.jql.trim()" title="Сохранить текущий JQL в «Мои запросы»" @click="saveJql">
@@ -215,7 +216,7 @@ const catClass = (i: DigestIssue) => `cat--${i.statusCategory || 'new'}`;
             <button class="dg-seg__btn" :class="{ 'is-on': jqlTab === 'recent' }" @click="jqlTab = 'recent'">Недавние <span class="dg-count">{{ store.prefs.recentJql.length }}</span></button>
             <button class="dg-seg__btn" :class="{ 'is-on': jqlTab === 'examples' }" @click="jqlTab = 'examples'">Примеры</button>
           </div>
-          <span class="dg-muted dg-small">Ctrl+Enter — показать</span>
+          <span class="dg-muted dg-small">{{ hotkeyLabel('Ctrl+Enter') }} — показать</span>
         </div>
 
         <div v-if="jqlTab === 'saved'" class="dg-chips">

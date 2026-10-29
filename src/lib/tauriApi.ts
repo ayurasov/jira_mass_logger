@@ -378,7 +378,10 @@ export const tauriApi = {
   saveWizardTemplate(name: string, configJson: string) { return invoke<number>('save_wizard_template', { name, configJson }); },
   deleteWizardTemplate(id: number) { return invoke<void>('delete_wizard_template', { id }); },
   getCustomHolidays() { return invoke<string[]>('get_custom_holidays'); },
-  importHolidays(json: string) { return invoke<number>('import_holidays', { json }); },
+  /** Заменяет список доп. выходных (custom_holidays) на переданный. */
+  importHolidays(dates: string[]) { return invoke<number>('import_holidays', { dates }); },
+  /** Чтение файла, выбранного пользователем в диалоге (импорт настроек). */
+  readTextFile(path: string) { return invoke<string>('read_text_file', { path }); },
   writeExportFile(path: string, content: string) { return invoke<void>('write_export_file', { path, content }); },
   writeExportFileUtf8Bom(path: string, content: string) { return invoke<void>('write_export_file_utf8_bom', { path, content }); },
 
@@ -439,6 +442,8 @@ export const tauriApi = {
   saveSchedulerSettings(settings: SchedulerSettings) { return invoke<void>('save_scheduler_settings', { settings }); },
   // --- License ---
   getLicenseStatus() { return invoke<LicenseStatus>('get_license_status'); },
+  // --- Автообновление: настроен ли канал в этой сборке ---
+  updateChannelInfo() { return invoke<{ configured: boolean; endpoint: string | null }>('update_channel_info'); },
   activateLicenseCode(code: string) { return invoke<ActivateResult>('activate_license_code', { code }); },
 
   profileToConnectionParams,

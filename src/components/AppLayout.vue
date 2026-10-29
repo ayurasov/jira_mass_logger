@@ -11,7 +11,9 @@ import { useRoute } from 'vue-router';
 import AppLogo from './AppLogo.vue';
 import NavIcon, { type NavIconName } from './NavIcon.vue';
 import ActionIcon from './ActionIcon.vue';
+import UpdateBanner from './UpdateBanner.vue';
 import { useBitrixStore } from '../store/bitrix';
+import { hotkeyLabel } from '../utils/platform';
 
 interface NavItem {
   name: string;
@@ -103,12 +105,13 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
         >
           <span class="nav-icon"><NavIcon :name="item.icon" :size="19" /></span>
           <span class="nav-label">{{ item.label }}</span>
-          <span v-if="item.hotkey && !collapsed" class="nav-hotkey">{{ item.hotkey }}</span>
+          <span v-if="item.hotkey && !collapsed" class="nav-hotkey">{{ hotkeyLabel(item.hotkey) }}</span>
         </router-link>
       </nav>
     </aside>
 
     <main class="app-main">
+      <UpdateBanner />
       <router-view />
     </main>
   </div>

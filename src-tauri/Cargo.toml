@@ -57,6 +57,8 @@ regex = "1"
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 # data-encoding: base32 для компактного человекочитаемого представления кодов
 data-encoding = "2"
+tauri-plugin-updater = "~2.12"
+tauri-plugin-process = "~2.3"
 
 [target.'cfg(windows)'.dependencies]
 whoami = "1"

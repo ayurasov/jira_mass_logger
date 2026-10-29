@@ -2,6 +2,36 @@
   <div class="profiles-page">
     <h1 class="page-title">Подключения</h1>
 
+    <!-- Подключения из перенесённого файла настроек: поля заполнены, остаётся пароль/токен -->
+    <section v-if="transfer.pending.jira.length || transfer.pending.exchange.length" class="card pending-card">
+      <div class="card-header">
+        <span class="card-title">Подключения из перенесённых настроек</span>
+      </div>
+      <p class="pending-hint">Адреса и логины уже заполнены — нажмите «Добавить» и введите пароль или токен.</p>
+      <ul class="pending-list">
+        <li v-for="(p, i) in transfer.pending.jira" :key="'j' + i">
+          <span class="pending-kind">Jira</span>
+          <span class="pending-name">{{ p.name }}</span>
+          <span class="url-cell">{{ p.baseUrl }}</span>
+          <span class="pending-user">{{ p.email }}</span>
+          <span class="pending-actions">
+            <button class="btn btn-primary btn-sm" @click="addPendingJira(i)">Добавить</button>
+            <button class="btn btn-sm" @click="transfer.dismissPending('jira', i)">Не нужно</button>
+          </span>
+        </li>
+        <li v-for="(p, i) in transfer.pending.exchange" :key="'e' + i">
+          <span class="pending-kind">Exchange</span>
+          <span class="pending-name">{{ p.name }}</span>
+          <span class="url-cell">{{ p.ewsUrl || (p.authMode === 'graph' ? 'Microsoft 365 (Graph)' : '') }}</span>
+          <span class="pending-user">{{ p.username }}</span>
+          <span class="pending-actions">
+            <button class="btn btn-primary btn-sm" @click="addPendingExchange(i)">Добавить</button>
+            <button class="btn btn-sm" @click="transfer.dismissPending('exchange', i)">Не нужно</button>
+          </span>
+        </li>
+      </ul>
+    </section>
+
     <!-- JIRA PROFILES -->
     <section class="card">
       <div class="card-header">
@@ -118,7 +148,7 @@
           </label>
           <div v-if="jiraForm.authType === 'server_basic'" class="auth-hint">
             <ActionIcon name="warning" :size="13" /> Basic Auth передаёт пароль в заголовке Authorization (Base64). Убедитесь, что соединение по HTTPS.
-            Пароль сохраняется в Windows Credential Manager, а не в базе приложения.
+            Пароль сохраняется в {{ secretStoreName() }}, а не в базе приложения.
           </div>
           <div v-else class="auth-hint">
             PAT появился в Jira Server 8.14. Для более ранних версий (например, 8.3.x) выберите «Логин + Пароль».
@@ -207,7 +237,7 @@
           <label>Авторизация
             <select v-model="exchForm.ewsAuthType">
               <option value="basic">Basic (логин + пароль, как на странице OWA)</option>
-              <option value="ntlm">NTLM (Windows only)</option>
+              <option value="ntlm">NTLM (доменная учётная запись)</option>
             </select>
           </label>
           <label>Пользователь
@@ -252,6 +282,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import ActionIcon from '../components/ActionIcon.vue';
 import { useJiraProfilesStore } from '../store/jiraProfiles';
+import { secretStoreName } from '../utils/platform';
+import { useSettingsTransferStore } from '../store/settingsTransfer';
 
 const jiraProfilesStore = useJiraProfilesStore();
 
@@ -401,6 +433,33 @@ async function loadProfiles() {
 
 onMounted(loadProfiles);
 
+// ────────── Подключения из перенесённых настроек ──────────
+
+const transfer = useSettingsTransferStore();
+
+function addPendingJira(index: number) {
+  const p = transfer.pending.jira[index];
+  if (!p) return;
+  openJiraForm(null);
+  Object.assign(jiraForm, {
+    name: p.name, instanceType: p.instanceType || 'cloud',
+    authType: p.authType ?? (p.instanceType === 'cloud' ? 'token' : 'pat'),
+    baseUrl: p.baseUrl, email: p.email, isActive: p.isActive || jiraProfiles.value.length === 0,
+    acceptInvalidCerts: p.acceptInvalidCerts,
+  });
+}
+
+function addPendingExchange(index: number) {
+  const p = transfer.pending.exchange[index];
+  if (!p) return;
+  openExchForm(null);
+  Object.assign(exchForm, {
+    name: p.name, authMode: p.authMode, ewsUrl: p.ewsUrl ?? '', ewsAuthType: p.ewsAuthType ?? 'basic', username: p.username,
+    tenantId: p.tenantId ?? '', clientId: p.clientId ?? '', minEventMinutes: p.minEventMinutes ?? 0,
+    excludeFreeBusy: p.excludeFreeBusy, excludeDeclined: p.excludeDeclined, isActive: p.isActive,
+  });
+}
+
 // ────────── Jira actions ──────────
 
 function openJiraForm(p: JiraProfile | null) {
@@ -461,6 +520,7 @@ async function saveJiraProfile() {
       },
     });
     jiraFormOpen.value = false;
+    transfer.resolveJira(jiraForm.baseUrl.trim(), jiraForm.email.trim());
     await loadProfiles();
   } catch (e: any) {
     jiraFormError.value = String(e);
@@ -596,6 +656,7 @@ async function saveExchProfile() {
       },
     });
     exchFormOpen.value = false;
+    transfer.resolveExchange(exchForm.authMode, exchForm.username);
     await loadProfiles();
   } catch (e: any) {
     exchFormError.value = String(e);
@@ -690,6 +751,16 @@ async function startOAuth() {
 .card { background: var(--surface, #fff); border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); padding: 1.2rem 1.4rem; }
 .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
 .card-title { font-size: 1.05rem; font-weight: 600; }
+.pending-card { margin-bottom: 1.25rem; border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border)); }
+.pending-hint { margin: -0.5rem 0 0.75rem; color: var(--muted); font-size: .85rem; }
+.pending-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .4rem; }
+.pending-list li { display: grid; grid-template-columns: 5.5rem minmax(6rem, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: .75rem; align-items: center; font-size: .875rem; padding: .35rem 0; border-top: 1px solid var(--border); }
+.pending-list li:first-child { border-top: none; }
+.pending-kind { font-size: .75rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.pending-name { font-weight: 600; }
+.pending-user { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-actions { display: flex; gap: .4rem; }
+.btn-sm { padding: .3rem .7rem; font-size: .8125rem; }
 .btn { padding: .4rem .9rem; border-radius: 6px; border: 1px solid var(--border, var(--border)); cursor: pointer; font-size: .9rem; background: var(--surface, #fff); }
 .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
 .btn-primary:disabled { opacity: .5; cursor: not-allowed; }

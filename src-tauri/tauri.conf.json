@@ -66,5 +66,16 @@
     "copyright": "© 2026 Alexander Yurasov",
     "longDescription": "Десктопное приложение для массового логирования рабочего времени в Jira с интеграцией Exchange/Microsoft Graph.",
     "shortDescription": "Массовый трекинг времени в Jira"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/ayurasov/jira_mass_logger/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
