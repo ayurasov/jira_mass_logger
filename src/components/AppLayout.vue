@@ -8,10 +8,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute } from 'vue-router';
+import { getVersion } from '@tauri-apps/api/app';
 import AppLogo from './AppLogo.vue';
 import NavIcon, { type NavIconName } from './NavIcon.vue';
 import ActionIcon from './ActionIcon.vue';
 import UpdateBanner from './UpdateBanner.vue';
+import ReleaseNotesModal from './ReleaseNotesModal.vue';
 import { useBitrixStore } from '../store/bitrix';
 import { hotkeyLabel } from '../utils/platform';
 import { ROUTE_CHAPTERS } from '../utils/userGuide';
@@ -36,13 +38,26 @@ const NAV_ITEMS: NavItem[] = [
   { name: 'profiles', label: 'Профили', icon: 'profiles' },
   { name: 'logs', label: 'Логи', icon: 'logs', hotkey: 'F1' },
   { name: 'settings', label: 'Настройки', icon: 'settings', hotkey: 'Ctrl+,' },
-  { name: 'guide', label: 'Руководство', icon: 'guide' },
 ];
+/** «Руководство» — внизу меню, рядом с копирайтом и версией. */
+const GUIDE_ITEM: NavItem = { name: 'guide', label: 'Руководство', icon: 'guide' };
 
 const route = useRoute();
 const bitrix = useBitrixStore();
 // «Битрикс24» — необязательный раздел: в меню, только если подключён и включён.
 const navItems = computed(() => NAV_ITEMS.filter((i) => i.name !== 'bitrix' || (bitrix.settings.enabled && bitrix.connected)));
+// Горячие клавиши в меню не подписываем — они во всплывающей подсказке.
+function titleFor(item: NavItem) {
+  const key = item.hotkey ? hotkeyLabel(item.hotkey) : '';
+  if (collapsed.value) return key ? `${item.label} (${key})` : item.label;
+  return key ? `Горячая клавиша: ${key}` : undefined;
+}
+
+// Низ меню: версия (открывает историю версий) и «О программе».
+const appVersion = ref('');
+const releaseNotesOpen = ref(false);
+const openAbout = () => window.dispatchEvent(new CustomEvent('about:open'));
+
 // «Руководство» открывается на главе того экрана, с которого перешли.
 function linkFor(item: NavItem) {
   if (item.name !== 'guide') return { name: item.name };
@@ -72,7 +87,8 @@ function toggleCollapsed() {
 
 const activeName = computed(() => route.name as string);
 
-onMounted(() => {
+onMounted(async () => {
+  getVersion().then((v) => { appVersion.value = v; }).catch(() => {});
   // Синхронизация, если значение было изменено в другой вкладке/окне (на будущее)
   window.addEventListener('storage', (e) => {
     if (e.key === 'jiratime-sidebar-collapsed') {
@@ -108,15 +124,39 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
           :to="linkFor(item)"
           class="nav-item"
           :class="{ active: activeName === item.name }"
-          :title="collapsed ? item.label : undefined"
+          :title="titleFor(item)"
           @click="narrow && expandedWhileNarrow && (expandedWhileNarrow = false)"
         >
           <span class="nav-icon"><NavIcon :name="item.icon" :size="19" /></span>
           <span class="nav-label">{{ item.label }}</span>
-          <span v-if="item.hotkey && !collapsed" class="nav-hotkey">{{ hotkeyLabel(item.hotkey) }}</span>
         </router-link>
       </nav>
+
+      <div class="sidebar-bottom">
+        <router-link
+          :to="linkFor(GUIDE_ITEM)"
+          class="nav-item"
+          :class="{ active: activeName === GUIDE_ITEM.name }"
+          :title="titleFor(GUIDE_ITEM)"
+          @click="narrow && expandedWhileNarrow && (expandedWhileNarrow = false)"
+        >
+          <span class="nav-icon"><NavIcon :name="GUIDE_ITEM.icon" :size="19" /></span>
+          <span class="nav-label">{{ GUIDE_ITEM.label }}</span>
+        </router-link>
+        <div class="sidebar-foot">
+          <div v-if="!collapsed" class="sidebar-copyright">
+            <div>© Alexander Yurasov</div>
+            <button class="sidebar-version" type="button" title="Что нового: история версий" @click="releaseNotesOpen = true">
+              JiraTime — версия {{ appVersion }}
+            </button>
+          </div>
+          <button class="sidebar-about about-toggle" type="button" title="О программе" aria-label="О программе" @click="openAbout">
+            <ActionIcon name="info" :size="17" />
+          </button>
+        </div>
+      </div>
     </aside>
+    <ReleaseNotesModal v-if="releaseNotesOpen" @close="releaseNotesOpen = false" />
 
     <main class="app-main">
       <UpdateBanner />
@@ -215,9 +255,70 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
   flex: 1 1 auto;
   min-height: 0;
   gap: 0.2rem;
-  /* Снизу место под круглую кнопку «О программе» (AboutPanel, position: fixed). */
-  padding: 0.15rem 0.5rem 3.25rem;
+  padding: 0.15rem 0.5rem 0.5rem;
   overflow-y: auto;
+}
+
+/* Низ меню: «Руководство», копирайт с версией и «О программе». */
+.sidebar-bottom {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.45rem 0.5rem 0.6rem;
+  border-top: 1px solid var(--border);
+}
+.sidebar-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.25rem 0 0.6rem;
+}
+.sidebar-copyright {
+  min-width: 0;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--muted);
+  opacity: 0.85;
+}
+.sidebar-version {
+  display: block;
+  margin-top: 0.15rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sidebar-version:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.sidebar-about {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 1px solid var(--border);
+  border-radius: 999rem;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.sidebar-about:hover {
+  background: var(--chip);
+  color: var(--fg);
+}
+.app-sidebar.collapsed .sidebar-foot {
+  justify-content: center;
+  padding: 0.35rem 0 0;
 }
 
 .nav-item {
@@ -258,22 +359,11 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
   text-overflow: ellipsis;
 }
 
-.nav-hotkey {
-  font-size: 0.65rem;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 0.3rem;
-  padding: 0.08rem 0.25rem;
-  font-family: 'Consolas', monospace;
-  flex-shrink: 0;
-}
-
 .app-sidebar.collapsed .nav-item {
   justify-content: center;
   padding: 0.5rem;
 }
-.app-sidebar.collapsed .nav-label,
-.app-sidebar.collapsed .nav-hotkey {
+.app-sidebar.collapsed .nav-label {
   display: none;
 }
 

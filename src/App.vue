@@ -81,8 +81,8 @@ useHotkeys();
     <!-- Индикатор сети/синхронизации — фиксирован в правом верхнем углу поверх навигации -->
     <SyncStatusIndicator class="app-sync-indicator" />
     <router-view />
-    <!-- Блок «О программе»: версия, автор, дата/копирайт, контакт в Telegram — правый нижний угол -->
-    <AboutPanel />
+    <!-- «О программе»: версия, автор, копирайт, контакт; кнопка — внизу бокового меню (на первом запуске — в углу) -->
+    <AboutPanel :show-toggle="router.currentRoute.value.name === 'onboarding'" />
     <!-- Глобальный модал требования лицензии -->
     <LicenseRequiredModal />
   </div>

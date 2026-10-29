@@ -8,6 +8,10 @@
 -->
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+
+// В приложении с боковым меню кнопка живёт внизу меню и открывает окно событием
+// 'about:open'; собственный плавающий значок нужен только без меню (первый запуск).
+const props = withDefaults(defineProps<{ showToggle?: boolean }>(), { showToggle: true });
 import { getVersion } from '@tauri-apps/api/app';
 import AppLogo from './AppLogo.vue';
 import ActionIcon from './ActionIcon.vue';
@@ -52,12 +56,14 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeydown);
   // Открывает панель при событии из useLicenseStore
   window.addEventListener('license:open-panel', openWithLicenseFocus);
+  window.addEventListener('about:open', openPanel);
   await loadLicenseStatus();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('license:open-panel', openWithLicenseFocus);
+  window.removeEventListener('about:open', openPanel);
 });
 
 function onKeydown(e: KeyboardEvent) {
@@ -65,6 +71,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 function toggle() { open.value = !open.value; }
+function openPanel() { open.value = true; }
 function close() { open.value = false; }
 
 function openWithLicenseFocus() {
@@ -107,6 +114,7 @@ async function activateCode() {
 
 <template>
   <button
+    v-if="props.showToggle"
     class="about-toggle"
     type="button"
     title="О программе"
