@@ -236,3 +236,93 @@ describe('«Собрать день»: утверждённые строки', (
     expect(row).toMatchObject({ approved: false, locked: true, minutes: first.minutes, start: first.start });
   });
 });
+
+describe('«Собрать день»: строки из привычных задач', () => {
+  async function openMonday(extra: { id: string; issueKey: string; issueSummary?: string; started: string; timeSpentSeconds: number; comment?: string }[] = []) {
+    const store = setup([...seedHistory(HISTORY_DAYS), ...extra]);
+    await store.load(MON);
+    return store;
+  }
+  const total = () => useComposeStore().proposal.reduce((s, p) => s + p.minutes, 0);
+  // Задача, которую логируют в 11:00 по часу в каждый третий день.
+  const qa = HISTORY_DAYS.filter((_, i) => i % 3 === 0)
+    .map((d, i) => ({ id: `qa${i}`, issueKey: 'QA-5', issueSummary: 'Тестирование', started: `${d}T11:00:00.000+0300`, timeSpentSeconds: 3600, comment: 'Тесты' }));
+
+  it('встаёт в привычное время внутри рабочего дня, а не после конца дня', async () => {
+    const store = await openMonday(qa);
+    store.addRow(store.habits.find((h) => h.issueKey === 'QA-5'));
+    const row = store.proposal.find((p) => p.issueKey === 'QA-5')!;
+    expect(row).toMatchObject({ start: 11 * 60, minutes: 60, locked: true });
+    expect(total()).toBe(480);
+    expect(findOverlaps(store.proposal, store.existing).size).toBe(0);
+    expect(store.proposal.every((p) => p.start + p.minutes <= 18 * 60)).toBe(true);
+  });
+
+  it('плотный день: строка укорачивается до свободного окна, а не уезжает за конец дня', async () => {
+    const logged = (id: string, from: string, hours: number) => ({ id, issueKey: 'OPS-12', started: `${MON}T${from}:00.000+0300`, timeSpentSeconds: hours * 3600 });
+    const store = await openMonday([logged('l1', '09:00', 2), logged('l2', '11:30', 1.5), logged('l3', '14:00', 3)]);
+    store.addRow(store.habits.find((h) => h.issueKey === 'DOC-7'));
+    const row = store.proposal.find((p) => p.issueKey === 'DOC-7' && p.locked)!;
+    expect(row).toMatchObject({ start: 17 * 60, minutes: 60 });
+    expect(store.filledMinutes + total()).toBe(480);
+    expect(findOverlaps(store.proposal, store.existing).size).toBe(0);
+    expect(store.proposal.every((p) => p.start + p.minutes <= 18 * 60)).toBe(true);
+  });
+
+  it('несколько добавленных подряд не наезжают друг на друга и остаются в рабочем дне', async () => {
+    const store = await openMonday(qa);
+    for (const key of ['QA-5', 'DOC-7', 'SRM-204']) store.addRow(store.habits.find((h) => h.issueKey === key));
+    store.addRow();
+    expect(findOverlaps(store.proposal, store.existing).size).toBe(0);
+    expect(store.proposal.every((p) => p.start >= 9 * 60 && p.start + p.minutes <= 18 * 60)).toBe(true);
+    expect(store.proposal.every((p) => p.start + p.minutes <= 13 * 60 || p.start >= 14 * 60)).toBe(true);
+    expect(total()).toBe(480);
+  });
+});
+
+describe('«Собрать день»: какие привычные задачи предлагать', () => {
+  const keysOf = (rows: { issueKey: string }[]) => new Set(rows.map((r) => r.issueKey));
+
+  it('снятая задача не предлагается ни на экране, ни «одним нажатием», но добавляется вручную', async () => {
+    const store = setup();
+    await store.load(MON);
+    expect(keysOf(store.proposal).has('DOC-7')).toBe(true);
+
+    store.setHabitProposed('DOC-7', false);
+    expect(keysOf(store.proposal).has('DOC-7')).toBe(false);
+    expect(store.proposal.reduce((s, p) => s + p.minutes, 0)).toBe(480);
+    expect(keysOf((await store.autoPlan(TUE, false)).rows).has('DOC-7')).toBe(false);
+
+    store.addRow(store.habits.find((h) => h.issueKey === 'DOC-7'));
+    expect(keysOf(store.proposal).has('DOC-7')).toBe(true);
+  });
+
+  it('выбор запоминается между запусками', async () => {
+    const store = setup();
+    await store.load(MON);
+    store.setHabitProposed('SRM-204', false);
+
+    setActivePinia(createPinia());
+    const again = setup();
+    await again.load(TUE);
+    expect(again.isHabitProposed('SRM-204')).toBe(false);
+    expect(keysOf(again.proposal).has('SRM-204')).toBe(false);
+  });
+
+  it('«новые не предлагать»: текущие остаются, новая задача из истории не появляется', async () => {
+    const store = setup();
+    await store.load(MON);
+    const before = keysOf(store.proposal);
+    store.setProposeNewHabits(false);
+    expect(keysOf(store.proposal)).toEqual(before);
+
+    // В истории появилась новая регулярная задача — сама в предложение не попадает.
+    for (const d of HISTORY_DAYS) backend.state.jira.push({ id: `new-${d}`, issueKey: 'NEW-1', started: `${d}T08:00:00.000+0300`, timeSpentSeconds: 3600 });
+    backend.syncCache();
+    await store.load(TUE);
+    expect(store.habits.some((h) => h.issueKey === 'NEW-1')).toBe(true);
+    expect(keysOf(store.proposal).has('NEW-1')).toBe(false);
+    store.setHabitProposed('NEW-1', true);
+    expect(keysOf(store.proposal).has('NEW-1')).toBe(true);
+  });
+});

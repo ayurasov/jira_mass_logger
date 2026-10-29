@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildPlan, composeDay, findHabits, findOverlaps, firstFreeStart, hhmmToMinutes, minutesToHHMM, unfilledDays,
+  buildPlan, composeDay, findHabits, findOverlaps, firstFreeStart, hhmmToMinutes, minutesToHHMM, placeNewRow, unfilledDays,
   type ComposeOptions, type HabitTask, type HistoryWorklog,
 } from '../dayComposer';
 
@@ -41,6 +41,32 @@ describe('firstFreeStart', () => {
   });
   it('не уходит за полночь', () => {
     expect(firstFreeStart([{ start: H(9), end: H(23) }], H(9), 120)).toBe(H(22));
+  });
+});
+
+describe('placeNewRow: новая строка встаёт в рабочий день', () => {
+  const o = opts('2026-11-09');
+  const lunch = { start: H(13), end: H(14) };
+  const at = (start: number, minutes: number) => ({ start, minutes });
+  it('в желаемое время, если оно свободно', () => {
+    expect(placeNewRow([lunch], H(11), 60, o)).toEqual(at(H(11), 60));
+  });
+  it('занято — в ближайшее свободное окно после', () => {
+    expect(placeNewRow([lunch, { start: H(10), end: H(12) }], H(11), 60, o)).toEqual(at(H(12), 60));
+    expect(placeNewRow([lunch, { start: H(10), end: H(12, 30) }], H(11), 60, o)).toEqual(at(H(14), 60));
+  });
+  it('после желаемого места нет — в ближайшее окно раньше', () => {
+    expect(placeNewRow([lunch, { start: H(14), end: H(18) }], H(16), 60, o)).toEqual(at(H(12), 60));
+  });
+  it('не выходит за конец рабочего дня', () => {
+    expect(placeNewRow([lunch], H(17, 30), 120, o)).toEqual(at(H(16), 120));
+  });
+  it('целиком нигде не помещается — в самое длинное окно, укороченной', () => {
+    const busy = [lunch, { start: H(9), end: H(11) }, { start: H(11, 30), end: H(13) }, { start: H(14), end: H(17) }];
+    expect(placeNewRow(busy, H(10), 165, o)).toEqual(at(H(17), 60));
+  });
+  it('день занят целиком — сразу после занятого', () => {
+    expect(placeNewRow([{ start: H(9), end: H(18) }], H(11), 60, o)).toEqual(at(H(18), 60));
   });
 });
 
