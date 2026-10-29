@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { useComposeStore } from '../compose';
 import { useFavoriteTasksStore } from '../favoriteTasks';
-import { startMinutesOf } from '../../utils/dayComposer';
+import { findOverlaps, startMinutesOf } from '../../utils/dayComposer';
 
 /** Рабочие дни 12.10–06.11.2026 (4 ноября — праздник). */
 const HISTORY_DAYS = (() => {
@@ -146,5 +146,93 @@ describe('undoLastBatch — отменить заполнение', () => {
     expect(res.failed).toBe(1);
     expect(store.lastBatchCreated).toEqual([victim]);
     expect(backend.minutesOn(MON)).toBe(0);
+  });
+});
+
+describe('«Собрать день»: утверждённые строки', () => {
+  const view = (rows: { issueKey: string; start: number; minutes: number; comment: string }[]) =>
+    rows.map((r) => `${r.issueKey} ${r.start}+${r.minutes} ${r.comment}`).sort();
+  const approvedRows = () => view(useComposeStore().proposal.filter((p) => p.approved));
+  const total = () => useComposeStore().proposal.reduce((s, p) => s + p.minutes, 0);
+
+  async function openMonday() {
+    const store = setup();
+    await store.load(MON);
+    expect(total()).toBe(480);
+    return store;
+  }
+
+  it('отметка не перестраивает день: строки остаются как были', async () => {
+    const store = await openMonday();
+    const before = view(store.proposal);
+    store.setApproved(store.proposal[0].id, true);
+    expect(view(store.proposal)).toEqual(before);
+    expect(store.proposal.filter((p) => p.approved)).toHaveLength(1);
+    expect(store.approvedMinutes).toBe(store.proposal.find((p) => p.approved)!.minutes);
+  });
+
+  it('удаление строки добирает часы только за счёт неутверждённых', async () => {
+    const store = await openMonday();
+    const [a, b] = [...store.proposal].sort((x, y) => x.start - y.start);
+    store.setApproved(a.id, true);
+    store.setApproved(b.id, true);
+    const approved = approvedRows();
+    const victim = store.proposal.find((p) => !p.approved)!;
+
+    store.removeItem(victim.id);
+
+    expect(approvedRows()).toEqual(approved);
+    expect(total()).toBe(480);
+    expect(findOverlaps(store.proposal, store.existing).size).toBe(0);
+    expect(store.proposal.filter((p) => !p.approved).some((p) => p.issueKey === victim.issueKey)).toBe(false);
+  });
+
+  it('правка другой строки не урезает утверждённые', async () => {
+    const store = await openMonday();
+    const [a, b] = [...store.proposal].sort((x, y) => x.start - y.start);
+    store.setApproved(a.id, true);
+    const approved = approvedRows();
+
+    store.editItem(b.id, { minutes: 7 * 60 });
+
+    expect(approvedRows()).toEqual(approved);
+    expect(total()).toBe(480);
+  });
+
+  it('утверждённое больше цели — остаётся перебор, строки не урезаются', async () => {
+    const store = await openMonday();
+    store.setAllApproved(true);
+    const first = [...store.proposal].sort((x, y) => x.start - y.start)[0];
+    const others = view(store.proposal.filter((p) => p.id !== first.id));
+
+    store.editItem(first.id, { minutes: first.minutes + 120 });
+
+    expect(total()).toBe(600);
+    expect(view(store.proposal.filter((p) => p.id !== first.id))).toEqual(others);
+    expect(store.proposal.every((p) => p.approved)).toBe(true);
+  });
+
+  it('«Пересобрать» забывает правки, но оставляет утверждённые строки', async () => {
+    const store = await openMonday();
+    const [a, b] = [...store.proposal].sort((x, y) => x.start - y.start);
+    store.setApproved(a.id, true);
+    const approved = approvedRows();
+    store.editItem(b.id, { comment: 'временная правка' });
+
+    store.reset();
+
+    expect(approvedRows()).toEqual(approved);
+    expect(store.proposal.some((p) => p.comment === 'временная правка')).toBe(false);
+    expect(total()).toBe(480);
+  });
+
+  it('снятая отметка оставляет строку правкой, и её снова можно урезать', async () => {
+    const store = await openMonday();
+    const first = [...store.proposal].sort((x, y) => x.start - y.start)[0];
+    store.setApproved(first.id, true);
+    const id = store.proposal.find((p) => p.approved)!.id;
+    store.setApproved(id, false);
+    const row = store.proposal.find((p) => p.id === id)!;
+    expect(row).toMatchObject({ approved: false, locked: true, minutes: first.minutes, start: first.start });
   });
 });

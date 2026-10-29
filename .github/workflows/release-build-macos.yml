@@ -111,7 +111,7 @@ jobs:
           files: ${{ steps.dmg.outputs.path }}
           fail_on_unmatched_files: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Upload logs on failure
         if: failure()

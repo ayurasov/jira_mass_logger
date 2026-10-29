@@ -140,6 +140,15 @@ jobs:
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Release token
+        shell: bash
+        env:
+          HAS_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN != '' }}
+        run: |
+          if [ "$HAS_RELEASE_TOKEN" != "true" ]; then
+            echo "::warning::Секрет RELEASE_TOKEN не задан — релиз будет опубликован от имени github-actions[bot]. См. docs/updates-setup.md."
+          fi
+
   # ─────────────────────────────────────────────
   # Windows x64 + arm64
   # ─────────────────────────────────────────────
@@ -213,13 +222,16 @@ jobs:
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Релиз и файлы публикуются токеном владельца репозитория (иначе автор — github-actions[bot]).
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           CODESIGN_PFX_PASSWORD: ${{ secrets.CODESIGN_PFX_PASSWORD }}
           RUST_BACKTRACE: 1
         with:
           tagName: ${{ env.TAG_NAME }}
+          # Тег — на коммит релиза (версия + CHANGELOG), из которого и собраны файлы.
+          releaseCommitish: ${{ needs.prepare-release.outputs.sha || github.sha }}
           releaseName: ${{ env.RELEASE_NAME }}
           releaseBody: ${{ needs.prepare-release.outputs.changelog || 'See CHANGELOG.md for details.' }}
           releaseDraft: false
@@ -298,7 +310,8 @@ jobs:
       - name: Build Tauri app (unsigned)
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Релиз и файлы публикуются токеном владельца репозитория (иначе автор — github-actions[bot]).
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -310,6 +323,8 @@ jobs:
           RUST_BACKTRACE: 1
         with:
           tagName: ${{ env.TAG_NAME }}
+          # Тег — на коммит релиза (версия + CHANGELOG), из которого и собраны файлы.
+          releaseCommitish: ${{ needs.prepare-release.outputs.sha || github.sha }}
           releaseName: ${{ env.RELEASE_NAME }}
           releaseBody: ${{ needs.prepare-release.outputs.changelog || 'See CHANGELOG.md for details.' }}
           releaseDraft: false
@@ -344,7 +359,7 @@ jobs:
       RELEASE_NAME: ${{ github.event_name == 'workflow_dispatch' && format('JiraTime v{0}', needs.prepare-release.outputs.version) || format('JiraTime {0}', github.ref_name) }}
       VERSION: ${{ needs.prepare-release.outputs.version }}
       NOTES: ${{ needs.prepare-release.outputs.changelog }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

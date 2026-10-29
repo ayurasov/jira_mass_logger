@@ -64,6 +64,11 @@ export interface ProposalItem {
   include: boolean;
   /** Строку правил пользователь (время, длительность, задача) — при пересборке она не меняется. */
   locked?: boolean;
+  /**
+   * Строку пользователь утвердил: автоматика её не меняет и не урезает — до цели
+   * добираются только остальные строки.
+   */
+  approved?: boolean;
   /** Для встреч — id события календаря. */
   meetingId?: string;
   /** Задача подставлена по умолчанию — подсветить для проверки. */
@@ -363,7 +368,7 @@ export interface PlanInput {
   meetings: ComposerMeeting[];
   habits: HabitTask[];
   opts: ComposeOptions;
-  /** Строки, которые пользователь правил/добавил: остаются как есть. */
+  /** Строки, которые пользователь правил/добавил/утвердил: остаются как есть. */
   userItems: ProposalItem[];
   /** Задачи, убранные пользователем, — не предлагать снова. */
   dismissedKeys: Set<string>;
@@ -382,7 +387,9 @@ const toBusyWorklog = (p: ProposalItem, date: string): HistoryWorklog => ({
  * сумма (с уже залогированным) всегда равнялась цели:
  *  - автоматические строки пересобираются вокруг уже залогированного и правок;
  *  - если правки сами превышают цель — урезаем другие правки (кроме последней),
- *    начиная с самых поздних.
+ *    начиная с самых поздних;
+ *  - утверждённые строки не меняются никогда: если они одни превышают цель,
+ *    план остаётся с перебором, и пользователь решает сам.
  */
 export function buildPlan(input: PlanInput): ProposalItem[] {
   const { opts, existing } = input;
@@ -391,18 +398,18 @@ export function buildPlan(input: PlanInput): ProposalItem[] {
   const filled = existing.reduce((s, w) => s + w.timeSpentSeconds / 60, 0);
   let user = input.userItems.filter((u) => u.minutes > 0).map((u) => ({ ...u, locked: true }));
 
-  // Правки превышают цель — урезаем поздние (кроме последней правки).
+  // Правки превышают цель — урезаем поздние (кроме последней правки и утверждённых).
   let over = filled + user.reduce((s, u) => s + u.minutes, 0) - target;
   if (over > 0) {
-    const order = [...user].filter((u) => u.id !== input.pinnedId).sort((a, b) => b.start - a.start);
+    const order = [...user].filter((u) => u.id !== input.pinnedId && !u.approved).sort((a, b) => b.start - a.start);
     for (const u of order) {
       if (over <= 0) break;
       const cut = Math.min(u.minutes, over);
       u.minutes -= cut;
       over -= cut;
     }
-    // Даже последняя правка не может вывести день за цель — урезаем и её.
-    const pinned = user.find((u) => u.id === input.pinnedId);
+    // Даже последняя правка не может вывести день за цель — урезаем и её (если не утверждена).
+    const pinned = user.find((u) => u.id === input.pinnedId && !u.approved);
     if (over > 0 && pinned) pinned.minutes = Math.max(0, pinned.minutes - over);
     user = user.filter((u) => u.minutes > 0);
   }

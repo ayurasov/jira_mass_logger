@@ -2,6 +2,7 @@
 // «Собрать день»: автоматическое заполнение дня до цели — встречи календаря,
 // привычные задачи и описания из прошлых записей. Любая правка (в таблице или
 // перетаскиванием на шкале) фиксируется, остальное подстраивается под цель само.
+// Утверждённые строки (✓) автоматика не трогает: до цели добираются остальные.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import ActionIcon from '../components/ActionIcon.vue';
@@ -145,6 +146,9 @@ const invalidRows = computed(() =>
   store.proposal.filter((p) => !/^[A-Za-z][A-Za-z0-9_]+-\d+$/.test(p.issueKey.trim()) || !(p.minutes > 0)),
 );
 const guessedCount = computed(() => store.proposal.filter((p) => p.guessed).length);
+const allApproved = computed(() => store.proposal.length > 0 && store.proposal.every((p) => p.approved));
+/** Перебор из-за утверждённых строк: автоматика их не урезает — решает пользователь. */
+const approvedOver = computed(() => diffMinutes.value >= 1 && store.filledMinutes + store.approvedMinutes > store.targetMinutes);
 const canSubmit = computed(() => !store.submitting && !store.loading && store.proposal.length > 0 && invalidRows.value.length === 0);
 
 function setRowTime(id: string, value: string) {
@@ -178,7 +182,7 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
     <header class="cd-header">
       <div>
         <h1>Собрать день</h1>
-        <p class="cd-sub">День собирается автоматически: встречи, привычные задачи и их обычные описания — ровно до цели. Двигайте и растягивайте блоки на шкале — остальное подстроится само.</p>
+        <p class="cd-sub">День собирается автоматически: встречи, привычные задачи и их обычные описания — ровно до цели. Двигайте и растягивайте блоки на шкале — остальное подстроится само. Отметьте <ActionIcon name="check" :size="13" /> строки, которые вас устраивают: они больше не меняются, а до цели добираются остальные.</p>
       </div>
     </header>
 
@@ -207,7 +211,7 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
         </div>
 
         <div class="cd-actions">
-          <button class="cd-btn" :disabled="store.loading" title="Забыть правки и собрать день заново" @click="store.reset()">
+          <button class="cd-btn" :disabled="store.loading" title="Забыть правки и собрать день заново (утверждённые строки остаются)" @click="store.reset()">
             <ActionIcon name="sparkles" :size="15" /> Пересобрать
           </button>
           <button class="cd-btn" :disabled="store.refreshingHistory || store.loading" title="Загрузить worklog за окно истории из Jira" @click="store.refreshHistory()">
@@ -277,6 +281,7 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
       <div class="cd-summary__nums">
         <div><span class="cd-dot cd-dot--done"></span>Уже заполнено <b>{{ fmtDur(store.filledMinutes) }}</b></div>
         <div><span class="cd-dot cd-dot--plan"></span>Предлагается <b>{{ fmtDur(store.proposedMinutes) }}</b></div>
+        <div v-if="store.approvedMinutes" class="cd-summary__approved"><ActionIcon name="check" :size="14" />из них утверждено <b>{{ fmtDur(store.approvedMinutes) }}</b></div>
         <div>Цель <b>{{ fmtDur(store.targetMinutes) }}</b></div>
         <div class="cd-summary__diff" :class="{ 'is-ok': Math.abs(diffMinutes) < 1, 'is-over': diffMinutes >= 1, 'is-under': diffMinutes <= -1 }">
           <template v-if="Math.abs(diffMinutes) < 1"><ActionIcon name="check-circle" :size="15" /> ровно по цели</template>
@@ -308,13 +313,13 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
           >{{ w.issueKey }}</span>
           <span
             v-for="p in store.proposal" :key="p.id" class="cd-tl cd-tl--plan"
-            :class="{ 'cd-tl--meeting': p.source === 'meeting', 'cd-tl--bad': overlaps.has(p.id), 'cd-tl--locked': p.locked, 'cd-tl--active': drag?.id === p.id }"
+            :class="{ 'cd-tl--meeting': p.source === 'meeting', 'cd-tl--bad': overlaps.has(p.id), 'cd-tl--locked': p.locked, 'cd-tl--approved': p.approved, 'cd-tl--active': drag?.id === p.id }"
             :style="{ ...laneStyle(p.id), left: pct(shown(p).start) + '%', width: pct(shown(p).start + shown(p).minutes) - pct(shown(p).start) + '%' }"
             :title="`${p.issueKey} · ${minutesToHHMM(shown(p).start)}–${minutesToHHMM(shown(p).start + shown(p).minutes)} · ${fmtDur(shown(p).minutes)}\nПеретащите, чтобы сдвинуть; края — чтобы изменить длительность`"
             @pointerdown="onBlockDown($event, p, 'move')"
           >
             <i class="cd-tl__h cd-tl__h--l" @pointerdown="onBlockDown($event, p, 'start')"></i>
-            <span class="cd-tl__label">{{ p.issueKey }}<small v-if="drag?.id === p.id"> {{ minutesToHHMM(shown(p).start) }} · {{ fmtDur(shown(p).minutes) }}</small></span>
+            <span class="cd-tl__label"><ActionIcon v-if="p.approved" name="check" :size="11" /> {{ p.issueKey }}<small v-if="drag?.id === p.id"> {{ minutesToHHMM(shown(p).start) }} · {{ fmtDur(shown(p).minutes) }}</small></span>
             <i class="cd-tl__h cd-tl__h--r" @pointerdown="onBlockDown($event, p, 'end')"></i>
           </span>
         </div>
@@ -325,6 +330,7 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
       <div class="cd-summary__foot">
         <span v-if="guessedCount" class="cd-warn"><ActionIcon name="warning" :size="13" /> {{ guessedCount }} {{ guessedCount === 1 ? 'встреча' : 'встречи' }} с задачей по умолчанию — проверьте</span>
         <span v-if="invalidRows.length" class="cd-err">Укажите задачу в строках без ключа.</span>
+        <span v-if="approvedOver" class="cd-warn"><ActionIcon name="warning" :size="13" /> Утверждённые строки больше цели — уменьшите одну из них или снимите отметку</span>
         <span v-if="store.submitMessage" :class="store.submitMessage.ok ? 'cd-ok' : 'cd-err'">
           {{ store.submitMessage.text }}
           <template v-if="store.submitMessage.ok && store.prefs.autoAdvance && store.nextUnfilled"> Открываю {{ dayLabel(store.nextUnfilled) }}…</template>
@@ -338,7 +344,14 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
       <section class="cd-card cd-plan">
         <div class="cd-plan__head">
           <h2>Предложение</h2>
-          <button class="cd-btn cd-btn--sm" @click="store.addRow()">+ Строка</button>
+          <div class="cd-plan__tools">
+            <button
+              v-if="store.proposal.length" class="cd-btn cd-btn--sm"
+              :title="allApproved ? 'Снять отметку со всех строк — автоматика снова сможет их менять' : 'Утвердить все строки: автоматика их больше не меняет'"
+              @click="store.setAllApproved(!allApproved)"
+            ><ActionIcon name="check" :size="14" /> {{ allApproved ? 'Снять отметки' : 'Утвердить все' }}</button>
+            <button class="cd-btn cd-btn--sm" @click="store.addRow()">+ Строка</button>
+          </div>
         </div>
 
         <div v-if="store.existing.length" class="cd-existing">
@@ -365,13 +378,13 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
         <table v-else class="cd-table">
           <colgroup>
             <col style="width: 7.25rem" /><col style="width: 4.75rem" />
-            <col style="width: 10rem" /><col /><col style="width: 2.25rem" />
+            <col style="width: 10rem" /><col /><col style="width: 4.5rem" />
           </colgroup>
           <thead>
             <tr><th>Начало</th><th>Часы</th><th>Задача</th><th>Описание и основание</th><th></th></tr>
           </thead>
           <tbody>
-            <tr v-for="p in sorted" :key="p.id" :class="{ 'is-bad': overlaps.has(p.id) || !!store.rowErrors[p.id], 'is-guess': p.guessed }">
+            <tr v-for="p in sorted" :key="p.id" :class="{ 'is-bad': overlaps.has(p.id) || !!store.rowErrors[p.id], 'is-guess': p.guessed, 'is-approved': p.approved }">
               <td><input :value="minutesToHHMM(p.start)" type="time" step="900" class="cd-time" @change="setRowTime(p.id, ($event.target as HTMLInputElement).value)" /></td>
               <td><input :value="(p.minutes / 60).toFixed(2).replace(/\.?0+$/, '')" type="number" min="0.25" step="0.25" class="cd-hours" @change="setRowHours(p.id, ($event.target as HTMLInputElement).value)" /></td>
               <td>
@@ -388,14 +401,22 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
                 </datalist>
                 <small class="cd-why">
                   <span class="cd-src" :class="'cd-src--' + p.source">{{ p.source === 'meeting' ? 'встреча' : p.source === 'habit' ? 'привычка' : 'вручную' }}</span>
-                  <span v-if="p.locked" class="cd-src cd-src--locked" title="Строку правили — при пересборке она не меняется">правка</span>
+                  <span v-if="p.approved" class="cd-src cd-src--approved" title="Строка утверждена — автоматика её не меняет">утверждено</span>
+                  <span v-else-if="p.locked" class="cd-src cd-src--locked" title="Строку правили — при пересборке она не меняется">правка</span>
                   <span class="cd-muted">{{ p.reason }}</span>
                   <span v-if="p.guessed" class="cd-warn">проверьте задачу</span>
                   <span v-if="overlaps.has(p.id)" class="cd-err">пересекается по времени</span>
                   <span v-if="store.rowErrors[p.id]" class="cd-err">{{ store.rowErrors[p.id] }}</span>
                 </small>
               </td>
-              <td><button class="cd-icon cd-icon--danger" title="Убрать (остальное подстроится)" @click="store.removeItem(p.id)"><ActionIcon name="close" :size="14" /></button></td>
+              <td class="cd-row-actions">
+                <button
+                  class="cd-icon cd-icon--approve" :class="{ 'is-on': p.approved }" :aria-pressed="!!p.approved"
+                  :title="p.approved ? 'Снять отметку — автоматика снова сможет менять строку' : 'Утвердить: строка больше не меняется, до цели добираются остальные'"
+                  @click="store.setApproved(p.id, !p.approved)"
+                ><ActionIcon name="check" :size="15" /></button>
+                <button class="cd-icon cd-icon--danger" title="Убрать (до цели доберут неутверждённые строки)" @click="store.removeItem(p.id)"><ActionIcon name="close" :size="14" /></button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -583,4 +604,15 @@ const dayLabel = (iso: string) => `${WD_SHORT[parseIsoDate(iso).getDay()]} ${for
 .cd-tl--plan:hover .cd-tl__h::after { opacity: 0.6; }
 .cd-src--locked { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary-strong); }
 .cd-table tr.is-guess td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
+/* Утверждённые строки */
+.cd-plan__tools { display: flex; gap: 0.5rem; align-items: center; }
+.cd-row-actions { white-space: nowrap; }
+.cd-row-actions .cd-icon { width: 1.75rem; }
+.cd-icon--approve:hover { background: var(--primary-soft); color: var(--primary); }
+.cd-icon--approve.is-on { background: var(--primary-soft); color: var(--primary); }
+.cd-table tr.is-approved td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+.cd-src--approved { background: var(--primary); color: #fff; }
+.cd-summary__approved { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--primary-strong); }
+.cd-tl--approved { background: color-mix(in srgb, var(--primary) 32%, transparent); border-style: solid; }
+.cd-tl__label .action-svg-icon { vertical-align: -0.15em; }
 </style>

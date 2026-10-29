@@ -3,7 +3,8 @@
 //
 // Модель: правки пользователя (userItems) фиксируются, всё остальное — автоматическое
 // и пересобирается после каждой правки или смены цели, так что сумма дня всегда
-// равна цели. «Пересобрать» сбрасывает правки и убранные задачи.
+// равна цели. Утверждённые строки не меняются вовсе: до цели добираются остальные.
+// «Пересобрать» сбрасывает правки и убранные задачи, утверждённые строки оставляет.
 import { defineStore } from 'pinia';
 import { tauriApi, type CachedWorklogRow, type BulkResultItem } from '../lib/tauriApi';
 import { useJiraProfilesStore } from './jiraProfiles';
@@ -119,6 +120,9 @@ export const useComposeStore = defineStore('compose', {
     },
     proposedMinutes(state): number {
       return state.proposal.reduce((s, p) => s + (Number(p.minutes) || 0), 0);
+    },
+    approvedMinutes(state): number {
+      return state.proposal.reduce((s, p) => s + (p.approved ? Number(p.minutes) || 0 : 0), 0);
     },
     composeOptions(state): ComposeOptions {
       return {
@@ -293,9 +297,9 @@ export const useComposeStore = defineStore('compose', {
         .map((u) => ({ ...u, minutes: this.proposal.find((p) => p.id === u.id)!.minutes }));
     },
 
-    /** «Пересобрать»: забыть правки и убранные задачи, собрать день заново. */
+    /** «Пересобрать»: забыть правки и убранные задачи, собрать день заново. Утверждённые строки остаются. */
     reset() {
-      this.userItems = [];
+      this.userItems = this.userItems.filter((u) => u.approved);
       this.dismissedKeys = [];
       this.dismissedMeetings = [];
       this.rowErrors = {};
@@ -346,6 +350,28 @@ export const useComposeStore = defineStore('compose', {
       if (patch.minutes !== undefined) item.minutes = Math.max(15, Math.round(patch.minutes / 15) * 15);
       this.rebuild(item.id);
       return item.id;
+    },
+
+    /**
+     * Утвердить строку (или снять отметку). Утверждённую строку автоматика не меняет:
+     * при удалении и правке других строк до цели добираются только неутверждённые.
+     * Сама отметка план не пересобирает — остальные строки остаются на месте.
+     * Снятая отметка оставляет строку как обычную правку.
+     */
+    setApproved(id: string, approved: boolean) {
+      const current = this.proposal.find((p) => p.id === id);
+      if (!current || !!current.approved === approved) return;
+      const edited = this.userItems.find((u) => u.id === id);
+      if (edited) edited.approved = approved;
+      // Автоматическая строка становится правкой со своим id (как в editItem).
+      const item = edited ?? { ...current, id: `u${++manualSeq}`, locked: true, approved };
+      if (!edited) this.userItems.push(item);
+      this.proposal = this.proposal.map((p) => (p.id === id ? { ...item } : p));
+    },
+
+    /** Утвердить все строки предложения или снять отметку со всех. */
+    setAllApproved(approved: boolean) {
+      for (const p of [...this.proposal]) this.setApproved(p.id, approved);
     },
 
     /** Убрать строку: её задача/встреча больше не предлагается до «Пересобрать». */

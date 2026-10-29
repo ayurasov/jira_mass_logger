@@ -15,6 +15,7 @@ export type ActionIconName =
   | 'edit'
   | 'trash'
   | 'link'
+  | 'check'
   | 'check-circle'
   | 'x-circle'
   | 'dot'
@@ -98,6 +99,10 @@ const props = withDefaults(defineProps<{ name: ActionIconName; size?: number }>(
       <path d="M9 15 15 9" />
       <path d="M11 6.5 12.3 5.2a3.5 3.5 0 0 1 5 5L16 11.5" />
       <path d="M13 17.5 11.7 18.8a3.5 3.5 0 0 1-5-5L8 12.5" />
+    </g>
+
+    <g v-else-if="name === 'check'">
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
     </g>
 
     <g v-else-if="name === 'check-circle'">
