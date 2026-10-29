@@ -105,7 +105,7 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
   <div class="app-layout">
     <aside class="app-sidebar" :class="{ collapsed }">
       <div class="sidebar-brand" :title="collapsed ? 'JiraTime' : undefined">
-        <AppLogo :size="26" />
+        <AppLogo :size="24" />
         <span v-if="!collapsed" class="sidebar-brand-name">JiraTime</span>
         <button
           class="sidebar-toggle"
@@ -127,7 +127,7 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
           :title="titleFor(item)"
           @click="narrow && expandedWhileNarrow && (expandedWhileNarrow = false)"
         >
-          <span class="nav-icon"><NavIcon :name="item.icon" :size="19" /></span>
+          <span class="nav-icon"><NavIcon :name="item.icon" :size="18" /></span>
           <span class="nav-label">{{ item.label }}</span>
         </router-link>
       </nav>
@@ -140,7 +140,7 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
           :title="titleFor(GUIDE_ITEM)"
           @click="narrow && expandedWhileNarrow && (expandedWhileNarrow = false)"
         >
-          <span class="nav-icon"><NavIcon :name="GUIDE_ITEM.icon" :size="19" /></span>
+          <span class="nav-icon"><NavIcon :name="GUIDE_ITEM.icon" :size="18" /></span>
           <span class="nav-label">{{ GUIDE_ITEM.label }}</span>
         </router-link>
         <div class="sidebar-foot">
@@ -151,7 +151,7 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
             </button>
           </div>
           <button class="sidebar-about about-toggle" type="button" title="О программе" aria-label="О программе" @click="openAbout">
-            <ActionIcon name="info" :size="17" />
+            <ActionIcon name="info" :size="16" />
           </button>
         </div>
       </div>
@@ -176,7 +176,8 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
 .app-sidebar {
   display: flex;
   flex-direction: column;
-  width: 18rem;
+  /* Ширина — по самому длинному пункту («Массовое логирование»), без запаса под подписи клавиш. */
+  width: 14.5rem;
   flex-shrink: 0;
   background: var(--card);
   border-right: 1px solid var(--border);
@@ -184,14 +185,14 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
   overflow: hidden;
 }
 .app-sidebar.collapsed {
-  width: 4.25rem;
+  width: 3.75rem;
 }
 
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0.85rem 0.6rem;
+  gap: 0.5rem;
+  padding: 0.8rem 0.5rem 0.8rem 0.85rem;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
   margin-bottom: 0.35rem;
@@ -254,8 +255,8 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  gap: 0.2rem;
-  padding: 0.15rem 0.5rem 0.5rem;
+  gap: 0.125rem;
+  padding: 0.25rem 0.5rem 0.5rem;
   overflow-y: auto;
 }
 
@@ -273,7 +274,7 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
   align-items: flex-end;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.35rem 0.25rem 0 0.6rem;
+  padding: 0.35rem 0.15rem 0 0.6rem;
 }
 .sidebar-copyright {
   min-width: 0;
@@ -303,8 +304,8 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.9rem;
-  height: 1.9rem;
+  width: 1.75rem;
+  height: 1.75rem;
   border: 1px solid var(--border);
   border-radius: 999rem;
   background: var(--card);
@@ -325,8 +326,8 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  padding: 0.5rem 0.6rem;
-  border-radius: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.5rem;
   color: var(--fg);
   font-size: 0.875rem;
   line-height: 1.3;
@@ -336,10 +337,21 @@ onBeforeUnmount(() => narrowMq?.removeEventListener('change', onNarrowChange));
 .nav-item:hover {
   background: var(--chip);
 }
+/* Значки спокойнее текста; у текущего раздела — цвет акцента. */
+.nav-item .nav-icon {
+  color: var(--muted);
+  transition: color 120ms ease;
+}
+.nav-item:hover .nav-icon {
+  color: var(--fg);
+}
 .nav-item.active {
-  background: var(--chip);
+  background: var(--primary-soft);
   color: var(--primary);
   font-weight: 600;
+}
+.nav-item.active .nav-icon {
+  color: var(--primary);
 }
 
 .nav-icon {
