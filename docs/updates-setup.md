@@ -42,7 +42,25 @@ GitHub → Settings → Secrets and variables → Actions:
 
 Релизный workflow продублирует туда установщики, подписи и `latest.json`.
 
-## 4. Как это работает при релизе
+## 4. Релиз от вашего имени
+
+Без отдельного токена релиз и его файлы публикует встроенный токен GitHub Actions, и автором
+релиза на GitHub значится `github-actions[bot]`. Чтобы автором были вы, добавьте секрет:
+
+| Тип | Имя | Значение |
+|---|---|---|
+| Secret | `RELEASE_TOKEN` | fine-grained token с правом *Contents: Read and write* на `ayurasov/jira_mass_logger` |
+
+Удобнее всего один токен на оба репозитория: GitHub → Settings → Developer settings →
+Fine-grained tokens → токен для `UPDATES_REPO_TOKEN` → *Repository access* → добавьте
+`jira_mass_logger` → *Update*. Значение токена при этом не меняется — сохраните его же
+в секрет `RELEASE_TOKEN`. Ограничьте токен этими репозиториями и правом *Contents*
+и задайте срок действия: по истечении срока выпустите новый и обновите оба секрета.
+
+Если `RELEASE_TOKEN` не задан, релиз всё равно выйдет (от имени `github-actions[bot]`),
+а в запуске workflow появится предупреждение.
+
+## 5. Как это работает при релизе
 
 `Publish release` (workflow_dispatch):
 
@@ -51,12 +69,13 @@ GitHub → Settings → Secrets and variables → Actions:
 2. Сборки Windows и macOS подписывают файлы обновления (`*.sig`).
 3. Джоба `update-feed` собирает `latest.json` из подписей (`.github/scripts/update-feed.mjs`)
    и при заданном `UPDATES_REPO` копирует обновление в публичный репозиторий.
+4. Тег релиза ставится на коммит с версией и CHANGELOG, из которого собраны файлы.
 
 Версии до 1.0.12 автообновления не содержат — первую версию с ним нужно установить вручную.
 Адрес канала зашивается в сборку: если потом сменить `UPDATES_REPO`, уже установленные копии
 продолжат проверять старый адрес до следующего обновления.
 
-## 5. Проверки (CI)
+## 6. Проверки (CI)
 
 Каждый PR проверяют workflows «Checks» (`.github/workflows/checks.yml`: типы, тесты интерфейса
 `npm test`, сборка, тесты Rust на Windows и macOS) и «Integration tests» (`integration.yml`).
