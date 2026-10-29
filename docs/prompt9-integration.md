@@ -16,7 +16,7 @@
 src-tauri/src/sync_queue_integration_tests.rs  — интеграционные тесты (3 сценария)
 src-tauri/src/sync_queue_helpers.rs            — count_by_status, enqueue_item_raw
 src-tauri/src/logger_noop.rs                   — NoopLogger для тестов
-.github/workflows/integration-tests.yml        — CI: windows-latest runner
+.github/workflows/integration.yml        — CI: windows-latest runner
 ```
 
 ### Фронтенд-сторона (Vue)
@@ -108,7 +108,7 @@ cargo test --lib --tests -- offline_to_sync --nocapture
 
 ## Структура CI
 
-Файл `.github/workflows/integration-tests.yml` запускает тесты на `windows-latest`
+Файл `.github/workflows/integration.yml` запускает тесты на `windows-latest`
 при каждом push/PR в `main`.
 
 ## Описание тестов

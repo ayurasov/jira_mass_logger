@@ -1,4 +1,5 @@
-name: Integration Tests (offline-to-sync)
+# Прежний integration-tests.yml выключен в настройках репозитория — новый путь включён.
+name: Integration tests (offline-to-sync)
 
 on:
   push:
@@ -7,7 +8,7 @@ on:
       - 'src-tauri/src/sync_queue*.rs'
       - 'src-tauri/src/logger*.rs'
       - 'src-tauri/src/network.rs'
-      - '.github/workflows/integration-tests.yml'
+      - '.github/workflows/integration.yml'
   pull_request:
     branches: [main]
 
@@ -41,7 +42,7 @@ jobs:
 
       - name: Run integration tests (offline_to_sync)
         working-directory: src-tauri
-        # У крейта нет lib-цели — интеграционные тесты очереди лежат в bin (см. ci.yml).
+        # У крейта нет lib-цели — интеграционные тесты очереди лежат в bin (см. checks.yml).
         run: cargo test --locked --bins -- offline_to_sync --nocapture
         env:
           RUST_LOG: debug

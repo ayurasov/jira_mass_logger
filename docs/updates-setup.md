@@ -58,6 +58,7 @@ GitHub → Settings → Secrets and variables → Actions:
 
 ## 5. Проверки (CI)
 
-Workflows «CI» и «Integration Tests» в репозитории выключены вручную
-(Actions → выбрать workflow → **Enable workflow**). После включения они проверяют каждый PR:
-типы, тесты интерфейса (`npm test`), сборку и тесты Rust на Windows и macOS.
+Каждый PR проверяют workflows «Checks» (`.github/workflows/checks.yml`: типы, тесты интерфейса
+`npm test`, сборка, тесты Rust на Windows и macOS) и «Integration tests» (`integration.yml`).
+Прежние «CI» и «Integration Tests (offline-to-sync)» были выключены в настройках репозитория;
+файлы перенесены на новые пути, поэтому GitHub считает их новыми, включёнными workflows.

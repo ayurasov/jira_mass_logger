@@ -1,4 +1,6 @@
-name: CI
+# Прежний ci.yml выключен в настройках репозитория (disabled_manually) — новый путь
+# регистрируется как новый, включённый workflow.
+name: Checks
 
 on:
   push:
