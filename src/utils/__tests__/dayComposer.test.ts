@@ -163,6 +163,26 @@ describe('buildPlan: правки пользователя', () => {
     expect(sum(plan)).toBe(480);
   });
 
+  it('утверждённая строка не урезается — урезается обычная правка', () => {
+    const user = [
+      { id: 'u1', issueKey: 'A-1', issueSummary: null, start: H(9), minutes: 300, comment: '', source: 'manual' as const, reason: '', include: true, approved: true },
+      { id: 'u2', issueKey: 'B-1', issueSummary: null, start: H(14), minutes: 300, comment: '', source: 'manual' as const, reason: '', include: true },
+    ];
+    const plan = buildPlan({ ...base, existing: [], opts: opts('2026-11-09'), userItems: user, pinnedId: 'u2' });
+    expect(plan.find((p) => p.id === 'u1')?.minutes).toBe(300);
+    expect(plan.find((p) => p.id === 'u2')?.minutes).toBe(180);
+    expect(sum(plan)).toBe(480);
+  });
+
+  it('утверждённые строки больше цели — перебор остаётся, автоматических строк нет', () => {
+    const user = [
+      { id: 'u1', issueKey: 'A-1', issueSummary: null, start: H(9), minutes: 300, comment: '', source: 'manual' as const, reason: '', include: true, approved: true },
+      { id: 'u2', issueKey: 'B-1', issueSummary: null, start: H(14), minutes: 300, comment: '', source: 'manual' as const, reason: '', include: true, approved: true },
+    ];
+    const plan = buildPlan({ ...base, existing: [], opts: opts('2026-11-09'), userItems: user, pinnedId: 'u2' });
+    expect(plan.map((p) => [p.id, p.minutes])).toEqual([['u1', 300], ['u2', 300]]);
+  });
+
   it('убранная задача больше не предлагается', () => {
     const plan = buildPlan({ ...base, existing: [], opts: opts('2026-11-09'), userItems: [], dismissedKeys: new Set(['OPS-12']) });
     expect(plan.some((p) => p.issueKey === 'OPS-12')).toBe(false);
