@@ -17,7 +17,8 @@ export type NavIconName =
   | 'templates'
   | 'profiles'
   | 'logs'
-  | 'settings';
+  | 'settings'
+  | 'guide';
 
 const props = withDefaults(defineProps<{ name: NavIconName; size?: number }>(), { size: 20 });
 </script>
@@ -110,6 +111,12 @@ const props = withDefaults(defineProps<{ name: NavIconName; size?: number }>(), 
       <path d="M6 3h9l3 3v15H6z" />
       <path d="M15 3v3h3" />
       <path d="M9 12h6M9 16h6M9 8h3" />
+    </g>
+
+    <!-- Руководство: открытая книга -->
+    <g v-else-if="name === 'guide'">
+      <path d="M12 6.5C10.5 5.2 8.3 4.5 4 4.5v13c4.3 0 6.5.7 8 2 1.5-1.3 3.7-2 8-2v-13c-4.3 0-6.5.7-8 2z" />
+      <path d="M12 6.5v13" />
     </g>
 
     <!-- Настройки: шестерня -->
