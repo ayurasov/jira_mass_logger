@@ -125,6 +125,8 @@ pub fn save_jira_profile(
                     entry.set_password(token).map_err(|e| e.to_string())?;
                 }
             }
+            // Токен, адрес или логин могли поменяться — прочитаем заново при следующем запросе.
+            crate::jira_client::forget_credentials(&existing_secret_ref);
 
             conn.execute(
                 "UPDATE jira_profiles SET
@@ -195,6 +197,7 @@ pub fn delete_jira_profile(db: State<'_, WizardDb>, id: i64) -> Result<bool, Str
         .execute("DELETE FROM jira_profiles WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())?;
     if let Some(secret_ref) = secret_ref {
+        crate::jira_client::forget_credentials(&secret_ref);
         if let Ok(entry) = keyring::Entry::new("jiratime", &secret_ref) {
             let _ = entry.delete_password();
         }
@@ -297,6 +300,7 @@ pub fn reset_app_data(db: State<'_, WizardDb>) -> Result<(), String> {
     }
 
     for secret_ref in &secret_refs {
+        crate::jira_client::forget_credentials(secret_ref);
         if let Ok(entry) = keyring::Entry::new("jiratime", secret_ref) {
             let _ = entry.delete_password();
         }

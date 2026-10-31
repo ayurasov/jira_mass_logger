@@ -109,6 +109,8 @@ function toLevel(hours: number, isWD: boolean, norm: number): 0 | 1 | 2 | 3 | 4 
 export const MISSING_WINDOW_DAYS = 30;
 /** Не чаще этого перезапрашиваем Jira при открытии дашборда. */
 const SYNC_TTL_MS = 10 * 60 * 1000;
+/** Синхронизация с Jira, которая уже идёт: повторный вызов ждёт её, а не шлёт второй запрос. */
+let syncInFlight: Promise<void> | null = null;
 
 export interface PeriodStat {
   /** Факт, ч. */
@@ -412,7 +414,13 @@ export const useAnalyticsStore = defineStore('analytics', {
       await this.fetchAll();
 
       if (!force && this.lastSynced !== null && Date.now() - this.lastSynced < SYNC_TTL_MS) return;
+      // Дашборд открыли и сразу нажали «Обновить» — ждём уже идущую синхронизацию.
+      if (syncInFlight) return syncInFlight;
+      syncInFlight = this.runSync().finally(() => { syncInFlight = null; });
+      return syncInFlight;
+    },
 
+    async runSync() {
       this.syncing = true;
       this.syncError = null;
       try {

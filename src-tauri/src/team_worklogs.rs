@@ -2,24 +2,22 @@
 //! нескольких авторов за период (экран «Команда»).
 //!
 //! Алгоритм выборки: JQL `worklogAuthor in (...) AND worklogDate в периоде` →
-//! список задач → worklog каждой задачи (параллельно, с ограничением) →
-//! фильтр по автору и дате начала.
+//! задачи вместе с их worklog (поиск отдаёт до 20 записей на задачу) → отдельные
+//! запросы только для задач с большой историей (параллельно, с ограничением, за
+//! период) → фильтр по автору и дате начала.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashSet;
-use std::sync::Arc;
-use tokio::sync::Semaphore;
 
 use crate::jira_client::{
-    adf_to_plain_text, apply_auth, ensure_json_success, init, send_with_retry, url,
+    adf_to_plain_text, apply_auth, embedded_worklogs, ensure_json_success, fetch_issue_worklogs,
+    fetch_myself, fetch_worklogs_for_issues, init, search_issues, send_with_retry, url,
     JiraConnectionParams, JiraInstanceType,
 };
 
 /// Максимум задач, по которым собираем worklog за один запрос отчёта.
 const MAX_ISSUES: usize = 1000;
-/// Одновременных запросов worklog к Jira.
-const CONCURRENCY: usize = 6;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -129,87 +127,59 @@ pub async fn search_jira_users(
 #[tauri::command]
 pub async fn get_current_jira_user(params: JiraConnectionParams) -> Result<JiraUserDto, String> {
     let ctx = init(&params).map_err(String::from)?;
-    let endpoint = url(&params, "myself");
-    let resp = send_with_retry(&ctx.client, || apply_auth(ctx.client.get(&endpoint), &params, &ctx.token))
-        .await
-        .map_err(String::from)?;
-    let u = ensure_json_success(resp).await?;
-    let id = if is_cloud(&params) { u.get("accountId") } else { u.get("name").or_else(|| u.get("key")) }
-        .and_then(|v| v.as_str())
-        .ok_or("Jira не вернула идентификатор пользователя")?
-        .to_string();
+    let me = fetch_myself(&ctx, &params).await.map_err(String::from)?;
+    let id = if is_cloud(&params) { me.account_id.clone() } else { me.name.clone().or(me.key.clone()) }
+        .ok_or("Jira не вернула идентификатор пользователя")?;
     Ok(JiraUserDto {
-        display_name: u.get("displayName").and_then(|v| v.as_str()).unwrap_or(&id).to_string(),
-        email: u.get("emailAddress").and_then(|v| v.as_str()).map(str::to_string),
+        display_name: me.display_name.clone().unwrap_or_else(|| id.clone()),
+        email: me.email.clone(),
         active: true,
         id,
     })
 }
 
-/// Задачи, в которых кто-то из `users` логировал время в периоде: (key, summary).
-async fn search_issues(
-    params: &JiraConnectionParams,
-    ctx: &crate::jira_client::AuthedClient,
-    jql: &str,
-) -> Result<(Vec<(String, Option<String>)>, bool), String> {
-    let cloud = is_cloud(params);
-    let mut out: Vec<(String, Option<String>)> = Vec::new();
-    let mut start_at: i64 = 0;
-    let mut next_token: Option<String> = None;
-    loop {
-        let (endpoint, body) = if cloud {
-            // Cloud: /search устарел, используем /search/jql с nextPageToken.
-            let mut b = json!({ "jql": jql, "fields": ["summary"], "maxResults": 100 });
-            if let Some(t) = &next_token {
-                b["nextPageToken"] = json!(t);
-            }
-            (url(params, "search/jql"), b)
-        } else {
-            (
-                url(params, "search"),
-                json!({ "jql": jql, "fields": ["summary"], "startAt": start_at, "maxResults": 100 }),
-            )
-        };
-        let resp = send_with_retry(&ctx.client, || {
-            apply_auth(ctx.client.post(&endpoint), params, &ctx.token).json(&body)
-        })
-        .await
-        .map_err(String::from)?;
-        let page = ensure_json_success(resp).await?;
-        let issues = page.get("issues").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-        let page_len = issues.len();
-        for i in issues {
-            if let Some(key) = i.get("key").and_then(|k| k.as_str()) {
-                let summary = i
-                    .get("fields")
-                    .and_then(|f| f.get("summary"))
-                    .and_then(|s| s.as_str())
-                    .map(str::to_string);
-                out.push((key.to_string(), summary));
-            }
+/// Строки отчёта из worklog одной задачи: фильтр по авторам и датам.
+/// Пустой `authors` — без фильтра по автору (все worklog задачи за период).
+fn team_rows(
+    worklogs: &[Value],
+    cloud: bool,
+    issue_key: &str,
+    issue_summary: &Option<String>,
+    authors: &HashSet<String>,
+    date_from: &str,
+    date_to: &str,
+) -> Vec<TeamWorklogDto> {
+    let mut out = Vec::new();
+    for w in worklogs {
+        let Some(author) = w.get("author") else { continue };
+        let Some(aid) = author_id(author, cloud) else { continue };
+        if !authors.is_empty() && !authors.contains(&aid) {
+            continue;
         }
-        if out.len() >= MAX_ISSUES {
-            out.truncate(MAX_ISSUES);
-            return Ok((out, true));
+        let started = w.get("started").and_then(|v| v.as_str()).unwrap_or("");
+        let day = started.get(..10).unwrap_or("");
+        if day < date_from || day > date_to {
+            continue;
         }
-        if cloud {
-            next_token = page.get("nextPageToken").and_then(|v| v.as_str()).map(str::to_string);
-            let is_last = page.get("isLast").and_then(|v| v.as_bool()).unwrap_or(next_token.is_none());
-            if is_last || next_token.is_none() || page_len == 0 {
-                break;
-            }
-        } else {
-            let total = page.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
-            start_at += page_len as i64;
-            if page_len == 0 || start_at >= total {
-                break;
-            }
-        }
+        out.push(TeamWorklogDto {
+            id: w.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            author_id: aid,
+            author_name: author
+                .get("displayName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            issue_key: issue_key.to_string(),
+            issue_summary: issue_summary.clone(),
+            started: started.to_string(),
+            time_spent_seconds: w.get("timeSpentSeconds").and_then(|v| v.as_i64()).unwrap_or(0),
+            comment: w.get("comment").map(adf_to_plain_text).filter(|c| !c.trim().is_empty()),
+        });
     }
-    Ok((out, false))
+    out
 }
 
-/// Worklog одной задачи, отфильтрованные по авторам и датам.
+/// Worklog одной задачи, отфильтрованные по авторам и датам (запрос — только за период).
 /// Пустой `authors` — без фильтра по автору (все worklog задачи за период).
 pub(crate) async fn issue_worklogs(
     params: &JiraConnectionParams,
@@ -220,53 +190,8 @@ pub(crate) async fn issue_worklogs(
     date_from: &str,
     date_to: &str,
 ) -> Result<Vec<TeamWorklogDto>, String> {
-    let cloud = is_cloud(params);
-    let endpoint = url(params, &format!("issue/{issue_key}/worklog"));
-    let mut start_at: i64 = 0;
-    let mut out = Vec::new();
-    loop {
-        let resp = send_with_retry(&ctx.client, || {
-            apply_auth(ctx.client.get(&endpoint), params, &ctx.token)
-                .query(&[("startAt", start_at.to_string()), ("maxResults", "5000".to_string())])
-        })
-        .await
-        .map_err(String::from)?;
-        let body = ensure_json_success(resp).await?;
-        let worklogs = body.get("worklogs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-        let total = body.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
-        let page_len = worklogs.len() as i64;
-        for w in &worklogs {
-            let Some(author) = w.get("author") else { continue };
-            let Some(aid) = author_id(author, cloud) else { continue };
-            if !authors.is_empty() && !authors.contains(&aid) {
-                continue;
-            }
-            let started = w.get("started").and_then(|v| v.as_str()).unwrap_or("");
-            let day = started.get(..10).unwrap_or("");
-            if day < date_from || day > date_to {
-                continue;
-            }
-            out.push(TeamWorklogDto {
-                id: w.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                author_id: aid,
-                author_name: author
-                    .get("displayName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                issue_key: issue_key.to_string(),
-                issue_summary: issue_summary.clone(),
-                started: started.to_string(),
-                time_spent_seconds: w.get("timeSpentSeconds").and_then(|v| v.as_i64()).unwrap_or(0),
-                comment: w.get("comment").map(adf_to_plain_text).filter(|c| !c.trim().is_empty()),
-            });
-        }
-        start_at += page_len;
-        if page_len == 0 || start_at >= total {
-            break;
-        }
-    }
-    Ok(out)
+    let worklogs = fetch_issue_worklogs(ctx, params, issue_key, Some((date_from, date_to))).await?;
+    Ok(team_rows(&worklogs, is_cloud(params), issue_key, &issue_summary, authors, date_from, date_to))
 }
 
 #[tauri::command]
@@ -280,8 +205,7 @@ pub async fn get_team_worklogs(
         return Ok(TeamWorklogsResult { worklogs: Vec::new(), truncated: false, errors: Vec::new() });
     }
     let cloud = is_cloud(&params);
-    let ctx = Arc::new(init(&params).map_err(String::from)?);
-    let params = Arc::new(params);
+    let ctx = init(&params).map_err(String::from)?;
 
     let authors_jql = user_ids.iter().map(|u| jql_quote(u)).collect::<Vec<_>>().join(", ");
     let jql = format!(
@@ -289,33 +213,41 @@ pub async fn get_team_worklogs(
         jql_quote(&date_from),
         jql_quote(&date_to)
     );
-    let (issues, truncated) = search_issues(&params, &ctx, &jql).await?;
+    // Задачи сразу с их worklog: большинству задач отдельный запрос не нужен.
+    let (issues, truncated) = search_issues(&ctx, &params, &jql, &["summary", "worklog"], MAX_ISSUES).await?;
 
-    let authors: Arc<HashSet<String>> = Arc::new(
-        user_ids
-            .iter()
-            .map(|u| if cloud { u.clone() } else { u.to_lowercase() })
-            .collect(),
-    );
-    let semaphore = Arc::new(Semaphore::new(CONCURRENCY));
-    let mut handles = Vec::with_capacity(issues.len());
-    for (key, summary) in issues {
-        let (ctx, params, authors, sem) = (ctx.clone(), params.clone(), authors.clone(), semaphore.clone());
-        let (from, to) = (date_from.clone(), date_to.clone());
-        handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await;
-            let res = issue_worklogs(&params, &ctx, &key, summary, &authors, &from, &to).await;
-            (key, res)
-        }));
+    let authors: HashSet<String> = user_ids
+        .iter()
+        .map(|u| if cloud { u.clone() } else { u.to_lowercase() })
+        .collect();
+    let mut worklogs = Vec::new();
+    let mut summaries = std::collections::HashMap::new();
+    let mut to_fetch = Vec::new();
+    for issue in &issues {
+        let Some(key) = issue.get("key").and_then(|k| k.as_str()) else { continue };
+        let summary = issue
+            .get("fields")
+            .and_then(|f| f.get("summary"))
+            .and_then(|s| s.as_str())
+            .map(str::to_string);
+        match embedded_worklogs(issue) {
+            Some(list) => worklogs.extend(team_rows(&list, cloud, key, &summary, &authors, &date_from, &date_to)),
+            None => {
+                summaries.insert(key.to_string(), summary);
+                to_fetch.push(key.to_string());
+            }
+        }
     }
 
-    let mut worklogs = Vec::new();
     let mut errors = Vec::new();
-    for h in handles {
-        match h.await {
-            Ok((_, Ok(mut list))) => worklogs.append(&mut list),
-            Ok((key, Err(e))) => errors.push(format!("{key}: {e}")),
-            Err(e) => errors.push(e.to_string()),
+    let period = Some((date_from.clone(), date_to.clone()));
+    for (key, res) in fetch_worklogs_for_issues(&ctx, &params, to_fetch, period).await {
+        match res {
+            Ok(list) => {
+                let summary = summaries.get(&key).cloned().flatten();
+                worklogs.extend(team_rows(&list, cloud, &key, &summary, &authors, &date_from, &date_to));
+            }
+            Err(e) => errors.push(format!("{key}: {e}")),
         }
     }
     worklogs.sort_by(|a, b| a.started.cmp(&b.started));
@@ -325,6 +257,7 @@ pub async fn get_team_worklogs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn jql_quote_escapes() {
