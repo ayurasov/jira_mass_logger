@@ -41,6 +41,8 @@ export interface DayBulkPreviewItem {
 }
 
 let loadDaySeq = 0;
+/** Обновления диапазонов, которые уже идут: повторный вызов ждёт их, а не шлёт второй запрос в Jira. */
+const rangeRefreshes = new Map<string, Promise<void>>();
 
 export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
   state: () => ({
@@ -290,6 +292,15 @@ export const useDayFromCalendarStore = defineStore('dayFromCalendar', {
      *  синхронизации в myWorklog, здесь получаем ПОЛНЫЙ набор worklog за
      *  период, поэтому safe удалять из кэша всё, чего нет в свежем ответе. */
     async refreshRangeFromJira(from: string, to: string) {
+      const key = `${from}|${to}`;
+      const running = rangeRefreshes.get(key);
+      if (running) return running;
+      const job = this.fetchRangeFromJira(from, to).finally(() => rangeRefreshes.delete(key));
+      rangeRefreshes.set(key, job);
+      return job;
+    },
+
+    async fetchRangeFromJira(from: string, to: string) {
       const jp = useJiraProfilesStore();
       await jp.ensureLoaded();
       const params = jp.activeConnectionParams;

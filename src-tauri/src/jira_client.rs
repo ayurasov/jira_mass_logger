@@ -13,6 +13,10 @@
 //    корпоративного прокси (переменные окружения + явные настройки из UI)
 //    и доверенного корпоративного root CA (SSL-инспекция на прокси)
 //  - формирование `started` с учётом IANA-таймзоны пользователя (chrono-tz)
+//  - экономия канала и сервера: один HTTP-клиент на подключение (keep-alive, без
+//    повторных TLS-рукопожатий), сжатие ответов и HTTP/2, токен и текущий
+//    пользователь читаются один раз за сеанс, worklog берутся прямо из поиска,
+//    отдельные запросы — только для больших задач, параллельно и за нужный период
 //  - оптимистичная конкурентность по полю `updated`: перед PUT/DELETE можно
 //    передать `expected_updated`, полученный при последнем чтении записи;
 //    если в Jira запись изменилась параллельно (например, коллега/сам
@@ -24,8 +28,10 @@ use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
@@ -152,16 +158,38 @@ fn humanize_reqwest_error(e: &reqwest::Error) -> String {
 // HTTP-клиент
 // ---------------------------------------------------------------------------
 
-fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, JiraError> {
+/// Прокси для подключения. Приоритет: явный прокси из UI -> ENV -> системный WinINet.
+fn resolve_proxy_url(params: &JiraConnectionParams) -> Option<String> {
+    params
+        .proxy
+        .as_ref()
+        .and_then(|p| p.url.clone())
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("HTTPS_PROXY").ok())
+        .or_else(|| std::env::var("https_proxy").ok())
+        .or_else(|| std::env::var("HTTP_PROXY").ok())
+        .or_else(|| std::env::var("http_proxy").ok())
+        .or_else(read_windows_system_proxy)
+}
+
+fn build_http_client(params: &JiraConnectionParams, proxy_url: Option<&str>) -> Result<reqwest::Client, JiraError> {
     eprintln!(
         "[jira_client] build_http_client: url={} instance_type={:?} accept_invalid_certs={}",
         params.base_url, params.instance_type, params.accept_invalid_certs
     );
 
+    // Соединения живут в пуле и переиспользуются между командами; ответы приходят
+    // сжатыми (gzip/brotli/deflate), с HTTP/2 параллельные запросы идут по одному соединению.
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
         .connect_timeout(Duration::from_secs(20))
-        .timeout(Duration::from_secs(90));
+        .timeout(Duration::from_secs(90))
+        .pool_idle_timeout(Duration::from_secs(55))
+        .pool_max_idle_per_host(8)
+        .tcp_keepalive(Duration::from_secs(30))
+        .gzip(true)
+        .brotli(true)
+        .deflate(true);
 
     if params.accept_invalid_certs {
         eprintln!("[jira_client] TLS verification DISABLED (accept_invalid_certs=true)");
@@ -178,19 +206,7 @@ fn build_http_client(params: &JiraConnectionParams) -> Result<reqwest::Client, J
         builder = builder.add_root_certificate(cert);
     }
 
-    // Приоритет: явный прокси из UI -> ENV -> системный WinINet
-    let proxy_url = params
-        .proxy
-        .as_ref()
-        .and_then(|p| p.url.clone())
-        .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("HTTPS_PROXY").ok())
-        .or_else(|| std::env::var("https_proxy").ok())
-        .or_else(|| std::env::var("HTTP_PROXY").ok())
-        .or_else(|| std::env::var("http_proxy").ok())
-        .or_else(read_windows_system_proxy);
-
-    if let Some(ref url) = proxy_url {
+    if let Some(url) = proxy_url {
         eprintln!("[jira_client] using proxy: {url}");
         let mut proxy = reqwest::Proxy::all(url)
             .map_err(|e| JiraError::Other(format!("invalid proxy url '{url}': {e}")))?;
@@ -268,6 +284,93 @@ fn normalize_proxy_server(raw: &str) -> Option<String> {
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn read_windows_system_proxy() -> Option<String> {
     None
+}
+
+// ---------------------------------------------------------------------------
+// Общие соединения и кэши сеанса
+// ---------------------------------------------------------------------------
+
+/// HTTP-клиенты по настройкам подключения: пул соединений (TCP+TLS, прокси) живёт
+/// между командами — повторные запросы идут без нового рукопожатия.
+static CLIENTS: OnceLock<Mutex<HashMap<String, reqwest::Client>>> = OnceLock::new();
+/// Токены по secret_ref: хранилище паролей системы читается один раз за сеанс.
+static TOKENS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+/// Текущий пользователь Jira по подключению (см. MYSELF_TTL).
+static MYSELF: OnceLock<Mutex<HashMap<String, (Instant, MyselfInfo)>>> = OnceLock::new();
+/// Время последнего успешного ответа Jira, мс от эпохи: индикатор сети не пингует,
+/// если Jira только что отвечала.
+static LAST_OK_MS: AtomicI64 = AtomicI64::new(0);
+
+const MYSELF_TTL: Duration = Duration::from_secs(30 * 60);
+
+fn locked<T>(m: &'static OnceLock<Mutex<T>>) -> MutexGuard<'static, T>
+where
+    T: Default,
+{
+    m.get_or_init(|| Mutex::new(T::default())).lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn now_ms() -> i64 {
+    Utc::now().timestamp_millis()
+}
+
+/// Jira отвечала успешно не позже `within` назад.
+pub fn recently_reachable(within: Duration) -> bool {
+    now_ms() - LAST_OK_MS.load(Ordering::Relaxed) < within.as_millis() as i64
+}
+
+fn shared_client(params: &JiraConnectionParams) -> Result<reqwest::Client, JiraError> {
+    let proxy_url = resolve_proxy_url(params);
+    let proxy = params.proxy.as_ref();
+    let key = format!(
+        "{}|{}|{}|{}|{}|{}",
+        params.base_url.trim_end_matches('/'),
+        params.accept_invalid_certs,
+        params.extra_root_ca_pem_path.as_deref().unwrap_or(""),
+        proxy_url.as_deref().unwrap_or(""),
+        proxy.and_then(|p| p.username.as_deref()).unwrap_or(""),
+        proxy.and_then(|p| p.password.as_deref()).unwrap_or(""),
+    );
+    if let Some(client) = locked(&CLIENTS).get(&key) {
+        return Ok(client.clone());
+    }
+    let client = build_http_client(params, proxy_url.as_deref())?;
+    locked(&CLIENTS).insert(key, client.clone());
+    Ok(client)
+}
+
+fn cached_secret(secret_ref: &str) -> Result<String, JiraError> {
+    if let Some(token) = locked(&TOKENS).get(secret_ref) {
+        return Ok(token.clone());
+    }
+    let token = get_secret(secret_ref)?;
+    locked(&TOKENS).insert(secret_ref.to_string(), token.clone());
+    Ok(token)
+}
+
+fn myself_key(params: &JiraConnectionParams) -> String {
+    format!("{}|{}|{}", params.base_url.trim_end_matches('/'), params.email, params.secret_ref)
+}
+
+/// Секрет или профиль подключения изменились: следующий запрос заново прочитает
+/// токен из хранилища паролей и спросит у Jira текущего пользователя.
+pub fn forget_credentials(secret_ref: &str) {
+    locked(&TOKENS).remove(secret_ref);
+    let suffix = format!("|{secret_ref}");
+    locked(&MYSELF).retain(|k, _| !k.ends_with(&suffix));
+}
+
+/// Тесты: wiremock переиспользует mock-серверы, а кэш пользователя привязан к адресу.
+#[cfg(test)]
+pub(crate) fn forget_server(base_url: &str) {
+    let prefix = format!("{}|", base_url.trim_end_matches('/'));
+    locked(&MYSELF).retain(|k, _| !k.starts_with(&prefix));
+}
+
+/// Jira ответила 401: токен могли сменить вне приложения — перечитываем всё.
+fn forget_all_credentials() {
+    locked(&TOKENS).clear();
+    locked(&MYSELF).clear();
 }
 
 pub(crate) fn get_secret(secret_ref: &str) -> Result<String, JiraError> {
@@ -457,12 +560,21 @@ pub(crate) async fn send_with_retry(
     mut build_request: impl FnMut() -> reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, JiraError> {
     let mut attempt: u32 = 0;
+    let mut stale_retry_used = false;
     loop {
         attempt += 1;
-        let response = build_request().send().await;
+        let (http, request) = build_request().build_split();
+        let request = request?;
+        let idempotent = matches!(*request.method(), reqwest::Method::GET | reqwest::Method::PUT | reqwest::Method::DELETE);
+        let response = http.execute(request).await;
         match response {
             Ok(resp) => {
                 let status = resp.status();
+                if status.as_u16() == 401 {
+                    forget_all_credentials();
+                } else if status.as_u16() < 500 {
+                    LAST_OK_MS.store(now_ms(), Ordering::Relaxed);
+                }
                 if status.as_u16() == 429 {
                     if attempt >= MAX_RETRIES { return Err(JiraError::RateLimited); }
                     let retry_after_secs = resp
@@ -495,6 +607,13 @@ pub(crate) async fn send_with_retry(
                 let is_tls = lower.contains("certificate") || lower.contains("tls")
                     || lower.contains("ssl") || lower.contains("rustls")
                     || lower.contains("hostname") || lower.contains("handshake");
+                // Соединение из пула мог закрыть сервер или прокси, пока оно простаивало:
+                // идемпотентный запрос один раз сразу повторяем на новом соединении.
+                if idempotent && !stale_retry_used && !is_tls && !e.is_timeout() && !e.is_connect() {
+                    stale_retry_used = true;
+                    attempt -= 1;
+                    continue;
+                }
                 // Ретраем только таймауты; TLS и connect-ошибки не поможет retry
                 let no_retry = is_tls || e.is_connect() || !e.is_timeout();
                 if attempt >= MAX_RETRIES || no_retry {
@@ -506,6 +625,7 @@ pub(crate) async fn send_with_retry(
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct AuthedClient {
     pub(crate) client: reqwest::Client,
     pub(crate) token: String,
@@ -513,27 +633,37 @@ pub(crate) struct AuthedClient {
 
 /// Минимальный набор идентификаторов текущего пользователя из `/myself`.
 /// Cloud отдаёт `accountId`; Server/DC отдаёт `key`/`name`+`displayName`+`emailAddress` (нет accountId).
-struct MyselfInfo {
-    account_id: Option<String>,
-    key: Option<String>,
-    name: Option<String>,
-    display_name: Option<String>,
-    email: Option<String>,
+#[derive(Clone, Default)]
+pub(crate) struct MyselfInfo {
+    pub(crate) account_id: Option<String>,
+    pub(crate) key: Option<String>,
+    pub(crate) name: Option<String>,
+    pub(crate) display_name: Option<String>,
+    pub(crate) email: Option<String>,
 }
 
-async fn fetch_myself(ctx: &AuthedClient, params: &JiraConnectionParams) -> Result<MyselfInfo, JiraError> {
+/// Текущий пользователь Jira; ответ `/myself` переиспользуется MYSELF_TTL.
+pub(crate) async fn fetch_myself(ctx: &AuthedClient, params: &JiraConnectionParams) -> Result<MyselfInfo, JiraError> {
+    let key = myself_key(params);
+    if let Some((at, info)) = locked(&MYSELF).get(&key) {
+        if at.elapsed() < MYSELF_TTL {
+            return Ok(info.clone());
+        }
+    }
     let ep = url(params, "myself");
     let resp = send_with_retry(&ctx.client, || {
         apply_auth(ctx.client.get(&ep), params, &ctx.token)
     }).await?;
     let v: Value = resp.json().await.map_err(JiraError::from)?;
-    Ok(MyselfInfo {
+    let info = MyselfInfo {
         account_id: v.get("accountId").and_then(|x| x.as_str()).map(|s| s.to_string()),
         key: v.get("key").and_then(|x| x.as_str()).map(|s| s.to_string()),
         name: v.get("name").and_then(|x| x.as_str()).map(|s| s.to_string()),
         display_name: v.get("displayName").and_then(|x| x.as_str()).map(|s| s.to_string()),
         email: v.get("emailAddress").and_then(|x| x.as_str()).map(|s| s.to_string()),
-    })
+    };
+    locked(&MYSELF).insert(key, (Instant::now(), info.clone()));
+    Ok(info)
 }
 
 /// Cloud: worklog считается моим только при точном совпадении author.accountId.
@@ -582,8 +712,8 @@ fn server_author_matches(v: &Value, candidates: &[String]) -> bool {
 }
 
 pub(crate) fn init(params: &JiraConnectionParams) -> Result<AuthedClient, JiraError> {
-    let client = build_http_client(params)?;
-    let token = get_secret(&params.secret_ref)?;
+    let client = shared_client(params)?;
+    let token = cached_secret(&params.secret_ref)?;
     Ok(AuthedClient { client, token })
 }
 
@@ -728,7 +858,11 @@ const MAX_FILTERS: usize = 500;
 pub async fn get_jira_filters(params: JiraConnectionParams) -> Result<Vec<FilterDto>, String> {
     let ctx = init(&params).map_err(String::from)?;
     let cloud = matches!(params.instance_type, JiraInstanceType::Cloud);
-    let me = get_json(&ctx, &params, "myself", &[]).await.ok().and_then(|m| user_ident(&m, cloud));
+    let me = fetch_myself(&ctx, &params).await.ok().and_then(|m| if cloud {
+        m.account_id
+    } else {
+        m.name.or(m.key).map(|s| s.to_lowercase())
+    });
 
     let mut out: Vec<FilterDto> = Vec::new();
     let add = |f: &Value, favourite: bool, out: &mut Vec<FilterDto>| {
@@ -830,35 +964,25 @@ pub async fn get_worklog(
 
 /// Worklog задачи, принадлежащие текущему пользователю (мастер массовой фиксации
 /// использует их для пометки конфликтов: чужие записи в общих задачах — не дубль).
+/// С периодом Jira Cloud отдаёт только записи около него, а не всю историю задачи.
 #[tauri::command]
 pub async fn get_my_worklogs_for_issue(
     params: JiraConnectionParams,
     issue_key: String,
+    date_from: Option<String>,
+    date_to: Option<String>,
 ) -> Result<Vec<WorklogDto>, String> {
     let ctx = init(&params).map_err(String::from)?;
     let myself = fetch_myself(&ctx, &params).await.map_err(String::from)?;
     let is_cloud = matches!(params.instance_type, JiraInstanceType::Cloud);
     let candidates = if is_cloud { Vec::new() } else { server_author_candidates(&myself, &params.email) };
-    let endpoint = url(&params, &format!("issue/{issue_key}/worklog"));
-    let mut start_at: i64 = 0;
-    let mut mine: Vec<Value> = Vec::new();
-    loop {
-        let resp = send_with_retry(&ctx.client, || {
-            apply_auth(ctx.client.get(&endpoint), &params, &ctx.token)
-                .query(&[("startAt", start_at.to_string()), ("maxResults", "5000".to_string())])
-        }).await.map_err(String::from)?;
-        let body = ensure_json_success(resp).await?;
-        let page = body.get("worklogs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-        let total = body.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
-        let page_len = page.len() as i64;
-        mine.extend(page.into_iter().filter(|v| if is_cloud {
-            cloud_author_matches(v, myself.account_id.as_deref().unwrap_or(""))
-        } else {
-            server_author_matches(v, &candidates)
-        }));
-        start_at += page_len;
-        if page_len == 0 || start_at >= total { break; }
-    }
+    let period = date_from.as_deref().zip(date_to.as_deref());
+    let all = fetch_issue_worklogs(&ctx, &params, &issue_key, period).await?;
+    let mine: Vec<Value> = all.into_iter().filter(|v| if is_cloud {
+        cloud_author_matches(v, myself.account_id.as_deref().unwrap_or(""))
+    } else {
+        server_author_matches(v, &candidates)
+    }).collect();
     Ok(parse_worklogs(mine, Some(&issue_key)))
 }
 
@@ -923,7 +1047,7 @@ pub async fn get_worklogs_since(
     // worklog всего инстанса — именно это и было причиной "долгого ожидания").
     if since_epoch_millis == 0 {
         if let Some(dr) = date_range.as_ref() {
-            return match fetch_worklogs_by_jql(&ctx, &params, &myself, dr).await {
+            return match fetch_worklogs_by_jql(&ctx, &params, &myself, dr, None).await {
                 Ok(jql_worklogs) => Ok(jql_worklogs),
                 Err(e) if allow_empty_range => {
                     eprintln!("[jira_client] date-scoped JQL fast-path не удался, allow_empty_range=true: {e}");
@@ -933,6 +1057,11 @@ pub async fn get_worklogs_since(
             };
         }
     }
+
+    // Инкрементальная синхронизация (since > 0): JQL-fallback ниже смотрит только задачи,
+    // изменённые с прошлой синхронизации (с запасом 10 минут), а не весь период.
+    let changed_within_min = (since_epoch_millis > 0)
+        .then(|| (now_ms() - since_epoch_millis).max(0) / 60_000 + 10);
 
     // Шаг 1. Bulk-путь: worklog/updated → worklog/list.
     // Поддерживается и Cloud, и Jira Server/DC 7.6.1+ (раньше здесь был ошибочный
@@ -971,13 +1100,14 @@ pub async fn get_worklogs_since(
     // ищем задачи через JQL по worklogAuthor=currentUser() и забираем worklog по
     // каждой задаче. Важно: это ДО раннего return Ok(empty) ниже.
     if raw_worklogs.is_empty() && date_range.is_some() {
-        match fetch_worklogs_by_jql(&ctx, &params, &myself, date_range.as_ref().unwrap()).await {
+        match fetch_worklogs_by_jql(&ctx, &params, &myself, date_range.as_ref().unwrap(), changed_within_min).await {
             Ok(jql_worklogs) if !jql_worklogs.is_empty() => return Ok(jql_worklogs),
             Ok(_) => {
                 // Явный range-refresh (allow_empty_range=true): «0 worklog в Jira» —
                 // это валидный результат, означающий, что кэш диапазона нужно очистить
                 // (записи были удалены в Jira напрямую). Не превращаем это в ошибку.
-                if allow_empty_range {
+                // Инкрементальная синхронизация: пусто = с прошлого раза ничего не менялось.
+                if allow_empty_range || changed_within_min.is_some() {
                     return Ok(Vec::new());
                 }
                 let dr = date_range.as_ref().unwrap();
@@ -1008,31 +1138,16 @@ pub async fn get_worklogs_since(
     // Шаг 3. Резолюция numeric issueId → человекочитаемый issueKey.
     // bulk-путь (worklog/list) возвращает только числовой issueId — нужен /issue/{id}.
     // При fallback-пути ключ уже известен из issue_keys, parse_one_worklog его подставит.
-    let mut issue_map: std::collections::HashMap<String, (String, Option<String>)> =
-        std::collections::HashMap::new();
+    let mut issue_map: HashMap<String, (String, Option<String>)> = HashMap::new();
     if !used_fallback {
         let unique_issue_ids: Vec<String> = {
-            let mut seen = std::collections::HashSet::new();
+            let mut seen = HashSet::new();
             my_worklogs.iter()
                 .filter_map(|v| v.get("issueId").and_then(|x| x.as_str()).map(|s| s.to_string()))
                 .filter(|id| seen.insert(id.clone()))
                 .collect()
         };
-        for issue_id in &unique_issue_ids {
-            let ep = url(&params, &format!("issue/{}?fields=summary", issue_id));
-            if let Ok(resp) = send_with_retry(&ctx.client, || {
-                apply_auth(ctx.client.get(&ep), &params, &ctx.token)
-            }).await {
-                if let Ok(v) = resp.json::<Value>().await {
-                    if let (Some(key), summary) = (
-                        v.get("key").and_then(|k| k.as_str()).map(|s| s.to_string()),
-                        v.get("fields").and_then(|f| f.get("summary")).and_then(|s| s.as_str()).map(|s| s.to_string()),
-                    ) {
-                        issue_map.insert(issue_id.clone(), (key, summary));
-                    }
-                }
-            }
-        }
+        issue_map = resolve_issue_ids(&ctx, &params, &unique_issue_ids).await;
     }
 
     // Шаг 4. Сборка DTO.
@@ -1045,7 +1160,7 @@ pub async fn get_worklogs_since(
     // Шаг 5. JQL-fallback (старый путь — если bulk вернул записи, но ни одна не
     // совпала с автором). На практике сейчас срабатывает шаг 1.5 выше.
     if let Some(dr) = date_range.as_ref() {
-        let jql_worklogs = fetch_worklogs_by_jql(&ctx, &params, &myself, dr).await
+        let jql_worklogs = fetch_worklogs_by_jql(&ctx, &params, &myself, dr, changed_within_min).await
             .unwrap_or_else(|e| {
                 eprintln!("[jira_client] JQL-fallback не удался: {e}");
                 Vec::new()
@@ -1056,6 +1171,190 @@ pub async fn get_worklogs_since(
     }
 
     Ok(all)
+}
+
+// ---------------------------------------------------------------------------
+// Поиск задач и worklog с минимумом запросов
+// ---------------------------------------------------------------------------
+
+/// Одновременных запросов worklog по задачам: быстро, но без нагрузки на сервер.
+pub(crate) const ISSUE_FETCH_CONCURRENCY: usize = 4;
+
+/// Задачи по JQL со всеми страницами, до `limit` штук: Cloud — `search/jql`
+/// (nextPageToken; старый `search` в Cloud отключён), Server/DC — `search` (startAt).
+/// Возвращает сырые задачи с запрошенными полями и признак «задач больше лимита».
+pub(crate) async fn search_issues(
+    ctx: &AuthedClient,
+    params: &JiraConnectionParams,
+    jql: &str,
+    fields: &[&str],
+    limit: usize,
+) -> Result<(Vec<Value>, bool), String> {
+    let cloud = matches!(params.instance_type, JiraInstanceType::Cloud);
+    let mut out: Vec<Value> = Vec::new();
+    let mut start_at: i64 = 0;
+    let mut next_token: Option<String> = None;
+    loop {
+        let page_size = (limit - out.len()).min(100);
+        let (endpoint, body) = if cloud {
+            let mut b = json!({ "jql": jql, "fields": fields, "maxResults": page_size });
+            if let Some(t) = &next_token { b["nextPageToken"] = json!(t); }
+            (url(params, "search/jql"), b)
+        } else {
+            (url(params, "search"), json!({ "jql": jql, "fields": fields, "startAt": start_at, "maxResults": page_size }))
+        };
+        let resp = send_with_retry(&ctx.client, || {
+            apply_auth(ctx.client.post(&endpoint), params, &ctx.token).json(&body)
+        }).await.map_err(String::from)?;
+        let page = ensure_json_success(resp).await?;
+        let issues = page.get("issues").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let page_len = issues.len();
+        out.extend(issues);
+        let more = if cloud {
+            next_token = page.get("nextPageToken").and_then(|v| v.as_str()).map(str::to_string);
+            let is_last = page.get("isLast").and_then(|v| v.as_bool()).unwrap_or(next_token.is_none());
+            !is_last && next_token.is_some()
+        } else {
+            let total = page.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+            start_at += page_len as i64;
+            start_at < total
+        };
+        if out.len() >= limit {
+            out.truncate(limit);
+            return Ok((out, more));
+        }
+        if !more || page_len == 0 {
+            return Ok((out, false));
+        }
+    }
+}
+
+/// Worklog, пришедшие вместе с задачей из поиска (поле `worklog`): Jira кладёт туда
+/// до 20 записей. Если это все записи задачи — отдельный запрос не нужен.
+pub(crate) fn embedded_worklogs(issue: &Value) -> Option<Vec<Value>> {
+    let worklog = issue.get("fields")?.get("worklog")?;
+    let list = worklog.get("worklogs")?.as_array()?;
+    let total = worklog.get("total")?.as_i64()?;
+    (list.len() as i64 >= total).then(|| list.clone())
+}
+
+/// Границы периода для `startedAfter`/`startedBefore`, мс от эпохи, с запасом в день
+/// с каждой стороны (часовые пояса): точный отбор по дате делает вызывающий код.
+fn period_bounds_ms(date_from: &str, date_to: &str) -> Option<(i64, i64)> {
+    let from = chrono::NaiveDate::parse_from_str(date_from, "%Y-%m-%d").ok()?;
+    let to = chrono::NaiveDate::parse_from_str(date_to, "%Y-%m-%d").ok()?;
+    let after = (from - chrono::Duration::days(1)).and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis();
+    let before = (to + chrono::Duration::days(2)).and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis();
+    Some((after, before))
+}
+
+/// Все worklog задачи (все страницы). С периодом Jira Cloud отдаёт только записи около
+/// него (startedAfter/startedBefore), а не всю историю задачи; Server/DC эти параметры
+/// игнорирует — результат тот же, просто без экономии.
+pub(crate) async fn fetch_issue_worklogs(
+    ctx: &AuthedClient,
+    params: &JiraConnectionParams,
+    issue_key: &str,
+    period: Option<(&str, &str)>,
+) -> Result<Vec<Value>, String> {
+    let endpoint = url(params, &format!("issue/{issue_key}/worklog"));
+    let bounds = period.and_then(|(from, to)| period_bounds_ms(from, to));
+    let mut start_at: i64 = 0;
+    let mut out: Vec<Value> = Vec::new();
+    loop {
+        let mut query = vec![("startAt", start_at.to_string()), ("maxResults", "5000".to_string())];
+        if let Some((after, before)) = bounds {
+            query.push(("startedAfter", after.to_string()));
+            query.push(("startedBefore", before.to_string()));
+        }
+        let resp = send_with_retry(&ctx.client, || {
+            apply_auth(ctx.client.get(&endpoint), params, &ctx.token).query(&query)
+        }).await.map_err(String::from)?;
+        let body = ensure_json_success(resp).await?;
+        let page = body.get("worklogs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let page_len = page.len() as i64;
+        // Старые Server без пагинации не отдают total — тогда страница одна.
+        let total = body.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+        out.extend(page);
+        start_at += page_len;
+        if page_len == 0 || start_at >= total {
+            return Ok(out);
+        }
+    }
+}
+
+/// Worklog нескольких задач: параллельно, не больше ISSUE_FETCH_CONCURRENCY запросов
+/// сразу. Ошибка по одной задаче не прерывает остальные.
+pub(crate) async fn fetch_worklogs_for_issues(
+    ctx: &AuthedClient,
+    params: &JiraConnectionParams,
+    issue_keys: Vec<String>,
+    period: Option<(String, String)>,
+) -> Vec<(String, Result<Vec<Value>, String>)> {
+    let semaphore = Arc::new(Semaphore::new(ISSUE_FETCH_CONCURRENCY));
+    let params = Arc::new(params.clone());
+    let period = Arc::new(period);
+    let mut handles = Vec::with_capacity(issue_keys.len());
+    for key in issue_keys {
+        let (ctx, params, period, sem) = (ctx.clone(), params.clone(), period.clone(), semaphore.clone());
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await;
+            let range = period.as_ref().as_ref().map(|(f, t)| (f.as_str(), t.as_str()));
+            let res = fetch_issue_worklogs(&ctx, &params, &key, range).await;
+            (key, res)
+        }));
+    }
+    let mut out = Vec::with_capacity(handles.len());
+    for h in handles {
+        match h.await {
+            Ok(pair) => out.push(pair),
+            Err(e) => out.push((String::new(), Err(e.to_string()))),
+        }
+    }
+    out
+}
+
+/// Ключи и названия задач по числовым id одним поиском `id in (...)` на сотню задач,
+/// а не запросом на каждую. Если Jira отклонит список целиком (например, одну из задач
+/// удалили), эту сотню разбираем по одной, как раньше.
+async fn resolve_issue_ids(
+    ctx: &AuthedClient,
+    params: &JiraConnectionParams,
+    ids: &[String],
+) -> HashMap<String, (String, Option<String>)> {
+    let mut map = HashMap::new();
+    let summary_of = |v: &Value| v.get("fields").and_then(|f| f.get("summary")).and_then(|s| s.as_str()).map(str::to_string);
+    for chunk in ids.chunks(100) {
+        let jql = format!("id in ({})", chunk.join(","));
+        match search_issues(ctx, params, &jql, &["summary"], chunk.len()).await {
+            Ok((issues, _)) => {
+                for issue in &issues {
+                    if let (Some(id), Some(key)) = (
+                        issue.get("id").and_then(|v| v.as_str()),
+                        issue.get("key").and_then(|v| v.as_str()),
+                    ) {
+                        map.insert(id.to_string(), (key.to_string(), summary_of(issue)));
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[jira_client] пакетная резолюция задач не удалась ({e}) — по одной");
+                for issue_id in chunk {
+                    let ep = url(params, &format!("issue/{issue_id}"));
+                    if let Ok(resp) = send_with_retry(&ctx.client, || {
+                        apply_auth(ctx.client.get(&ep), params, &ctx.token).query(&[("fields", "summary")])
+                    }).await {
+                        if let Ok(v) = resp.json::<Value>().await {
+                            if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
+                                map.insert(issue_id.clone(), (key.to_string(), summary_of(&v)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    map
 }
 
 /// Проверяет HTTP-статус ответа перед парсингом JSON. Без этого Jira-ошибки (401/403/500)
@@ -1112,25 +1411,17 @@ async fn fetch_bulk_worklogs(
     Ok(raw_worklogs)
 }
 
-/// Fallback-путь для старых Jira Server (<7.6): перебор issue/{KEY}/worklog.
-/// Возвращает сырые worklog-объекты с известным issueKey в issueId-поле не будет,
-/// но parse_one_worklog подставит fallback_issue_key.
+/// Fallback-путь для старых Jira Server (<7.6): worklog задач из кэша фронта
+/// (параллельно, с ограничением). Ключ задачи внедряется в каждую запись,
+/// parse_worklogs_with_map его подставит.
 async fn fetch_worklogs_by_issue_keys(
     ctx: &AuthedClient,
     params: &JiraConnectionParams,
     keys: &[String],
 ) -> Result<Vec<Value>, String> {
     let mut out: Vec<Value> = Vec::new();
-    for key in keys {
-        let endpoint = url(params, &format!("issue/{key}/worklog"));
-        let resp = send_with_retry(&ctx.client, || {
-            apply_auth(ctx.client.get(&endpoint), params, &ctx.token)
-        }).await.map_err(String::from)?;
-        let body: Value = ensure_json_success(resp).await?;
-        let worklogs = body.get("worklogs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-        for mut v in worklogs {
-            // Внедряем ключ задачи в объект, чтобы parse_worklogs_with_map его резолвнул,
-            // даже если эндпоинт не вернул issueKey/issueId.
+    for (key, res) in fetch_worklogs_for_issues(ctx, params, keys.to_vec(), None).await {
+        for mut v in res? {
             if v.get("issueKey").is_none() {
                 v["issueKey"] = json!(key);
             }
@@ -1140,16 +1431,20 @@ async fn fetch_worklogs_by_issue_keys(
     Ok(out)
 }
 
-/// JQL-fallback для Jira Server 8.x, где bulk worklog/updated может вернуть пусто
-/// даже при существующих записях. Ищем задачи через JQL:
-///   worklogAuthor = currentUser() AND worklogDate >= "date_from" AND worklogDate <= "date_to"
-/// (плюс project/issuekey-фильтр, если задан), затем забираем worklog по каждой
-/// задаче через issue/{key}/worklog и фильтруем по автору + датам локально.
+/// Мои worklog за период через JQL (основной путь для диапазона дат и fallback, когда
+/// bulk worklog/updated пуст на Jira Server 8.x):
+///   worklogAuthor = currentUser() AND worklogDate в периоде [+ проект/задача] [+ изменённые недавно]
+/// Поиск сразу отдаёт до 20 worklog каждой задачи — для большинства задач этого хватает,
+/// и отдельный запрос не нужен. Остальные задачи (с большой историей) догружаются
+/// параллельно и только за период. Затем — фильтр по автору и дате.
+/// `changed_within_min` — только задачи, изменённые за последние N минут
+/// (инкрементальная синхронизация: добавление, правка и удаление worklog меняют `updated`).
 async fn fetch_worklogs_by_jql(
     ctx: &AuthedClient,
     params: &JiraConnectionParams,
     myself: &MyselfInfo,
     dr: &WorklogDateRange,
+    changed_within_min: Option<i64>,
 ) -> Result<Vec<WorklogDto>, String> {
     let is_cloud = matches!(params.instance_type, JiraInstanceType::Cloud);
     let candidates = if is_cloud {
@@ -1158,86 +1453,53 @@ async fn fetch_worklogs_by_jql(
         server_author_candidates(myself, &params.email)
     };
 
-    // JQL-запрос: ищем задачи, где текущий пользователь логировал время в периоде.
-    // Пагинация по startAt (Jira Server возвращает по ~100 задач за раз).
     let issue_clause = dr.issue_filter.as_deref().map(|f| {
         // SRM-123 → issuekey = SRM-123; SRM → project = SRM (если есть дефис — задача).
         if f.contains('-') {
-            format!("AND issuekey = \"{}\"", f.to_uppercase())
+            format!(" AND issuekey = \"{}\"", f.to_uppercase())
         } else {
-            format!("AND project = {}", f.to_uppercase())
+            format!(" AND project = {}", f.to_uppercase())
         }
     }).unwrap_or_default();
+    let changed_clause = changed_within_min
+        .map(|m| format!(" AND updated >= \"-{}m\"", m.max(1)))
+        .unwrap_or_default();
     let jql = format!(
-        "worklogAuthor = currentUser() AND worklogDate >= \"{}\" AND worklogDate <= \"{}\" {}",
-        dr.date_from, dr.date_to, issue_clause
+        "worklogAuthor = currentUser() AND worklogDate >= \"{}\" AND worklogDate <= \"{}\"{}{}",
+        dr.date_from, dr.date_to, issue_clause, changed_clause
     );
-    eprintln!("[jira_client] JQL-fallback: {}", jql);
+    eprintln!("[jira_client] JQL: {}", jql);
 
-    let endpoint = url(params, "search");
-    let mut all_issues: Vec<Value> = Vec::new();
-    let mut start_at: i64 = 0;
-    loop {
-        let body = json!({
-            "jql": jql,
-            "fields": ["summary"],
-            "startAt": start_at,
-            "maxResults": 100,
-        });
-        let resp = send_with_retry(&ctx.client, || {
-            apply_auth(ctx.client.post(&endpoint), params, &ctx.token).json(&body)
-        }).await.map_err(String::from)?;
-        let search_result: Value = ensure_json_success(resp).await?;
-        let issues = search_result.get("issues").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-        let total = search_result.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
-        all_issues.extend(issues);
-        start_at += 100;
-        if start_at >= total || all_issues.len() >= 1000 { break; }
+    let (issues, _) = search_issues(ctx, params, &jql, &["summary", "worklog"], 1000).await?;
+    let mut summaries: HashMap<String, Option<String>> = HashMap::new();
+    let mut ready: Vec<(String, Vec<Value>)> = Vec::new();
+    let mut to_fetch: Vec<String> = Vec::new();
+    for issue in &issues {
+        let Some(key) = issue.get("key").and_then(|k| k.as_str()) else { continue };
+        let summary = issue.get("fields").and_then(|f| f.get("summary")).and_then(|s| s.as_str())
+            .filter(|s| !s.is_empty()).map(str::to_string);
+        summaries.insert(key.to_string(), summary);
+        match embedded_worklogs(issue) {
+            Some(list) => ready.push((key.to_string(), list)),
+            None => to_fetch.push(key.to_string()),
+        }
     }
-    eprintln!("[jira_client] JQL-fallback: найдено {} задач", all_issues.len());
+    eprintln!("[jira_client] JQL: задач {}, догружаем worklog по {}", issues.len(), to_fetch.len());
+    let period = Some((dr.date_from.clone(), dr.date_to.clone()));
+    for (key, res) in fetch_worklogs_for_issues(ctx, params, to_fetch, period).await {
+        match res {
+            Ok(list) => ready.push((key, list)),
+            Err(e) => eprintln!("[jira_client] JQL: не удалось получить worklog для {key}: {e}"),
+        }
+    }
 
     let mut out: Vec<WorklogDto> = Vec::new();
-    for issue in &all_issues {
-        let issue_key = issue.get("key").and_then(|k| k.as_str()).unwrap_or("");
-        let summary = issue.get("fields").and_then(|f| f.get("summary")).and_then(|s| s.as_str()).unwrap_or("").to_string();
-        if issue_key.is_empty() { continue; }
-
-        // Берём worklog по найденной задаче. Jira Server 8.x поддерживает
-        // пагинацию через startAt/maxResults (по умолчанию ~20–5000 в зависимости
-        // от версии). Перебираем все страницы.
-        let wl_endpoint = url(params, &format!("issue/{}/worklog", issue_key));
-        let mut wl_start_at: i64 = 0;
-        let mut all_worklogs: Vec<Value> = Vec::new();
-        loop {
-            let resp = match send_with_retry(&ctx.client, || {
-                apply_auth(ctx.client.get(&wl_endpoint), params, &ctx.token)
-                    .query(&[("startAt", wl_start_at.to_string()), ("maxResults", "5000".to_string())])
-            }).await {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("[jira_client] JQL-fallback: не удалось получить worklog для {}: {}", issue_key, e);
-                    break;
-                }
-            };
-            let wl_body: Value = match ensure_json_success(resp).await {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("[jira_client] JQL-fallback: {} worklog error: {}", issue_key, e);
-                    break;
-                }
-            };
-            let worklogs = wl_body.get("worklogs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            let wl_total = wl_body.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
-            all_worklogs.extend(worklogs);
-            wl_start_at += 5000;
-            // Если сервер не поддерживает пагинацию (total=0 или нет), выходим после первой страницы.
-            if wl_total == 0 || wl_start_at >= wl_total || all_worklogs.len() as i64 >= wl_total { break; }
-        }
-        for v in &all_worklogs {
+    for (issue_key, worklogs) in ready {
+        let summary = summaries.get(&issue_key).cloned().flatten();
+        for v in &worklogs {
             // Фильтр по автору (как в основном пути).
             let author_matches = if is_cloud {
-                let aid = myself.account_id.as_deref().unwrap_or("");
-                cloud_author_matches(v, aid)
+                cloud_author_matches(v, myself.account_id.as_deref().unwrap_or(""))
             } else {
                 server_author_matches(v, &candidates)
             };
@@ -1247,19 +1509,19 @@ async fn fetch_worklogs_by_jql(
             let started = v.get("started").and_then(|x| x.as_str()).unwrap_or("");
             if !is_started_in_range(started, &dr.date_from, &dr.date_to) { continue; }
 
-            let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("0").to_string();
-            let time_spent_seconds = v.get("timeSpentSeconds").and_then(|x| x.as_i64()).unwrap_or(0);
-            let comment = v.get("comment").map(|c| adf_to_plain_text(c));
-            let author = v.get("author").and_then(|a| a.get("displayName")).and_then(|d| d.as_str()).map(|s| s.to_string());
-            let updated = v.get("updated").and_then(|x| x.as_str()).map(|s| s.to_string());
             out.push(WorklogDto {
-                id, issue_key: Some(issue_key.to_string()),
-                issue_summary: if summary.is_empty() { None } else { Some(summary.clone()) },
-                started: started.to_string(), time_spent_seconds, comment, author, updated,
+                id: v.get("id").and_then(|x| x.as_str()).unwrap_or("0").to_string(),
+                issue_key: Some(issue_key.clone()),
+                issue_summary: summary.clone(),
+                started: started.to_string(),
+                time_spent_seconds: v.get("timeSpentSeconds").and_then(|x| x.as_i64()).unwrap_or(0),
+                comment: v.get("comment").map(adf_to_plain_text),
+                author: v.get("author").and_then(|a| a.get("displayName")).and_then(|d| d.as_str()).map(str::to_string),
+                updated: v.get("updated").and_then(|x| x.as_str()).map(str::to_string),
             });
         }
     }
-    eprintln!("[jira_client] JQL-fallback: собрано {} worklog", out.len());
+    eprintln!("[jira_client] JQL: собрано {} worklog", out.len());
     Ok(out)
 }
 
@@ -1511,6 +1773,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn mock_params(uri: String, instance_type: JiraInstanceType, secret: &str) -> JiraConnectionParams {
+        forget_server(&uri);
         std::env::set_var(format!("JIRATIME_TEST_SECRET_{}", secret.to_uppercase().replace('-', "_")), "dummy");
         JiraConnectionParams {
             base_url: uri, email: "u".into(), secret_ref: secret.into(), instance_type,
@@ -1696,6 +1959,7 @@ mod tests {
     }
 
     fn test_params(base_url: String, instance_type: JiraInstanceType) -> JiraConnectionParams {
+        forget_server(&base_url);
         JiraConnectionParams {
             base_url, email: "user@example.com".to_string(),
             secret_ref: "test-secret-ref".to_string(), instance_type,
@@ -1917,7 +2181,7 @@ mod tests {
             .mount(&server).await;
         std::env::set_var("JIRATIME_TEST_SECRET_TEST_SECRET_REF", "dummy-pass");
         let params = test_params(server.uri(), JiraInstanceType::Server);
-        let mine = get_my_worklogs_for_issue(params, "OPS-1".into()).await.unwrap();
+        let mine = get_my_worklogs_for_issue(params, "OPS-1".into(), None, None).await.unwrap();
         assert_eq!(mine.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(), vec!["1"]);
     }
 
@@ -1968,11 +2232,15 @@ mod tests {
             ])))
             .expect(1).mount(&server).await;
 
-        // /issue/{id} — резолвция numeric issueId в ключ задачи.
-        Mock::given(method("GET")).and(path("/rest/api/2/issue/10005"))
+        // Резолюция numeric issueId в ключ задачи — одним поиском, без запроса на каждую задачу.
+        Mock::given(method("POST")).and(path("/rest/api/2/search"))
+            .and(wiremock::matchers::body_string_contains("id in (10005)"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "key": "PROJ-99", "fields": { "summary": "Fix login" } })))
+                "total": 1, "issues": [{ "id": "10005", "key": "PROJ-99", "fields": { "summary": "Fix login" } }] })))
             .expect(1).mount(&server).await;
+        Mock::given(method("GET")).and(path("/rest/api/2/issue/10005"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0).mount(&server).await;
 
         let params = test_params(server.uri(), JiraInstanceType::ServerBasic);
         // Главный момент: issue_keys_for_fallback = пустой список.
@@ -2118,5 +2386,141 @@ mod tests {
         let out = get_worklogs_since(params, 0, Some(Vec::new()), Some(dr), true).await
             .expect("allow_empty_range=true должен вернуть Ok, а не Err");
         assert!(out.is_empty(), "ожидаем пустой список — в Jira действительно 0 worklog за этот день");
+    }
+
+    fn myself_mock() -> serde_json::Value {
+        json!({ "key": "ivan", "name": "ivan", "displayName": "Иван", "emailAddress": "ivan@example.com" })
+    }
+
+    fn wl(id: &str, author: &str, started: &str, secs: i64) -> serde_json::Value {
+        json!({ "id": id, "author": { "name": author, "key": author, "displayName": author }, "started": started, "timeSpentSeconds": secs })
+    }
+
+    /// Поиск отдаёт worklog задач: для задачи со всеми записями в ответе отдельный запрос
+    /// не делается, для задачи с большой историей — один запрос, и только за период.
+    #[tokio::test]
+    async fn jql_range_uses_worklogs_from_search_and_fetches_only_large_issues() {
+        use wiremock::matchers::query_param;
+        std::env::set_var("JIRATIME_TEST_SECRET_EMBED_SECRET", "dummy");
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/rest/api/2/myself"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(myself_mock()))
+            .expect(1).mount(&server).await;
+        let big: Vec<serde_json::Value> = (0..20).map(|i| wl(&format!("b{i}"), "maria", "2026-06-10T09:00:00.000+0300", 600)).collect();
+        Mock::given(method("POST")).and(path("/rest/api/2/search"))
+            .and(wiremock::matchers::body_string_contains("\"worklog\""))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 2, "issues": [
+                { "key": "SMALL-1", "fields": { "summary": "Малая", "worklog": { "startAt": 0, "maxResults": 20, "total": 2, "worklogs": [
+                    wl("1", "ivan", "2026-06-15T10:00:00.000+0300", 3600),
+                    wl("2", "maria", "2026-06-15T11:00:00.000+0300", 1800),
+                ] } } },
+                { "key": "BIG-1", "fields": { "summary": "Совещания", "worklog": { "startAt": 0, "maxResults": 20, "total": 500, "worklogs": big } } },
+            ] })))
+            .expect(1).mount(&server).await;
+        Mock::given(method("GET")).and(path("/rest/api/2/issue/SMALL-1/worklog"))
+            .respond_with(ResponseTemplate::new(500)).expect(0).mount(&server).await;
+        // Период 01.06–30.06 → startedAfter = 31.05 00:00 UTC, startedBefore = 02.07 00:00 UTC.
+        Mock::given(method("GET")).and(path("/rest/api/2/issue/BIG-1/worklog"))
+            .and(query_param("startedAfter", "1780185600000"))
+            .and(query_param("startedBefore", "1782950400000"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "startAt": 0, "total": 2, "worklogs": [
+                wl("3", "ivan", "2026-06-16T09:00:00.000+0300", 1800),
+                wl("4", "ivan", "2026-05-20T09:00:00.000+0300", 1800),
+            ] })))
+            .expect(1).mount(&server).await;
+
+        let params = mock_params(server.uri(), JiraInstanceType::Server, "embed-secret");
+        let dr = WorklogDateRange { date_from: "2026-06-01".into(), date_to: "2026-06-30".into(), issue_filter: None };
+        let mut out = get_worklogs_since(params, 0, None, Some(dr), true).await.unwrap();
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(out.iter().map(|w| (w.id.as_str(), w.issue_key.as_deref().unwrap())).collect::<Vec<_>>(),
+            vec![("1", "SMALL-1"), ("3", "BIG-1")]);
+        assert_eq!(out[1].issue_summary.as_deref(), Some("Совещания"));
+    }
+
+    /// Текущий пользователь запрашивается один раз за сеанс; после смены профиля — заново.
+    #[tokio::test]
+    async fn myself_is_cached_until_credentials_change() {
+        std::env::set_var("JIRATIME_TEST_SECRET_MYSELF_SECRET", "dummy");
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/rest/api/2/myself"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(myself_mock()))
+            .expect(2).mount(&server).await;
+        Mock::given(method("POST")).and(path("/rest/api/2/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 0, "issues": [] })))
+            .mount(&server).await;
+        let params = mock_params(server.uri(), JiraInstanceType::Server, "myself-secret");
+        let dr = WorklogDateRange { date_from: "2026-06-01".into(), date_to: "2026-06-01".into(), issue_filter: None };
+        for _ in 0..3 {
+            get_worklogs_since(params.clone(), 0, None, Some(dr.clone()), true).await.unwrap();
+        }
+        forget_credentials("myself-secret");
+        get_worklogs_since(params, 0, None, Some(dr), true).await.unwrap();
+    }
+
+    /// Инкрементальная синхронизация: bulk пуст → JQL смотрит только задачи, изменённые
+    /// с прошлого раза, и «ничего не изменилось» — не ошибка.
+    #[tokio::test]
+    async fn incremental_fallback_looks_only_at_recently_changed_issues() {
+        std::env::set_var("JIRATIME_TEST_SECRET_INCR_SECRET", "dummy");
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/rest/api/2/myself"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(myself_mock()))
+            .mount(&server).await;
+        Mock::given(method("GET")).and(path("/rest/api/2/worklog/updated"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "values": [], "lastPage": true })))
+            .expect(1).mount(&server).await;
+        Mock::given(method("POST")).and(path("/rest/api/2/search"))
+            .and(wiremock::matchers::body_string_contains("updated >= \\\"-25m\\\""))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "total": 0, "issues": [] })))
+            .expect(1).mount(&server).await;
+        let params = mock_params(server.uri(), JiraInstanceType::Server, "incr-secret");
+        let since = Utc::now().timestamp_millis() - 15 * 60_000;
+        let dr = WorklogDateRange { date_from: "2026-06-01".into(), date_to: "2026-06-30".into(), issue_filter: None };
+        let out = get_worklogs_since(params, since, Some(Vec::new()), Some(dr), false).await
+            .expect("нет изменений — это не ошибка");
+        assert!(out.is_empty());
+    }
+
+    /// Jira Cloud: поиск идёт через search/jql (старый search в Cloud отключён).
+    #[tokio::test]
+    async fn cloud_range_uses_search_jql() {
+        std::env::set_var("JIRATIME_TEST_SECRET_CLOUD_SECRET", "dummy");
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/rest/api/3/myself"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "accountId": "acc-1", "displayName": "Иван" })))
+            .mount(&server).await;
+        Mock::given(method("POST")).and(path("/rest/api/3/search/jql"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "isLast": true, "issues": [
+                { "key": "C-1", "fields": { "summary": "Облако", "worklog": { "total": 1, "worklogs": [
+                    { "id": "7", "author": { "accountId": "acc-1" }, "started": "2026-06-02T10:00:00.000+0000", "timeSpentSeconds": 900 }
+                ] } } }
+            ] })))
+            .expect(1).mount(&server).await;
+        Mock::given(method("POST")).and(path("/rest/api/3/search"))
+            .respond_with(ResponseTemplate::new(410)).expect(0).mount(&server).await;
+        let params = mock_params(server.uri(), JiraInstanceType::Cloud, "cloud-secret");
+        let dr = WorklogDateRange { date_from: "2026-06-01".into(), date_to: "2026-06-30".into(), issue_filter: None };
+        let out = get_worklogs_since(params, 0, None, Some(dr), true).await.unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].issue_key.as_deref(), Some("C-1"));
+    }
+
+    #[test]
+    fn embedded_worklogs_only_when_complete() {
+        let full = json!({ "fields": { "worklog": { "total": 1, "worklogs": [{ "id": "1" }] } } });
+        let partial = json!({ "fields": { "worklog": { "total": 30, "worklogs": [{ "id": "1" }] } } });
+        let absent = json!({ "fields": { "summary": "x" } });
+        assert_eq!(embedded_worklogs(&full).map(|v| v.len()), Some(1));
+        assert!(embedded_worklogs(&partial).is_none());
+        assert!(embedded_worklogs(&absent).is_none());
+    }
+
+    #[test]
+    fn period_bounds_cover_the_period_with_a_day_margin() {
+        let (after, before) = period_bounds_ms("2026-06-01", "2026-06-30").unwrap();
+        assert_eq!(after, 1780185600000); // 2026-05-31T00:00:00Z
+        assert_eq!(before, 1782950400000); // 2026-07-02T00:00:00Z
+        assert!(period_bounds_ms("bad", "2026-06-30").is_none());
     }
 }

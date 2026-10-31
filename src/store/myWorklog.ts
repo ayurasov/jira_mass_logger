@@ -189,9 +189,12 @@ export const useMyWorklogStore = defineStore('myWorklog', {
         this.lastSyncedAt = new Date().toISOString();
         await this.loadFromCache();
         this.fetchError = null;
-        this.fetchInfo = dtos.length === 0
-          ? 'Jira вернула 0 worklog за выбранный период. Проверьте период, фильтр и что записи существуют.'
-          : `Загружено ${dtos.length} записей из Jira.`;
+        // Инкрементальное обновление (since > 0) приносит только изменения с прошлого раза.
+        this.fetchInfo = dtos.length > 0
+          ? `Загружено ${dtos.length} записей из Jira.`
+          : since > 0
+            ? 'Новых изменений в Jira нет.'
+            : 'Jira вернула 0 worklog за выбранный период. Проверьте период, фильтр и что записи существуют.';
       } catch (e: any) {
         this.fetchError = String(e?.message ?? e);
         this.fetchInfo = this.fetchError;

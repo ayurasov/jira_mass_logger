@@ -138,7 +138,11 @@ pub fn start_network_monitor(
     tauri::async_runtime::spawn(async move {
         loop {
             if let Some(params) = m2.connection() {
-                if crate::jira_client::ping(&params).await {
+                // Jira отвечала за последнюю минуту — она доступна, отдельный пинг не нужен.
+                let reachable = crate::jira_client::recently_reachable(
+                    tokio::time::Duration::from_secs(HEALTH_CHECK_SECS),
+                ) || crate::jira_client::ping(&params).await;
+                if reachable {
                     m2.set_online();
                     lg2.debug("network_monitor", "Jira reachable");
                     wake2.notify_one();

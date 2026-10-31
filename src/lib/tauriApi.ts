@@ -325,9 +325,9 @@ export const tauriApi = {
 
   // --- Jira: worklog CRUD + инкрементальный sync ---
   getWorklog(params: JiraConnectionParams, issueKey: string) { return invoke<WorklogDto[]>('get_worklog', { params, issueKey }); },
-  /** Только свои worklog задачи (для пометки конфликтов в мастере). */
-  getMyWorklogsForIssue(params: JiraConnectionParams, issueKey: string) {
-    return invoke<WorklogDto[]>('get_my_worklogs_for_issue', { params, issueKey });
+  /** Только свои worklog задачи (для пометки конфликтов в мастере); с периодом Jira Cloud отдаёт только его. */
+  getMyWorklogsForIssue(params: JiraConnectionParams, issueKey: string, dateFrom?: string, dateTo?: string) {
+    return invoke<WorklogDto[]>('get_my_worklogs_for_issue', { params, issueKey, dateFrom: dateFrom ?? null, dateTo: dateTo ?? null });
   },
   getWorklogById(params: JiraConnectionParams, issueKey: string, worklogId: string) {
     return invoke<WorklogDto>('get_worklog_by_id', { params, issueKey, worklogId });
