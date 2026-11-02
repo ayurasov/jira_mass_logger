@@ -21,13 +21,22 @@ use std::time::Duration;
 
 /// Единый HTTP-клиент для EWS/OWA/Graph с щедрыми таймаутами
 /// (on-prem Exchange + корпоративная сеть могут быть медленными).
+///
+/// Только HTTP/1.1: NTLM/Negotiate привязаны к TCP-соединению, и IIS (HTTP.sys)
+/// не принимает их по HTTP/2 — сбрасывает поток с HTTP_1_1_REQUIRED, а reqwest
+/// сам на HTTP/1.1 не переходит. Без этого EWS с NTLM падает на первом же шаге.
 fn build_http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .use_rustls_tls()
-        .connect_timeout(Duration::from_secs(20))
-        .timeout(Duration::from_secs(90))
+    http_client_builder()
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+fn http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .use_rustls_tls()
+        .http1_only()
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(90))
 }
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -764,7 +773,7 @@ pub async fn test_exchange_connection(
             get_graph_access_token(&params)
                 .await
                 .map(|_| true)
-                .map_err(|e| e.to_string())
+                .map_err(|e| format!("{e:#}"))
         }
         "ews" => {
             let ews_url = params
@@ -778,7 +787,7 @@ pub async fn test_exchange_connection(
             let client = build_http_client();
             let resp = post_ews_request(&client, ews_url, EWS_TEST_BODY, "http://schemas.microsoft.com/exchange/services/2006/messages/GetFolder", auth_type, &params.username, &password)
                 .await
-                .map_err(|e| format!("{e}. Проверьте URL, доступность сервера, логин/пароль и корпоративный TLS-сертификат."))?;
+                .map_err(|e| format!("{e:#}. Проверьте URL, доступность сервера, логин/пароль и корпоративный TLS-сертификат."))?;
             let status = resp.status();
             if !status.is_success() {
                 let www_auth = resp.headers().get_all("www-authenticate").iter()
@@ -847,10 +856,10 @@ pub async fn get_calendar_events(
         "graph" => {
             let token = get_graph_access_token(&params)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("{e:#}"))?;
             fetch_graph_events(&token, &date_from, &date_to)
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|e| format!("{e:#}"))?
         }
         "ews" => {
             let ews_url = params
@@ -863,7 +872,7 @@ pub async fn get_calendar_events(
             let auth_type = params.ews_auth_type.as_deref().unwrap_or("basic");
             fetch_ews_events(ews_url, auth_type, &params.username, &password, &date_from, &date_to)
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|e| format!("{e:#}"))?
         }
         _ => return Err("Unknown auth_mode".to_string()),
     };
@@ -1237,6 +1246,14 @@ async fn post_ews_request(
 #[cfg(test)]
 mod ews_parse_tests {
     use super::*;
+
+    #[test]
+    fn exchange_client_speaks_http1_only() {
+        // NTLM по HTTP/2 IIS не принимает (HTTP_1_1_REQUIRED) — клиент EWS
+        // не должен предлагать h2 при TLS-рукопожатии.
+        let dbg = format!("{:?}", http_client_builder());
+        assert!(dbg.contains("http1_only: true"), "{dbg}");
+    }
 
     #[test]
     fn ews_parser_reads_flags_and_response() {
